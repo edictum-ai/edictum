@@ -126,10 +126,12 @@
           "required": ["effect", "message"],
           "additionalProperties": false,
           "properties": {
-            "effect": { "const": "deny" },
+            "effect": { "enum": ["deny", "approve"] },
             "message": { "$ref": "#/$defs/MessageString" },
             "tags": { "$ref": "#/$defs/Tags" },
-            "metadata": { "$ref": "#/$defs/ThenMetadata" }
+            "metadata": { "$ref": "#/$defs/ThenMetadata" },
+            "timeout": { "type": "integer", "minimum": 1, "default": 300 },
+            "timeout_effect": { "enum": ["deny", "allow"], "default": "deny" }
           }
         }
       }
@@ -194,7 +196,7 @@
     "ToolSelector": {
       "type": "string",
       "minLength": 1,
-      "description": "Tool name or '*' for all tools."
+      "description": "Tool name, glob pattern (e.g. 'mcp_*'), or '*' for all tools."
     },
 
     "MessageString": {

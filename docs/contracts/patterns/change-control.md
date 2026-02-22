@@ -158,6 +158,72 @@ Restrict high-impact tools to senior roles. This pattern is the simplest form of
 
 ---
 
+## Human Approval Gate
+
+Pause high-impact tool calls and wait for a human to approve or deny them. Unlike role-based gates (which deny immediately if the role is wrong), approval gates pause the pipeline and request explicit human sign-off before proceeding.
+
+**When to use:** Destructive operations (database drops, production deploys, bulk deletes) where even authorized users should confirm intent before the tool executes.
+
+=== "YAML"
+
+    ```yaml
+    apiVersion: edictum/v1
+    kind: ContractBundle
+
+    metadata:
+      name: approval-gates
+
+    defaults:
+      mode: enforce
+
+    contracts:
+      - id: delete-requires-approval
+        type: pre
+        tool: "db_*"
+        when:
+          args.query:
+            matches: '\bDELETE\b'
+        then:
+          effect: approve
+          message: "DELETE query requires human approval: {args.query}"
+          timeout: 120
+          timeout_effect: deny
+    ```
+
+=== "Python"
+
+    ```python
+    from edictum import Edictum, LocalApprovalBackend
+
+    guard = Edictum.from_yaml(
+        "contracts.yaml",
+        approval_backend=LocalApprovalBackend(),
+    )
+
+    # When the contract fires, the pipeline:
+    # 1. Calls approval_backend.request_approval(...)
+    # 2. Waits up to `timeout` seconds for a decision
+    # 3. If approved -> tool executes normally
+    # 4. If denied -> EdictumDenied is raised
+    # 5. If timeout -> applies timeout_effect (deny or allow)
+    ```
+
+**Three outcomes:**
+
+| Outcome | What happens | Audit event |
+|---------|-------------|-------------|
+| Approved | Tool call proceeds, `on_allow` fires | `CALL_APPROVAL_GRANTED` |
+| Denied | `EdictumDenied` raised, `on_deny` fires | `CALL_APPROVAL_DENIED` |
+| Timeout | Applies `timeout_effect` (default: deny) | `CALL_APPROVAL_TIMEOUT` |
+
+**Gotchas:**
+- If no `approval_backend` is configured on the `Edictum` instance, `effect: approve` raises `EdictumDenied` immediately with the message "Approval required but no approval backend configured."
+- The `timeout` field is in seconds. The default (300s / 5 minutes) is generous for interactive workflows. Reduce it for automated pipelines.
+- `timeout_effect: allow` should only be used when the timeout indicates the operation is safe to proceed (e.g., a low-risk change that just needs acknowledgement).
+- The `tool: "db_*"` selector uses glob matching to cover all database tools. See [tool selectors](../../contracts/yaml-reference.md#precondition) in the YAML reference.
+
+---
+
 ## Blast Radius Limits
 
 Cap the scope of batch operations to prevent agents from making changes that are too large to review or roll back.

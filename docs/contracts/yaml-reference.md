@@ -158,14 +158,23 @@ Preconditions evaluate **before** tool execution. If the expression matches, the
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `tool` | string | yes | Tool name to target, or `"*"` for all tools. |
+| `tool` | string | yes | Tool name, glob pattern (e.g. `mcp_*`), or `"*"` for all tools. Patterns use Python's `fnmatch`. |
 | `when` | Expression | yes | Boolean expression tree. See [Expression Grammar](#expression-grammar). |
 
 **Constraints:**
 
-- `then.effect` must be `deny`. Preconditions block; they do not warn.
+- `then.effect` must be `deny` or `approve`. Preconditions deny or require human approval; they do not warn.
 - The `output.text` selector is invalid in preconditions because the tool has not run yet. Using it is a validation error.
 - When `mode: observe` is set (either on the contract or via `defaults.mode`), a matching precondition emits a `CALL_WOULD_DENY` audit event instead of denying. The tool call proceeds.
+
+**Approval effect:** When `effect: approve`, the pipeline pauses and requests human approval via the configured `approval_backend`. Two additional fields are available:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `timeout` | integer | `300` | Seconds to wait for an approval decision before applying `timeout_effect`. |
+| `timeout_effect` | `deny` or `allow` | `deny` | What happens when the approval times out. |
+
+If no `approval_backend` is configured on the `Edictum` instance, `effect: approve` raises `EdictumDenied` immediately.
 
 ```yaml
 - id: block-sensitive-reads
@@ -186,7 +195,7 @@ Postconditions evaluate **after** tool execution. They inspect the tool's output
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `tool` | string | yes | Tool name to target, or `"*"` for all tools. |
+| `tool` | string | yes | Tool name, glob pattern (e.g. `mcp_*`), or `"*"` for all tools. Patterns use Python's `fnmatch`. |
 | `when` | Expression | yes | Boolean expression tree. |
 
 **Constraints:**
@@ -451,7 +460,7 @@ then:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `effect` | string | yes | `deny` (block execution), `warn` (log only), or `redact`/`deny` for postconditions. Constrained by contract type. |
+| `effect` | string | yes | `deny` (block execution), `approve` (pause for human approval, pre only), `warn` (log only), or `redact`/`deny` for postconditions. Constrained by contract type. |
 | `message` | string | yes | Human-readable message sent to the agent and recorded in audit. 1-500 characters. |
 | `tags` | array of strings | no | Classification labels. Appear in audit events and can be filtered downstream. |
 | `metadata` | object | no | Arbitrary key-value data stamped into the `Verdict` and audit event. |
@@ -462,7 +471,7 @@ The allowed effect depends on the contract type:
 
 | Contract Type | Allowed Effects | Rationale |
 |---|---|---|
-| `pre` | `deny` only | Preconditions exist to block dangerous calls. |
+| `pre` | `deny`, `approve` | Preconditions deny or pause for human approval. |
 | `post` | `warn`, `redact`, `deny` | `warn` produces findings. `redact` replaces matched patterns. `deny` suppresses output. See [Postcondition Effects](#postcondition-effects). |
 | `session` | `deny` only | Session limits gate further execution. |
 

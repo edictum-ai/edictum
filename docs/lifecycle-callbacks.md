@@ -32,6 +32,8 @@ the pipeline continues normally.
 | Limit exceeded (max_attempts, max_tool_calls) | Fires | -- |
 | All checks pass | -- | Fires |
 | Observe mode converts deny to allow | -- | Fires |
+| Approval granted (`effect: approve`) | -- | Fires |
+| Approval denied or timed out (`effect: approve`) | Fires | -- |
 | Postcondition warns after execution | -- | -- |
 
 `on_deny` does **not** fire in observe mode. In observe mode, the call is allowed
@@ -142,6 +144,7 @@ functions work regardless of which framework you use.
 | **`on_deny`** | React to denials in real time | Pre-execution deny (enforce mode) |
 | **`on_allow`** | React to allowed calls in real time | Pre-execution allow |
 | **`on_postcondition_warn`** | Remediate bad tool output | Post-execution postcondition failure |
+| **`approval_backend`** | Human-in-the-loop approval for tool calls | Pre-execution when `effect: approve` fires |
 | **Audit sinks** | Persistent record of all decisions | Every decision (allow, deny, execute, fail) |
 | **OTel spans** | Production observability | Every decision (with full trace context) |
 
@@ -149,3 +152,32 @@ Lifecycle callbacks are the lightweight, zero-dependency option for users who ne
 real-time reactions without setting up audit sink parsing or OTel infrastructure.
 For production observability at scale, use [OTel](audit/telemetry.md).
 For persistent audit trails, use [audit sinks](audit/sinks.md).
+
+## Approval Backend
+
+The `approval_backend` parameter enables human-in-the-loop approval workflows. When a
+precondition with `effect: approve` fires, the pipeline pauses and delegates to the
+configured backend.
+
+```python
+from edictum import Edictum, LocalApprovalBackend
+
+guard = Edictum.from_yaml(
+    "contracts.yaml",
+    approval_backend=LocalApprovalBackend(),
+)
+```
+
+The `ApprovalBackend` protocol requires two async methods:
+
+| Method | Description |
+|--------|-------------|
+| `request_approval(tool_name, tool_args, message, *, timeout, timeout_effect, principal)` | Creates an approval request and returns an `ApprovalRequest` |
+| `wait_for_decision(approval_id, timeout)` | Blocks until the request is approved, denied, or times out. Returns an `ApprovalDecision` |
+
+`LocalApprovalBackend` prompts on stdout and reads from stdin -- suitable for local
+development and testing. For production use, implement `ApprovalBackend` with your
+own backend (Slack bot, web dashboard, approval queue).
+
+If `effect: approve` fires but no `approval_backend` is configured, the pipeline
+raises `EdictumDenied` immediately.
