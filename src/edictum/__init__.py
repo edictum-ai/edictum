@@ -484,6 +484,7 @@ class Edictum:
         success_check: Callable[[str, Any], bool] | None = None,
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
+        approval_backend: ApprovalBackend | None = None,
     ) -> Edictum:
         """Create an Edictum instance from a template.
 
@@ -508,6 +509,8 @@ class Edictum:
                 ``from_yaml()``.
             principal_resolver: Callable ``(tool_name, tool_input) -> Principal``
                 for per-call dynamic resolution. Forwarded to ``from_yaml()``.
+            approval_backend: Backend for human-in-the-loop approval workflows.
+                Forwarded to ``from_yaml()``.
 
         Returns:
             Configured Edictum instance.
@@ -537,6 +540,7 @@ class Edictum:
                     success_check=success_check,
                     principal=principal,
                     principal_resolver=principal_resolver,
+                    approval_backend=approval_backend,
                 )
 
         all_templates: set[str] = set()
@@ -622,6 +626,7 @@ class Edictum:
             on_deny=first._on_deny,
             on_allow=first._on_allow,
             success_check=first._success_check,
+            approval_backend=first._approval_backend,
         )
         merged.tool_registry = first.tool_registry
 
