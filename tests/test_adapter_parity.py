@@ -182,7 +182,9 @@ class TestParityCallbackCount:
         assert callback.call_count == 1, f"{name} fired on_postcondition_warn {callback.call_count} times, expected 1"
 
 
-# --- Pre helpers for all 6 adapters ---
+# --- Pre helpers for adapters with separate pre/post methods ---
+# Note: Nanobot uses GovernedToolRegistry which wraps execute() directly
+# (no separate pre/post). Nanobot parity is verified in test_adapter_nanobot.py.
 
 
 async def _claude_sdk_pre(adapter, tool_name="TestTool", args=None):
@@ -249,7 +251,7 @@ class TestParityOnAllow:
         assert on_allow.call_count == 1, f"{name} fired on_allow {on_allow.call_count} times, expected 1"
 
 
-# --- Post helpers for all 6 adapters ---
+# --- Post helpers for adapters with separate pre/post methods ---
 
 
 async def _claude_sdk_post(adapter, result="ok"):

@@ -1,6 +1,6 @@
 # Framework Adapter Comparison
 
-Edictum ships six framework adapters. This guide helps you choose the right one and understand the tradeoffs.
+Edictum ships seven framework adapters. This guide helps you choose the right one and understand the tradeoffs.
 
 ## When to use this
 
@@ -18,6 +18,7 @@ Read this page if you are choosing between agent frameworks, migrating from one 
 | Agno | `as_tool_hook()` | Yes (hook wraps execution) | Hook returns denial string | N/A |
 | Semantic Kernel | `register(kernel)` | Yes (filter modifies FunctionResult) | Filter sets terminate (configurable) + error | $0.008 |
 | Claude SDK | `to_hook_callables()` | No (side-effect only) | Returns deny dict to SDK | N/A |
+| Nanobot | `wrap_registry()` | Yes (wraps execute) | Returns `"[DENIED] reason"` string | N/A |
 
 Cost column reflects benchmarks from [edictum-demo](https://github.com/acartag7/edictum-demo) using each framework's default model. N/A indicates no published benchmark data.
 
@@ -25,7 +26,7 @@ Cost column reflects benchmarks from [edictum-demo](https://github.com/acartag7/
 
 ## Which Adapter Should I Use?
 
-- **Need full PII interception?** -- Use LangChain, Agno, or Semantic Kernel. These adapters can replace the tool result before the LLM sees it.
+- **Need full PII interception?** -- Use LangChain, Agno, Semantic Kernel, or Nanobot. These adapters can replace the tool result before the LLM sees it.
 - **Cheapest per-task cost?** -- Semantic Kernel ($0.008 per task in benchmarks).
 - **Simplest integration?** -- Claude SDK or Agno. Both require minimal wiring.
 - **Using CrewAI?** -- CrewAI adapter is the only option. Note that CrewAI hooks are global (applied to every tool across all agents in the crew).
@@ -108,6 +109,18 @@ hooks = adapter.to_hook_callables()
 # Use in your agent loop — see bridge recipe in Claude SDK adapter docs
 ```
 
+### Nanobot
+
+```python
+from edictum import Edictum, Principal
+from edictum.adapters.nanobot import NanobotAdapter
+
+guard = Edictum.from_yaml("contracts.yaml")
+adapter = NanobotAdapter(guard=guard, principal=Principal(role="user"))
+governed_registry = adapter.wrap_registry(agent.tool_registry)
+# Replace: agent.tool_registry = governed_registry
+```
+
 ---
 
 ## Known Limitations
@@ -136,6 +149,10 @@ hooks = adapter.to_hook_callables()
 ### Claude SDK
 
 - Side-effect only -- the hook callables (`to_hook_callables()`) cannot replace the tool result. PII detection is logged but not intercepted before reaching the model. Postcondition `redact`/`deny` effects set `PostCallResult.result` for wrapper consumers but cannot modify the SDK's result flow. A warning is logged at adapter construction when postconditions declare these effects. See [Claude SDK adapter docs](../adapters/claude-sdk.md).
+
+### Nanobot
+
+- `GovernedToolRegistry.execute()` always returns a string (matching nanobot's `ToolRegistry` contract). Non-string results from the inner registry are converted via `str()`. See [Nanobot adapter docs](../adapters/nanobot.md).
 
 ### OpenAI Agents (postcondition enforcement)
 

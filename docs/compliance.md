@@ -61,7 +61,7 @@ The entity authorizes, establishes, and manages credentials for system users.
 
 | Requirement | Edictum Feature | Evidence / Configuration |
 |-------------|-------------------|------------------------|
-| Identity propagation | `Principal` is set at the adapter level and propagated to every `ToolEnvelope`, `AuditEvent`, and pipeline decision. All six adapters support principal injection. | Adapter configuration passing `Principal(user_id=..., service_id=..., org_id=...)`. Audit events with `principal` field populated. |
+| Identity propagation | `Principal` is set at the adapter level and propagated to every `ToolEnvelope`, `AuditEvent`, and pipeline decision. All seven adapters support principal injection. | Adapter configuration passing `Principal(user_id=..., service_id=..., org_id=...)`. Audit events with `principal` field populated. |
 | Credential-based access decisions | Preconditions can require specific principal fields to be present or match expected values before allowing tool execution. | YAML contracts with `principal.user_id: { exists: true }`, `principal.role: { equals: admin }`, `principal.ticket_ref: { exists: true }`. Programmatic preconditions can check `envelope.principal` directly in Python code. |
 
 ### CC6.3 -- Authorization of System Access

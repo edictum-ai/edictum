@@ -2,7 +2,7 @@
 
 ## What is Edictum
 
-Runtime contract enforcement for AI agent tool calls. Deterministic pipeline: preconditions, postconditions, session contracts, principal-aware enforcement. Six framework adapters (LangChain, CrewAI, Agno, Semantic Kernel, OpenAI Agents SDK, Claude Agent SDK). Zero runtime deps in core.
+Runtime contract enforcement for AI agent tool calls. Deterministic pipeline: preconditions, postconditions, session contracts, principal-aware enforcement. Seven framework adapters (LangChain, CrewAI, Agno, Semantic Kernel, OpenAI Agents SDK, Claude Agent SDK, Nanobot). Zero runtime deps in core.
 
 Current version: 0.9.0 (PyPI: `edictum`)
 
@@ -15,7 +15,7 @@ edictum/
 ├── src/edictum/          <- MIT license (open source core)
 │   ├── core/             pipeline, envelope, session (MemoryBackend)
 │   ├── contracts/        YAML parser, templates, composition
-│   ├── adapters/         6 framework adapters
+│   ├── adapters/         7 framework adapters
 │   ├── audit.py          AuditEvent, StdoutAuditSink, FileAuditSink, RedactionPolicy
 │   ├── telemetry.py      OTel spans, GovernanceTelemetry
 │   └── cli/              check, test, validate, diff, replay
@@ -42,7 +42,7 @@ Core provides protocols/interfaces. ee/ provides implementations.
 - GovernancePipeline (evaluation engine)
 - ToolEnvelope, Principal model, Session (MemoryBackend)
 - YAML contract parsing + validation + templates + composition
-- All 6 framework adapters
+- All 7 framework adapters
 - Observe mode (shadow deploy)
 - on_postcondition_warn callbacks
 - edictum check + edictum test CLI

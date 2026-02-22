@@ -164,6 +164,7 @@ Adapters are thin translation layers between framework-specific hook APIs and th
 | `SemanticKernelAdapter` | Semantic Kernel | `register(kernel)` -- auto-invocation filter |
 | `OpenAIAgentsAdapter` | OpenAI Agents | `as_guardrails()` -- input/output guardrails |
 | `ClaudeAgentSDKAdapter` | Claude Agent SDK | `to_hook_callables()` -- pre/post tool use hooks |
+| `NanobotAdapter` | Nanobot | `wrap_registry()` -- governed ToolRegistry |
 
 Adapters never contain enforcement logic. They translate formats. If you need to add a new contract, add it as a contract or hook -- not adapter code.
 
@@ -301,6 +302,7 @@ src/edictum/
     semantic_kernel.py     Semantic Kernel filter pattern
     openai_agents.py       OpenAI Agents guardrails
     claude_agent_sdk.py    Anthropic Claude Agent SDK hooks
+    nanobot.py             Nanobot governed ToolRegistry
 
   server/                  pip install edictum[server]
     client.py              EdictumServerClient (async HTTP, auth, retries)

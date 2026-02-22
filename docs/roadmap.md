@@ -9,7 +9,7 @@ This page tracks what Edictum has shipped, what is actively being built, and wha
 The foundation is production-usable today as an in-process library (v0.6.0).
 
 - **Enforcement pipeline** with preconditions, postconditions, and session contracts
-- **6 framework adapters**: LangChain, OpenAI Agents SDK, CrewAI, Agno, Semantic Kernel, Claude Agent SDK
+- **7 framework adapters**: LangChain, OpenAI Agents SDK, CrewAI, Agno, Semantic Kernel, Claude Agent SDK, Nanobot
 - **YAML contract engine** with JSON Schema validation and SHA-256 versioning
 - **CLI tools**: `edictum validate`, `edictum check`, `edictum diff`, `edictum replay`, `edictum test`
 - **OpenTelemetry** span emission with OTel Collector support

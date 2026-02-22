@@ -131,7 +131,7 @@ guard = Edictum.from_template("file-agent", on_deny=my_handler, on_allow=my_hand
 merged = Edictum.from_multiple([guard1, guard2])
 ```
 
-## All 6 Adapters
+## All 7 Adapters
 
 Lifecycle callbacks fire in every adapter -- they are invoked by the adapter's
 pre-execution path, not the pipeline itself. This means the same `on_deny` / `on_allow`

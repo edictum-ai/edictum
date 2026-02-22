@@ -225,7 +225,7 @@ hooks = adapter.to_hook_callables()
 # hooks = {"pre_tool_use": ..., "post_tool_use": ...}
 ```
 
-All six adapters enforce the same contracts. The YAML does not change between frameworks.
+All seven adapters enforce the same contracts. The YAML does not change between frameworks.
 
 ## 5. Observe Mode (Bonus)
 

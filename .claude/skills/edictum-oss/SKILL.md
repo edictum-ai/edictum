@@ -15,7 +15,7 @@ Everything under `src/edictum/` is OSS core (MIT). This includes:
 - Envelope (`envelope.py`) — ToolEnvelope, Principal, create_envelope()
 - Contracts (`contracts.py`) — @precondition, @postcondition, @session_contract, Verdict
 - YAML engine (`yaml_engine/`) — loader, evaluator, compiler, templates
-- Adapters (`adapters/`) — all 6 framework adapters
+- Adapters (`adapters/`) — all 7 framework adapters
 - Audit (`audit.py`) — AuditEvent, StdoutAuditSink, FileAuditSink, RedactionPolicy
 - Session (`session.py`) — Session, MemoryBackend
 - CLI (`cli/`) — validate, check, diff, replay, test

@@ -135,7 +135,7 @@ See the [quickstart guide](https://docs.edictum.dev/quickstart/) to write your f
 - File and stdout sinks included; `CompositeSink` fans out to multiple destinations
 - `--json` CLI output for CI/CD pipeline integration
 
-**Works with 6 frameworks**
+**Works with 7 frameworks**
 
 | Framework | Integration | PII Redaction | Complexity |
 |-----------|------------|---------------|------------|
@@ -145,6 +145,7 @@ See the [quickstart guide](https://docs.edictum.dev/quickstart/) to write your f
 | Semantic Kernel | `register()` | Full interception | Medium-High |
 | CrewAI | `register()` | Partial | High |
 | Claude Agent SDK | `to_hook_callables()` | Logged only | Low |
+| Nanobot | `wrap_registry()` | Full interception | Low |
 
 See [Adapter Docs](https://docs.edictum.dev/adapters/overview/) for setup, known limitations, and recommendations.
 
@@ -180,6 +181,7 @@ pip install edictum[all]         # everything
 guard = Edictum.from_template("file-agent")      # secret file protection, destructive cmd denial
 guard = Edictum.from_template("research-agent")   # output PII detection, session limits
 guard = Edictum.from_template("devops-agent")     # role gates, ticket requirements, bash safety
+guard = Edictum.from_template("nanobot-agent")    # approval gates, path restrictions, session limits
 ```
 
 ## Demos & Examples

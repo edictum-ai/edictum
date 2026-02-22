@@ -51,7 +51,7 @@ Apply the "API Design Checklist" from CLAUDE.md to every new or changed public A
 ### 5. Adapter parity
 
 If any file in `src/edictum/adapters/` changed:
-- Verify all 6 adapters handle the same features (check the adapter public APIs in CLAUDE.md)
+- Verify all 7 adapters handle the same features (check the adapter public APIs in CLAUDE.md)
 - New parameters or behaviors must be consistent across adapters
 
 ### 6. Terminology

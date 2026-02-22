@@ -72,7 +72,7 @@ def success_check(tool_name: str, result: Any) -> bool:
 - `result`: the value returned by the tool
 - Returns `True` if the tool call succeeded, `False` if it failed
 
-When provided, it replaces the default heuristic in all 6 framework adapters and in `Edictum.run()`. When not provided, the default heuristic applies unchanged.
+When provided, it replaces the default heuristic in all 7 framework adapters and in `Edictum.run()`. When not provided, the default heuristic applies unchanged.
 
 The callable is passed through all factory methods:
 

@@ -1,0 +1,133 @@
+apiVersion: edictum/v1
+kind: ContractBundle
+
+metadata:
+  name: nanobot-agent
+  description: "Governance contracts for nanobot AI agents"
+
+defaults:
+  mode: enforce
+
+tools:
+  exec:
+    side_effect: irreversible
+  write_file:
+    side_effect: irreversible
+  edit_file:
+    side_effect: irreversible
+  read_file:
+    side_effect: read
+  list_dir:
+    side_effect: read
+  web_search:
+    side_effect: read
+  web_fetch:
+    side_effect: read
+  message:
+    side_effect: write
+  spawn:
+    side_effect: irreversible
+  cron:
+    side_effect: irreversible
+  "mcp_*":
+    side_effect: irreversible
+
+contracts:
+  # Require approval for shell commands
+  - id: approve-exec
+    type: pre
+    tool: exec
+    when:
+      tool.name:
+        exists: true
+    then:
+      effect: approve
+      message: "Shell command requires approval: {args.command}"
+      timeout: 300
+      timeout_effect: deny
+
+  # Require approval for spawning sub-agents
+  - id: approve-spawn
+    type: pre
+    tool: spawn
+    when:
+      tool.name:
+        exists: true
+    then:
+      effect: approve
+      message: "Sub-agent spawn requires approval: {args.task}"
+      timeout: 300
+      timeout_effect: deny
+
+  # Require approval for cron jobs
+  - id: approve-cron
+    type: pre
+    tool: cron
+    when:
+      tool.name:
+        exists: true
+    then:
+      effect: approve
+      message: "Cron job requires approval: {args.schedule}"
+      timeout: 300
+      timeout_effect: deny
+
+  # Deny writing outside allowed paths
+  - id: deny-write-outside-workspace
+    type: pre
+    tool: write_file
+    when:
+      args.path:
+        matches: '^(?!/workspace/).*'
+    then:
+      effect: deny
+      message: "Cannot write outside workspace: {args.path}"
+
+  # Deny editing outside allowed paths
+  - id: deny-edit-outside-workspace
+    type: pre
+    tool: edit_file
+    when:
+      args.path:
+        matches: '^(?!/workspace/).*'
+    then:
+      effect: deny
+      message: "Cannot edit outside workspace: {args.path}"
+
+  # Deny reading sensitive files
+  - id: deny-sensitive-reads
+    type: pre
+    tool: read_file
+    when:
+      args.path:
+        matches: '.*\.(env|key|pem|secret)$'
+    then:
+      effect: deny
+      message: "Cannot read sensitive file: {args.path}"
+
+  # Require approval for unknown MCP tools
+  - id: approve-mcp-tools
+    type: pre
+    tool: "mcp_*"
+    when:
+      tool.name:
+        exists: true
+    then:
+      effect: approve
+      message: "MCP tool call requires approval: {tool.name}"
+      timeout: 120
+      timeout_effect: deny
+
+  # Session limits
+  - id: session-limits
+    type: session
+    limits:
+      max_attempts: 200
+      max_tool_calls: 100
+      max_calls_per_tool:
+        exec: 20
+        spawn: 5
+        cron: 10
+    then:
+      effect: deny
+      message: "Session limit reached. Summarize progress and stop."
