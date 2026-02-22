@@ -1,6 +1,6 @@
 # Adapter Overview
 
-Edictum ships six framework adapters. Adapters are thin translation layers --
+Edictum ships seven framework adapters. Adapters are thin translation layers --
 they convert framework-specific hook events into Edictum envelopes and translate
 enforcement decisions back into the format each framework expects. All allow/deny
 logic lives in the pipeline, not in the adapters.
@@ -45,6 +45,7 @@ wrapper = adapter.as_tool_wrapper()
 | Agno | `AgnoAdapter` | `as_tool_hook()` | Wrap-around function |
 | Semantic Kernel | `SemanticKernelAdapter` | `register(kernel)` | Registers `AUTO_FUNCTION_INVOCATION` filter on kernel |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter` | `as_guardrails()` | `(input_guardrail, output_guardrail)` tuple |
+| Nanobot | `NanobotAdapter` | `wrap_registry()` | `GovernedToolRegistry` drop-in replacement |
 
 ## Capabilities
 
@@ -56,6 +57,7 @@ wrapper = adapter.as_tool_wrapper()
 | Semantic Kernel | Yes (filter modifies FunctionResult) | Filter sets terminate (configurable) + error |
 | Claude SDK | No (side-effect only) | Returns deny dict to SDK |
 | OpenAI Agents | Deny only (`reject_content`) | `reject_content(reason)` |
+| Nanobot | Yes (wraps execute) | Returns `"[DENIED] reason"` string |
 
 For regulated environments requiring PII interception (not just detection), use
 LangChain, Agno, or Semantic Kernel.
@@ -161,6 +163,8 @@ Pick the adapter that matches your agent framework:
   auto-function-invocation filter on the kernel.
 - **OpenAI Agents SDK** -- Using the OpenAI Agents SDK. Per-tool guardrails via
   `tool_input_guardrails` / `tool_output_guardrails`.
+- **Nanobot** -- Using the nanobot multi-channel agent framework. Drop-in
+  `GovernedToolRegistry` that wraps every `execute()` call.
 
 If your framework is not listed, use `Edictum.run()` directly -- it provides
 the same pipeline without any adapter:
@@ -187,4 +191,4 @@ pip install edictum[yaml]             # YAML contract engine (no framework deps)
 pip install edictum[all]              # Everything
 ```
 
-The Claude Agent SDK adapter has no extra dependencies beyond `edictum[yaml]`.
+The Claude Agent SDK and Nanobot adapters have no extra dependencies beyond `edictum[yaml]`.

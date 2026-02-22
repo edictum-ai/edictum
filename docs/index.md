@@ -80,7 +80,7 @@ Contracts are YAML. Enforcement is deterministic. The LLM cannot talk its way pa
 
 1. **Write contracts in YAML.** Preconditions deny dangerous calls before execution. Postconditions check tool output after -- warn, redact, or deny. Session contracts cap total calls and retries.
 
-2. **Attach to your agent framework.** One adapter line. Same contracts across all six supported frameworks -- LangChain, OpenAI Agents, CrewAI, Agno, Semantic Kernel, and Claude SDK.
+2. **Attach to your agent framework.** One adapter line. Same contracts across all seven supported frameworks -- LangChain, OpenAI Agents, CrewAI, Agno, Semantic Kernel, Claude SDK, and Nanobot.
 
 3. **Compose and layer bundles.** Split contracts across files by concern. `from_yaml()` accepts multiple paths with deterministic merge semantics. Shadow-test contract updates with [`observe_alongside`](contracts/yaml-reference.md#observe-alongside) before promoting them.
 
@@ -93,7 +93,7 @@ Contracts are YAML. Enforcement is deterministic. The LLM cannot talk its way pa
 - **I want to try it now** -- [Quickstart](quickstart.md). Install, write a contract, deny a dangerous call in five minutes.
 - **I want to see real scenarios** -- [Use Cases](use-cases.md). Six domains with complete YAML bundles and wiring code.
 - **I want to understand the system** -- [How It Works](concepts/how-it-works.md). The pipeline, adapters, and what happens on every tool call.
-- **I have a specific framework** -- [Adapters](adapters/overview.md). Integration guides for LangChain, OpenAI, CrewAI, Agno, Semantic Kernel, and Claude SDK.
+- **I have a specific framework** -- [Adapters](adapters/overview.md). Integration guides for LangChain, OpenAI, CrewAI, Agno, Semantic Kernel, Claude SDK, and Nanobot.
 
 ## What You Can Do
 
@@ -123,7 +123,7 @@ Requires Python 3.11+. Current version: **v0.9.0**. See the [quickstart](quickst
 
 ## Framework Support
 
-Edictum integrates with six agent frameworks. Same YAML contracts, same enforcement, different adapter patterns:
+Edictum integrates with seven agent frameworks. Same YAML contracts, same enforcement, different adapter patterns:
 
 | Framework | Adapter | Integration |
 |-----------|---------|-------------|
@@ -133,6 +133,7 @@ Edictum integrates with six agent frameworks. Same YAML contracts, same enforcem
 | Agno | `AgnoAdapter` | `as_tool_hook()` |
 | Semantic Kernel | `SemanticKernelAdapter` | `register(kernel)` |
 | Claude Agent SDK | `ClaudeAgentSDKAdapter` | `to_hook_callables()` |
+| Nanobot | `NanobotAdapter` | `wrap_registry()` |
 
 See the [adapter overview](adapters/overview.md) for setup guides and known limitations.
 
@@ -152,4 +153,4 @@ See the [roadmap](roadmap.md) for the full plan.
 - [How It Works](concepts/how-it-works.md) -- The pipeline, adapters, and what happens on every tool call
 - [Contracts](concepts/contracts.md) -- Preconditions, postconditions, session limits, and observe mode
 - [YAML Reference](contracts/yaml-reference.md) -- Full schema for `edictum/v1` contract bundles
-- [Adapters](adapters/overview.md) -- Integration guides for all six frameworks
+- [Adapters](adapters/overview.md) -- Integration guides for all seven frameworks

@@ -1,6 +1,6 @@
 # Templates
 
-Edictum ships three built-in contract templates for common agent patterns, and you can create your own. Templates are complete, production-ready YAML bundles that you can load directly or use as a starting point.
+Edictum ships four built-in contract templates for common agent patterns, and you can create your own. Templates are complete, production-ready YAML bundles that you can load directly or use as a starting point.
 
 ## Use Cases
 
@@ -21,18 +21,21 @@ Edictum ships three built-in contract templates for common agent patterns, and y
 - Need to protect files and bash commands? → `file-agent`
 - Need output scanning and session limits? → `research-agent`
 - Need role gates, ticket requirements, and all of the above? → `devops-agent`
+- Using nanobot with approval gates and path restrictions? → `nanobot-agent`
 
 **Comparison:**
 
-| Capability | `file-agent` | `research-agent` | `devops-agent` |
-|-----------|:---:|:---:|:---:|
-| Secret file protection | Yes | Yes (3 patterns) | Yes |
-| Destructive bash denial | Yes | -- | Yes |
-| Write scope enforcement | Yes | -- | -- |
-| PII detection in output | -- | Yes | Yes |
-| Session limits | -- | 50 calls / 100 attempts | 20 calls / 50 attempts |
-| Role-gated deploys | -- | -- | Yes |
-| Ticket requirements | -- | -- | Yes |
+| Capability | `file-agent` | `research-agent` | `devops-agent` | `nanobot-agent` |
+|-----------|:---:|:---:|:---:|:---:|
+| Secret file protection | Yes | Yes (3 patterns) | Yes | Yes (regex) |
+| Destructive bash denial | Yes | -- | Yes | -- |
+| Write scope enforcement | Yes | -- | -- | Yes (workspace path) |
+| PII detection in output | -- | Yes | Yes | -- |
+| Session limits | -- | 50 calls / 100 attempts | 20 calls / 50 attempts | 100 calls / 200 attempts |
+| Role-gated deploys | -- | -- | Yes | -- |
+| Ticket requirements | -- | -- | Yes | -- |
+| Approval gates | -- | -- | -- | Yes (exec, spawn, cron, MCP) |
+| Per-tool limits | -- | -- | -- | Yes (exec: 20, spawn: 5, cron: 10) |
 
 All templates can be customized after loading. See [Customizing Built-in Templates](#customizing-built-in-templates) below.
 
@@ -72,6 +75,7 @@ Available built-in template names:
 | `file-agent` | Agents that read/write files and run shell commands |
 | `research-agent` | Agents that call APIs, search the web, and produce reports |
 | `devops-agent` | Agents that manage infrastructure, deploy services, and handle CI/CD |
+| `nanobot-agent` | Multi-channel nanobot agents with approval gates and workspace path enforcement |
 
 ---
 
@@ -333,6 +337,171 @@ contracts:
 
 ---
 
+## `nanobot-agent`
+
+The nanobot-agent template is designed for multi-channel nanobot agents. It provides approval gates for high-risk operations (shell commands, sub-agent spawning, cron jobs, MCP tool calls), workspace path enforcement for file writes and edits, sensitive file read protection, and session limits with per-tool caps.
+
+### Contracts
+
+| Contract ID | Type | Tool | Description |
+|---|---|---|---|
+| `approve-exec` | pre | `exec` | Requires approval before executing shell commands. |
+| `approve-spawn` | pre | `spawn` | Requires approval before spawning sub-agents. |
+| `approve-cron` | pre | `cron` | Requires approval before creating cron jobs. |
+| `deny-write-outside-workspace` | pre | `write_file` | Denies writes to paths outside `/workspace/`. |
+| `deny-edit-outside-workspace` | pre | `edit_file` | Denies edits to paths outside `/workspace/`. |
+| `deny-sensitive-reads` | pre | `read_file` | Denies reads of `.env`, `.key`, `.pem`, and `.secret` files. |
+| `approve-mcp-tools` | pre | `mcp_*` | Requires approval for any MCP tool call. |
+| `session-limits` | session | -- | Caps at 100 tool calls, 200 attempts, with per-tool limits (exec: 20, spawn: 5, cron: 10). |
+
+### Full YAML
+
+```yaml
+apiVersion: edictum/v1
+kind: ContractBundle
+
+metadata:
+  name: nanobot-agent
+  description: "Governance contracts for nanobot AI agents"
+
+defaults:
+  mode: enforce
+
+tools:
+  exec:
+    side_effect: irreversible
+  write_file:
+    side_effect: irreversible
+  edit_file:
+    side_effect: irreversible
+  read_file:
+    side_effect: read
+  list_dir:
+    side_effect: read
+  web_search:
+    side_effect: read
+  web_fetch:
+    side_effect: read
+  message:
+    side_effect: write
+  spawn:
+    side_effect: irreversible
+  cron:
+    side_effect: irreversible
+  "mcp_*":
+    side_effect: irreversible
+
+contracts:
+  - id: approve-exec
+    type: pre
+    tool: exec
+    when:
+      tool.name:
+        exists: true
+    then:
+      effect: approve
+      message: "Shell command requires approval: {args.command}"
+      timeout: 300
+      timeout_effect: deny
+
+  - id: approve-spawn
+    type: pre
+    tool: spawn
+    when:
+      tool.name:
+        exists: true
+    then:
+      effect: approve
+      message: "Sub-agent spawn requires approval: {args.task}"
+      timeout: 300
+      timeout_effect: deny
+
+  - id: approve-cron
+    type: pre
+    tool: cron
+    when:
+      tool.name:
+        exists: true
+    then:
+      effect: approve
+      message: "Cron job requires approval: {args.schedule}"
+      timeout: 300
+      timeout_effect: deny
+
+  - id: deny-write-outside-workspace
+    type: pre
+    tool: write_file
+    when:
+      args.path:
+        matches: '^(?!/workspace/).*'
+    then:
+      effect: deny
+      message: "Cannot write outside workspace: {args.path}"
+
+  - id: deny-edit-outside-workspace
+    type: pre
+    tool: edit_file
+    when:
+      args.path:
+        matches: '^(?!/workspace/).*'
+    then:
+      effect: deny
+      message: "Cannot edit outside workspace: {args.path}"
+
+  - id: deny-sensitive-reads
+    type: pre
+    tool: read_file
+    when:
+      args.path:
+        matches: '.*\.(env|key|pem|secret)$'
+    then:
+      effect: deny
+      message: "Cannot read sensitive file: {args.path}"
+
+  - id: approve-mcp-tools
+    type: pre
+    tool: "mcp_*"
+    when:
+      tool.name:
+        exists: true
+    then:
+      effect: approve
+      message: "MCP tool call requires approval: {tool.name}"
+      timeout: 120
+      timeout_effect: deny
+
+  - id: session-limits
+    type: session
+    limits:
+      max_attempts: 200
+      max_tool_calls: 100
+      max_calls_per_tool:
+        exec: 20
+        spawn: 5
+        cron: 10
+    then:
+      effect: deny
+      message: "Session limit reached. Summarize progress and stop."
+```
+
+### Contract Details
+
+**approve-exec** -- Requires human approval for every shell command. The `tool.name: {exists: true}` condition is always true, meaning the contract fires for every `exec` call. The approval timeout is 300 seconds (5 minutes); if no decision is received, the call is denied. Configure an `approval_backend` on the guard to handle approval requests.
+
+**approve-spawn** -- Requires approval before spawning sub-agents. Sub-agent spawning is a high-risk operation because it creates autonomous child processes. The same timeout and deny-on-timeout behavior applies.
+
+**approve-cron** -- Requires approval before scheduling cron jobs. Cron jobs execute outside the current session, so human review is appropriate.
+
+**deny-write-outside-workspace / deny-edit-outside-workspace** -- These preconditions use a negative lookahead regex (`^(?!/workspace/).*`) to deny any path that doesn't start with `/workspace/`. This confines file modifications to the workspace directory. Adjust the path prefix if your nanobot agent uses a different working directory.
+
+**deny-sensitive-reads** -- Uses a regex match to deny reading files with sensitive extensions (`.env`, `.key`, `.pem`, `.secret`). The `$` anchor ensures the match is against the file extension, not substrings in the path.
+
+**approve-mcp-tools** -- Uses the `mcp_*` wildcard tool selector to require approval for any MCP-prefixed tool call. MCP tools are external integrations, so requiring approval adds a checkpoint before calling unknown external services.
+
+**session-limits** -- Sets generous overall limits (200 attempts, 100 tool calls) with tighter per-tool caps for high-risk operations: `exec` is capped at 20, `spawn` at 5, and `cron` at 10. These per-tool limits prevent an agent from repeatedly executing shell commands or spawning sub-agents within a single session.
+
+---
+
 ## Custom Template Directories
 
 You can create your own templates and load them with the `template_dirs` parameter. User directories are searched first; built-in templates serve as a fallback.
@@ -467,6 +636,7 @@ Output:
 ```
 devops-agent (built-in: True)
 file-agent (built-in: True)
+nanobot-agent (built-in: True)
 research-agent (built-in: True)
 ```
 
@@ -487,6 +657,7 @@ Output:
 support-agent: contracts/templates/support-agent.yaml
 devops-agent: built-in
 file-agent: built-in
+nanobot-agent: built-in
 research-agent: built-in
 ```
 

@@ -1,0 +1,415 @@
+"""Tests for NanobotAdapter and GovernedToolRegistry."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+from unittest.mock import AsyncMock, MagicMock
+
+from edictum import Edictum, Principal, Verdict, postcondition, precondition
+from edictum.adapters.nanobot import GovernedToolRegistry, NanobotAdapter
+from edictum.approval import ApprovalDecision, ApprovalRequest, ApprovalStatus
+from edictum.audit import AuditAction
+from edictum.storage import MemoryBackend
+from tests.conftest import NullAuditSink
+
+# -- Mock nanobot types (no import from nanobot) --
+
+
+class MockToolRegistry:
+    def __init__(self):
+        self._tools: dict[str, tuple] = {}
+
+    def register(self, name: str, handler, description: str = "") -> None:
+        self._tools[name] = (handler, description)
+
+    async def execute(self, name: str, args: dict) -> str:
+        handler, _ = self._tools[name]
+        result = handler(**args)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return str(result)
+
+    def list_tools(self) -> list[str]:
+        return list(self._tools.keys())
+
+    def get_description(self, name: str) -> str:
+        return self._tools[name][1]
+
+
+@dataclass
+class MockInboundMessage:
+    content: str = ""
+    sender_id: str = "user123"
+    channel: str = "telegram"
+    channel_id: str = "chat456"
+    metadata: dict = field(default_factory=dict)
+
+
+def make_guard(**kwargs):
+    defaults = {
+        "environment": "test",
+        "audit_sink": NullAuditSink(),
+        "backend": MemoryBackend(),
+    }
+    defaults.update(kwargs)
+    return Edictum(**defaults)
+
+
+def make_registry():
+    reg = MockToolRegistry()
+    reg.register("read_file", lambda path: f"contents of {path}", "Read a file")
+    reg.register("write_file", lambda path, content: f"wrote {path}", "Write a file")
+    return reg
+
+
+class TestGovernedToolRegistry:
+    async def test_execute_allowed(self):
+        guard = make_guard()
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard, session_id="test")
+
+        result = await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        assert result == "contents of /tmp/test.txt"
+
+    async def test_execute_denied_enforce(self):
+        @precondition("*")
+        def always_deny(envelope):
+            return Verdict.fail("not allowed")
+
+        guard = make_guard(contracts=[always_deny])
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        result = await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        assert result.startswith("[DENIED]")
+        assert "not allowed" in result
+
+    async def test_execute_denied_observe(self):
+        @precondition("*")
+        def always_deny(envelope):
+            return Verdict.fail("would be denied")
+
+        sink = NullAuditSink()
+        guard = make_guard(mode="observe", contracts=[always_deny], audit_sink=sink)
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        result = await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        # Should execute normally in observe mode
+        assert result == "contents of /tmp/test.txt"
+        # Should emit CALL_WOULD_DENY audit
+        assert any(e.action == AuditAction.CALL_WOULD_DENY for e in sink.events)
+
+    async def test_execute_approval_flow(self):
+        @precondition("*")
+        def require_approval(envelope):
+            return Verdict.fail("needs approval")
+
+        require_approval._edictum_effect = "approve"
+        require_approval._edictum_timeout = 60
+        require_approval._edictum_timeout_effect = "deny"
+
+        mock_backend = AsyncMock()
+        mock_backend.request_approval.return_value = ApprovalRequest(
+            approval_id="req-1",
+            tool_name="read_file",
+            tool_args={"path": "/tmp/test.txt"},
+            message="needs approval",
+            timeout=60,
+        )
+        mock_backend.wait_for_decision.return_value = ApprovalDecision(
+            approved=True,
+            approver="admin",
+            status=ApprovalStatus.APPROVED,
+        )
+
+        guard = make_guard(contracts=[require_approval], approval_backend=mock_backend)
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        result = await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        assert result == "contents of /tmp/test.txt"
+        mock_backend.request_approval.assert_called_once()
+        mock_backend.wait_for_decision.assert_called_once()
+
+    async def test_execute_approval_denied(self):
+        @precondition("*")
+        def require_approval(envelope):
+            return Verdict.fail("needs approval")
+
+        require_approval._edictum_effect = "approve"
+        require_approval._edictum_timeout = 60
+        require_approval._edictum_timeout_effect = "deny"
+
+        mock_backend = AsyncMock()
+        mock_backend.request_approval.return_value = ApprovalRequest(
+            approval_id="req-1",
+            tool_name="read_file",
+            tool_args={},
+            message="needs approval",
+            timeout=60,
+        )
+        mock_backend.wait_for_decision.return_value = ApprovalDecision(
+            approved=False,
+            reason="rejected by reviewer",
+            status=ApprovalStatus.DENIED,
+        )
+
+        guard = make_guard(contracts=[require_approval], approval_backend=mock_backend)
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        result = await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        assert "[DENIED]" in result
+        assert "Approval denied" in result
+
+    async def test_execute_no_approval_backend(self):
+        @precondition("*")
+        def require_approval(envelope):
+            return Verdict.fail("needs approval")
+
+        require_approval._edictum_effect = "approve"
+
+        guard = make_guard(contracts=[require_approval])
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        result = await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        assert "[DENIED]" in result
+        assert "no approval backend" in result.lower()
+
+    async def test_delegates_register(self):
+        guard = make_guard()
+        inner = MockToolRegistry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        governed.register("new_tool", lambda: "ok", "A new tool")
+        assert "new_tool" in inner.list_tools()
+
+    async def test_delegates_list_tools(self):
+        guard = make_guard()
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        assert governed.list_tools() == inner.list_tools()
+
+    async def test_delegates_get_description(self):
+        guard = make_guard()
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        assert governed.get_description("read_file") == "Read a file"
+
+    async def test_for_subagent(self):
+        guard = make_guard()
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard, session_id="parent", principal=Principal(role="admin"))
+
+        child = governed.for_subagent(session_id="child-1")
+        assert child.session_id == "child-1"
+        assert child._principal == Principal(role="admin")
+        assert child._inner is inner
+        assert child._guard is guard
+
+    async def test_for_subagent_default_session(self):
+        guard = make_guard()
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard, session_id="parent")
+
+        child = governed.for_subagent()
+        assert child.session_id != "parent"  # Gets its own session
+
+    async def test_set_principal(self):
+        @precondition("*")
+        def require_admin(envelope):
+            if envelope.principal is None or envelope.principal.role != "admin":
+                return Verdict.fail("admin required")
+            return Verdict.pass_()
+
+        guard = make_guard(contracts=[require_admin])
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard, principal=Principal(role="viewer"))
+
+        # First call: viewer -> denied
+        result1 = await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        assert "[DENIED]" in result1
+
+        # Update principal
+        governed.set_principal(Principal(role="admin"))
+
+        # Second call: admin -> allowed
+        result2 = await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        assert result2 == "contents of /tmp/test.txt"
+
+    async def test_postcondition_warnings(self):
+        @postcondition("*")
+        def detect_issue(envelope, result):
+            return Verdict.fail("issue found in output")
+
+        sink = NullAuditSink()
+        guard = make_guard(contracts=[detect_issue], audit_sink=sink)
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        result = await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        # Result is still returned (postcondition warnings don't block)
+        assert "contents of /tmp/test.txt" in result
+
+        # Verify postcondition was evaluated in audit
+        exec_events = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert len(exec_events) == 1
+        assert exec_events[0].postconditions_passed is False
+
+    async def test_audit_events_emitted(self):
+        sink = NullAuditSink()
+        guard = make_guard(audit_sink=sink)
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        await governed.execute("read_file", {"path": "/tmp/test.txt"})
+
+        actions = [e.action for e in sink.events]
+        assert AuditAction.CALL_ALLOWED in actions
+        assert AuditAction.CALL_EXECUTED in actions
+
+    async def test_audit_events_on_deny(self):
+        @precondition("*")
+        def always_deny(envelope):
+            return Verdict.fail("denied")
+
+        sink = NullAuditSink()
+        guard = make_guard(contracts=[always_deny], audit_sink=sink)
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        await governed.execute("read_file", {"path": "/tmp/test.txt"})
+
+        actions = [e.action for e in sink.events]
+        assert AuditAction.CALL_DENIED in actions
+
+    async def test_on_deny_callback(self):
+        @precondition("*")
+        def always_deny(envelope):
+            return Verdict.fail("not allowed")
+
+        on_deny = MagicMock()
+        guard = make_guard(contracts=[always_deny], on_deny=on_deny)
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        assert on_deny.call_count == 1
+
+    async def test_on_allow_callback(self):
+        on_allow = MagicMock()
+        guard = make_guard(on_allow=on_allow)
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard, session_id="test")
+
+        await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        assert on_allow.call_count == 1
+
+    async def test_custom_success_check(self):
+        def always_fail(tool_name, result):
+            return False
+
+        sink = NullAuditSink()
+        guard = make_guard(success_check=always_fail, audit_sink=sink)
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard)
+
+        await governed.execute("read_file", {"path": "/tmp/test.txt"})
+
+        failed = [e for e in sink.events if e.action == AuditAction.CALL_FAILED]
+        assert len(failed) == 1
+
+    async def test_principal_resolver(self):
+        @precondition("*")
+        def require_admin(envelope):
+            if envelope.principal is None or envelope.principal.role != "admin":
+                return Verdict.fail("admin required")
+            return Verdict.pass_()
+
+        def resolver(tool_name, tool_input):
+            return Principal(role="admin")
+
+        guard = make_guard(contracts=[require_admin])
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard, principal=Principal(role="viewer"), principal_resolver=resolver)
+
+        result = await governed.execute("read_file", {"path": "/tmp/test.txt"})
+        assert "[DENIED]" not in result
+
+
+class TestNanobotAdapter:
+    def test_wrap_registry(self):
+        guard = make_guard()
+        adapter = NanobotAdapter(
+            guard,
+            session_id="sess-1",
+            principal=Principal(role="admin"),
+        )
+        inner = make_registry()
+
+        governed = adapter.wrap_registry(inner)
+        assert isinstance(governed, GovernedToolRegistry)
+        assert governed._inner is inner
+        assert governed.session_id == "sess-1"
+        assert governed._principal == Principal(role="admin")
+
+    def test_principal_from_message(self):
+        msg = MockInboundMessage(
+            content="hello",
+            sender_id="user123",
+            channel="telegram",
+            channel_id="chat456",
+        )
+
+        principal = NanobotAdapter.principal_from_message(msg)
+        assert principal.user_id == "telegram:user123"
+        assert principal.role == "user"
+        assert principal.claims["channel"] == "telegram"
+        assert principal.claims["channel_id"] == "chat456"
+
+    def test_principal_from_message_missing_channel_id(self):
+        """Gracefully handle messages without channel_id."""
+
+        class MinimalMessage:
+            content = "hello"
+            sender_id = "user1"
+            channel = "discord"
+
+        principal = NanobotAdapter.principal_from_message(MinimalMessage())
+        assert principal.user_id == "discord:user1"
+        assert principal.claims["channel_id"] == ""
+
+
+class TestNanobotTemplate:
+    def test_nanobot_template_loads(self):
+        guard = Edictum.from_template("nanobot-agent")
+        assert guard is not None
+
+    def test_nanobot_template_has_expected_contracts(self):
+        guard = Edictum.from_template("nanobot-agent")
+        contract_ids = set()
+        for c in guard._preconditions:
+            cid = getattr(c, "_edictum_id", None)
+            if cid:
+                contract_ids.add(cid)
+        for c in guard._session_contracts:
+            cid = getattr(c, "_edictum_id", None)
+            if cid:
+                contract_ids.add(cid)
+
+        expected = {
+            "approve-exec",
+            "approve-spawn",
+            "approve-cron",
+            "deny-write-outside-workspace",
+            "deny-edit-outside-workspace",
+            "deny-sensitive-reads",
+            "approve-mcp-tools",
+            "session-limits",
+        }
+        assert expected.issubset(contract_ids), f"Missing contracts: {expected - contract_ids}"

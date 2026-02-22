@@ -80,6 +80,7 @@ nav:
     - Agno: adapters/agno.md
     - Semantic Kernel: adapters/semantic-kernel.md
     - Claude SDK: adapters/claude-sdk.md
+    - Nanobot: adapters/nanobot.md
   - Guides:
     - Writing Contracts: guides/writing-contracts.md
     - Testing Contracts: guides/testing-contracts.md
