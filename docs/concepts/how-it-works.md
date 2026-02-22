@@ -62,6 +62,28 @@ An `AuditEvent` with `action: CALL_DENIED` is written to all configured sinks (s
 
 The `.env` file was never read. The agent sees the denial and can try a different approach.
 
+## An Approval Gate: Step by Step
+
+An agent calls `delete_records` with `{"table": "users", "query": "WHERE inactive = true"}`. A precondition with `effect: approve` is configured.
+
+**1. Agent decides to call `delete_records`.**
+
+The adapter intercepts the call and builds a `ToolEnvelope`.
+
+**2. Edictum evaluates preconditions.**
+
+The pipeline finds a matching contract with `effect: approve`. Instead of denying immediately, it returns `PreDecision` with `action: "pending_approval"`.
+
+**3. The pipeline requests human approval.**
+
+The `approval_backend.request_approval()` method is called. A `CALL_APPROVAL_REQUESTED` audit event is emitted. The pipeline then calls `approval_backend.wait_for_decision()` and blocks until a decision arrives or the timeout expires.
+
+**4a. If approved:** The tool executes normally. A `CALL_APPROVAL_GRANTED` audit event is emitted and `on_allow` fires.
+
+**4b. If denied:** `EdictumDenied` is raised. A `CALL_APPROVAL_DENIED` audit event is emitted and `on_deny` fires.
+
+**4c. If timeout:** The `timeout_effect` determines the outcome. Default is `deny` (raises `EdictumDenied`). A `CALL_APPROVAL_TIMEOUT` audit event is emitted.
+
 ## An Allowed Call: Step by Step
 
 The same agent calls `read_file` with `{"path": "config.txt"}`.
@@ -105,6 +127,7 @@ After all real checks pass, the pipeline evaluates shadow preconditions and sess
 | Stage | When | Can Deny? | Output |
 |-------|------|-----------|--------|
 | Preconditions | Before tool executes | Yes | `CALL_DENIED` or pass |
+| Approval gate | When precondition has `effect: approve` | Yes (on denial/timeout) | `CALL_APPROVAL_REQUESTED`, then `GRANTED`/`DENIED`/`TIMEOUT` |
 | Session limits | Before tool executes | Yes | `CALL_DENIED` if limit exceeded |
 | Shadow contracts | After real checks pass | Never | Audit events with `mode: "observe"` |
 | Tool execution | Only if all preconditions pass | -- | Tool's return value |

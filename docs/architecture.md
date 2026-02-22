@@ -53,6 +53,8 @@ ToolEnvelope --> pre_execute(envelope, session)
                     |      Each returns Verdict.pass_() or .fail(msg).
                     |      In observe mode, failures are recorded but do not deny.
                     |      In enforce mode, first failure short-circuits.
+                    |      Contracts with effect=approve return "pending_approval"
+                    |      instead of deny, delegating to approval_backend.
                     |
                     +-- 4. Evaluate session contracts
                     |      Session contracts receive the Session object.
@@ -70,7 +72,7 @@ ToolEnvelope --> pre_execute(envelope, session)
                            real decision. Results emitted as audit events
                            with mode: "observe".
 
-                    --> PreDecision(action="allow"|"deny", shadow_results=[...], ...)
+                    --> PreDecision(action="allow"|"deny"|"pending_approval", shadow_results=[...], ...)
 ```
 
 If the `PreDecision.action` is `"allow"`, the adapter lets the tool execute.

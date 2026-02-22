@@ -207,6 +207,9 @@ def _compile_pre(
     precondition_fn._edictum_mode = mode
     precondition_fn._edictum_id = contract_id
     precondition_fn._edictum_source = "yaml_precondition"
+    precondition_fn._edictum_effect = then.get("effect", "deny")
+    precondition_fn._edictum_timeout = then.get("timeout", 300)
+    precondition_fn._edictum_timeout_effect = then.get("timeout_effect", "deny")
     if contract.get("_shadow"):
         precondition_fn._edictum_shadow = True
 

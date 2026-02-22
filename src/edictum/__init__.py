@@ -15,6 +15,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -707,14 +708,14 @@ class Edictum:
 
     def get_hooks(self, phase: str, envelope: ToolEnvelope) -> list[HookRegistration]:
         hooks = self._before_hooks if phase == "before" else self._after_hooks
-        return [h for h in hooks if h.tool == "*" or h.tool == envelope.tool_name]
+        return [h for h in hooks if h.tool == "*" or fnmatch(envelope.tool_name, h.tool)]
 
     def get_preconditions(self, envelope: ToolEnvelope) -> list:
         result = []
         for p in self._preconditions:
             tool = getattr(p, "_edictum_tool", "*")
             when = getattr(p, "_edictum_when", None)
-            if tool != "*" and tool != envelope.tool_name:
+            if tool != "*" and not fnmatch(envelope.tool_name, tool):
                 continue
             if when and not when(envelope):
                 continue
@@ -726,7 +727,7 @@ class Edictum:
         for p in self._postconditions:
             tool = getattr(p, "_edictum_tool", "*")
             when = getattr(p, "_edictum_when", None)
-            if tool != "*" and tool != envelope.tool_name:
+            if tool != "*" and not fnmatch(envelope.tool_name, tool):
                 continue
             if when and not when(envelope):
                 continue
@@ -741,7 +742,7 @@ class Edictum:
         for p in self._shadow_preconditions:
             tool = getattr(p, "_edictum_tool", "*")
             when = getattr(p, "_edictum_when", None)
-            if tool != "*" and tool != envelope.tool_name:
+            if tool != "*" and not fnmatch(envelope.tool_name, tool):
                 continue
             if when and not when(envelope):
                 continue
@@ -753,7 +754,7 @@ class Edictum:
         for p in self._shadow_postconditions:
             tool = getattr(p, "_edictum_tool", "*")
             when = getattr(p, "_edictum_when", None)
-            if tool != "*" and tool != envelope.tool_name:
+            if tool != "*" and not fnmatch(envelope.tool_name, tool):
                 continue
             if when and not when(envelope):
                 continue
@@ -961,10 +962,73 @@ class Edictum:
         # Pre-execute
         pre = await pipeline.pre_execute(envelope, session)
 
+        # Handle pending_approval: request approval from backend
+        if pre.action == "pending_approval":
+            if self._approval_backend is None:
+                span.end()
+                raise EdictumDenied(
+                    reason=f"Approval required but no approval backend configured: {pre.reason}",
+                    decision_source=pre.decision_source,
+                    decision_name=pre.decision_name,
+                )
+            principal_dict = asdict(envelope.principal) if envelope.principal else None
+            approval_request = await self._approval_backend.request_approval(
+                tool_name=envelope.tool_name,
+                tool_args=envelope.args,
+                message=pre.approval_message or pre.reason or "",
+                timeout=pre.approval_timeout,
+                timeout_effect=pre.approval_timeout_effect,
+                principal=principal_dict,
+            )
+            await self._emit_run_pre_audit(envelope, session, AuditAction.CALL_APPROVAL_REQUESTED, pre)
+            decision = await self._approval_backend.wait_for_decision(
+                approval_id=approval_request.approval_id,
+                timeout=pre.approval_timeout,
+            )
+            # Resolve approval: approved, denied, or timeout (with timeout_effect)
+            approved = decision.approved
+            if not approved and decision.status == ApprovalStatus.TIMEOUT:
+                await self._emit_run_pre_audit(envelope, session, AuditAction.CALL_APPROVAL_TIMEOUT, pre)
+                if pre.approval_timeout_effect == "allow":
+                    approved = True
+            elif decision.approved:
+                await self._emit_run_pre_audit(envelope, session, AuditAction.CALL_APPROVAL_GRANTED, pre)
+            else:
+                await self._emit_run_pre_audit(envelope, session, AuditAction.CALL_APPROVAL_DENIED, pre)
+
+            if approved:
+                self.telemetry.record_allowed(envelope)
+                if self._on_allow:
+                    try:
+                        self._on_allow(envelope)
+                    except Exception:
+                        logger.exception("on_allow callback raised")
+                span.set_attribute("governance.action", "approved")
+                # Skip the normal pre-execution audit/callback logic below —
+                # approval-granted path handles its own audit and callbacks.
+            else:
+                self.telemetry.record_denial(envelope, decision.reason or pre.reason)
+                if self._on_deny:
+                    try:
+                        self._on_deny(envelope, decision.reason or pre.reason or "", pre.decision_name)
+                    except Exception:
+                        logger.exception("on_deny callback raised")
+                span.set_attribute("governance.action", "denied")
+                span.set_attribute("governance.reason", decision.reason or pre.reason or "")
+                span.end()
+                raise EdictumDenied(
+                    reason=decision.reason or pre.reason,
+                    decision_source=pre.decision_source,
+                    decision_name=pre.decision_name,
+                )
+
         # Determine if this is a real deny or just per-contract observed denials
         real_deny = pre.action == "deny" and not pre.observed
 
-        if real_deny:
+        # Skip pre-execution audit for approval-granted path (already handled above)
+        if pre.action == "pending_approval":
+            pass  # Fall through directly to tool execution
+        elif real_deny:
             audit_action = AuditAction.CALL_WOULD_DENY if self.mode == "observe" else AuditAction.CALL_DENIED
             await self._emit_run_pre_audit(envelope, session, audit_action, pre)
             self.telemetry.record_denial(envelope, pre.reason)

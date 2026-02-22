@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class PreDecision:
     """Result of pre-execution governance evaluation."""
 
-    action: str  # "allow" | "deny"
+    action: str  # "allow" | "deny" | "pending_approval"
     reason: str | None = None
     decision_source: str | None = None
     decision_name: str | None = None
@@ -31,6 +31,9 @@ class PreDecision:
     observed: bool = False
     policy_error: bool = False
     shadow_results: list[dict] = field(default_factory=list)
+    approval_timeout: int = 300
+    approval_timeout_effect: str = "deny"
+    approval_message: str | None = None
 
 
 @dataclass
@@ -140,6 +143,22 @@ class GovernancePipeline:
 
                 source = getattr(contract, "_edictum_source", "precondition")
                 pe = any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated)
+
+                effect = getattr(contract, "_edictum_effect", "deny")
+                if effect == "approve":
+                    return PreDecision(
+                        action="pending_approval",
+                        reason=verdict.message,
+                        decision_source=source,
+                        decision_name=contract_record["name"],
+                        hooks_evaluated=hooks_evaluated,
+                        contracts_evaluated=contracts_evaluated,
+                        policy_error=pe,
+                        approval_timeout=getattr(contract, "_edictum_timeout", 300),
+                        approval_timeout_effect=getattr(contract, "_edictum_timeout_effect", "deny"),
+                        approval_message=verdict.message,
+                    )
+
                 return PreDecision(
                     action="deny",
                     reason=verdict.message,
