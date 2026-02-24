@@ -53,7 +53,8 @@ Evaluates a single tool call against all matching contracts. This method is **sy
 - **Exhaustive evaluation.** All matching contracts are evaluated. The pipeline does not short-circuit on the first denial -- you see every contract that would fire.
 - **No tool execution.** The tool function is never called.
 - **No session state.** Session contracts are skipped because there is no session context in a dry-run.
-- **Postconditions require output.** Postconditions are only evaluated when `output` is provided. Without it, only preconditions are checked.
+- **Sandbox contracts are evaluated.** Unlike session contracts, sandbox contracts are stateless and are always included in dry-run evaluation.
+- **Postconditions require output.** Postconditions are only evaluated when `output` is provided. Without it, only preconditions and sandbox contracts are checked.
 - **Synchronous.** Unlike `guard.run()`, this method does not require `asyncio`.
 
 ### Examples
@@ -99,6 +100,19 @@ result = guard.evaluate(
     {"service": "api"},
     environment="staging",
 )
+```
+
+Test sandbox path allowlists:
+
+```python
+# Sandbox contracts are evaluated during dry-run
+result = guard.evaluate("read_file", {"path": "/etc/shadow"})
+assert result.verdict == "deny"
+
+# Sandbox contracts appear in results
+sandbox_results = [c for c in result.contracts if c.contract_type == "sandbox"]
+assert len(sandbox_results) == 1
+assert sandbox_results[0].passed is False
 ```
 
 ---
@@ -164,8 +178,8 @@ Returned by `evaluate()`. Contains the overall verdict and per-contract details.
 
 The `verdict` is determined by:
 
-- `"deny"` -- at least one precondition failed (and was not in observe mode)
-- `"warn"` -- no precondition failures, but at least one postcondition failed
+- `"deny"` -- at least one precondition or sandbox contract failed (and was not in observe mode)
+- `"warn"` -- no precondition or sandbox failures, but at least one postcondition failed
 - `"allow"` -- all contracts passed
 
 ---
@@ -177,7 +191,7 @@ One entry per evaluated contract. Found in `EvaluationResult.contracts`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `contract_id` | `str` | The contract's ID (from YAML `id:` or function `__name__`) |
-| `contract_type` | `str` | `"precondition"` or `"postcondition"` |
+| `contract_type` | `str` | `"precondition"`, `"postcondition"`, or `"sandbox"` |
 | `passed` | `bool` | Whether the contract passed |
 | `message` | `str \| None` | The contract's message (from `then.message` in YAML) |
 | `tags` | `list[str]` | Tags attached to the contract |
@@ -195,6 +209,8 @@ One entry per evaluated contract. Found in `EvaluationResult.contracts`.
 | Session tracking | No | Yes | No |
 | Audit events | No | Yes | No |
 | Async required | No | Yes | N/A |
+| Preconditions | Yes | Yes | Yes |
+| Sandbox contracts | Yes | Yes | Yes |
 | Postconditions | Only with `output` | Always | `--calls` only |
 | Short-circuits | No (exhaustive) | Yes (first deny) | No |
 
@@ -206,4 +222,4 @@ Use `evaluate()` for fast, synchronous contract logic testing. Use `run()` when 
 
 - [Testing contracts](guides/testing-contracts.md) -- YAML test cases, CI integration, and testing patterns
 - [CLI reference](cli.md) -- `edictum check` and `edictum test` commands
-- [Contracts](concepts/contracts.md) -- the three contract types
+- [Contracts](concepts/contracts.md) -- the four contract types

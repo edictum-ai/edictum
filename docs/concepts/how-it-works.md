@@ -10,6 +10,7 @@ Agent decides to call tool
   |   Pipeline   |
   +--------------+
   | Preconditions | <-- YAML contracts checked BEFORE execution
+  |   Sandbox     | <-- Allowlist boundaries checked
   | Session limits|
   | Principal     |
   +------+-------+
@@ -25,7 +26,7 @@ Agent decides to call tool
 
 ## When to use this
 
-Read this page when you need to understand why a tool call was denied or allowed. It walks through the full pipeline evaluation order -- attempt limits, hooks, preconditions, session contracts, execution limits, tool execution, postconditions -- so you can trace exactly where a decision was made. This is also the starting point for explaining Edictum to a new team member: every tool call passes through the pipeline, contracts are checked deterministically in Python (not in the LLM), and the call is either allowed or denied before the tool runs.
+Read this page when you need to understand why a tool call was denied or allowed. It walks through the full pipeline evaluation order -- attempt limits, hooks, preconditions, sandbox contracts, session contracts, execution limits, tool execution, postconditions -- so you can trace exactly where a decision was made. This is also the starting point for explaining Edictum to a new team member: every tool call passes through the pipeline, contracts are checked deterministically in Python (not in the LLM), and the call is either allowed or denied before the tool runs.
 
 ## A Denied Call: Step by Step
 
@@ -50,7 +51,7 @@ The pipeline checks the contract bundle. This contract matches:
     message: "Read of sensitive file denied: {args.path}"
 ```
 
-The `args.path` value is `".env"`. The `contains` operator finds `".env"` in the string. The contract fires.
+The `args.path` value is `".env"`. The `contains` operator finds `".env"` in the string. The contract fires. (If preconditions pass, the pipeline also evaluates any sandbox contracts -- allowlist boundaries for file paths, commands, and domains. If the call falls outside a sandbox boundary, it is denied before reaching session limits.)
 
 **3. The call is denied.**
 
@@ -94,17 +95,21 @@ The adapter intercepts and builds the envelope.
 
 **2. Edictum evaluates preconditions.**
 
-The `block-dotenv` contract checks `args.path` for `".env"`. The value is `"config.txt"` -- no match. All other preconditions pass. Session limits are within bounds.
+The `block-dotenv` contract checks `args.path` for `".env"`. The value is `"config.txt"` -- no match. All other preconditions pass.
 
-**3. The call is allowed.**
+**3. Edictum evaluates sandbox contracts.**
 
-The pipeline returns `PreDecision` with `action: "allow"`. The tool function executes and returns the file contents.
+Any sandbox contracts are checked next. If a sandbox defines `within: ["/workspace"]` for `read_file`, the pipeline verifies that `args.path` falls within the allowed boundary. The path `"config.txt"` is within bounds, so the sandbox passes.
 
-**4. Edictum evaluates postconditions.**
+**4. The call is allowed.**
+
+Session limits are within bounds. The pipeline returns `PreDecision` with `action: "allow"`. The tool function executes and returns the file contents.
+
+**5. Edictum evaluates postconditions.**
 
 The pipeline checks the tool's output against postcondition contracts. For example, a PII detection contract scans the output for SSN patterns. If a pattern matches, the contract produces a [finding](../findings.md). For READ/PURE tools, postconditions with `effect: redact` replace matched patterns in the output with `[REDACTED]`, and `effect: deny` suppresses the output entirely. For WRITE/IRREVERSIBLE tools, effects fall back to `warn` because the action already happened. See [postcondition effects](../contracts/yaml-reference.md#postcondition-effects).
 
-**5. An audit event is emitted.**
+**6. An audit event is emitted.**
 
 An `AuditEvent` with `action: CALL_EXECUTED` is written. It includes the tool name, arguments, whether postconditions passed, any findings, and the policy version hash.
 
@@ -120,7 +125,7 @@ This is the difference between a prompt instruction ("do not read .env files") a
 
 When bundles are composed with [`observe_alongside: true`](../contracts/yaml-reference.md#observe-alongside), the pipeline evaluates shadow contracts alongside real contracts. Shadow contracts produce audit events but never affect allow/deny decisions.
 
-After all real checks pass, the pipeline evaluates shadow preconditions and session contracts. Each shadow result emits a separate audit event with `mode: "observe"` -- either `CALL_WOULD_DENY` or `CALL_ALLOWED`. This lets you compare the behavior of a candidate contract version against the currently enforced version. See [observe mode](observe-mode.md#dual-mode-evaluation-with-observe_alongside) for the full workflow.
+After all real checks pass, the pipeline evaluates shadow preconditions, sandbox contracts, and session contracts. Each shadow result emits a separate audit event with `mode: "observe"` -- either `CALL_WOULD_DENY` or `CALL_ALLOWED`. This lets you compare the behavior of a candidate contract version against the currently enforced version. See [observe mode](observe-mode.md#dual-mode-evaluation-with-observe_alongside) for the full workflow.
 
 ## What Happens at Each Stage
 
@@ -128,6 +133,7 @@ After all real checks pass, the pipeline evaluates shadow preconditions and sess
 |-------|------|-----------|--------|
 | Preconditions | Before tool executes | Yes | `CALL_DENIED` or pass |
 | Approval gate | When precondition has `effect: approve` | Yes (on denial/timeout) | `CALL_APPROVAL_REQUESTED`, then `GRANTED`/`DENIED`/`TIMEOUT` |
+| Sandbox contracts | Before tool executes | Yes | `CALL_DENIED` with `decision_source: yaml_sandbox` |
 | Session limits | Before tool executes | Yes | `CALL_DENIED` if limit exceeded |
 | Shadow contracts | After real checks pass | Never | Audit events with `mode: "observe"` |
 | Tool execution | Only if all preconditions pass | -- | Tool's return value |
@@ -136,7 +142,8 @@ After all real checks pass, the pipeline evaluates shadow preconditions and sess
 
 ## Next Steps
 
-- [Contracts](contracts.md) -- the three contract types and how to write them
+- [Contracts](contracts.md) -- the four contract types and how to write them
+- [Sandbox Contracts](sandbox-contracts.md) -- allowlist boundaries for file paths, commands, and domains
 - [Principals](principals.md) -- attaching identity context to tool calls
 - [Observe mode](observe-mode.md) -- shadow-testing contracts before enforcement
 - [YAML reference](../contracts/yaml-reference.md) -- full contract syntax and bundle composition

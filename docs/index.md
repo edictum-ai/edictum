@@ -78,7 +78,7 @@ Contracts are YAML. Enforcement is deterministic. The LLM cannot talk its way pa
 
 ## How It Works
 
-1. **Write contracts in YAML.** Preconditions deny dangerous calls before execution. Postconditions check tool output after -- warn, redact, or deny. Session contracts cap total calls and retries.
+1. **Write contracts in YAML.** Preconditions deny dangerous calls before execution. Postconditions check tool output after -- warn, redact, or deny. Session contracts cap total calls and retries. Sandbox contracts define allowlists for file paths, commands, and domains.
 
 2. **Attach to your agent framework.** One adapter line. Same contracts across all seven supported frameworks -- LangChain, OpenAI Agents, CrewAI, Agno, Semantic Kernel, Claude SDK, and Nanobot.
 
@@ -100,6 +100,8 @@ Contracts are YAML. Enforcement is deterministic. The LLM cannot talk its way pa
 - Preconditions deny dangerous calls before execution
 - Postconditions scan output -- warn, redact PII, or deny entirely
 - Session contracts cap total calls, per-tool calls, and retries
+- Sandbox contracts define file path, command, and domain allowlists
+- Deny-list + allowlist composition for defense in depth
 - Role-gate tools with `principal` claims and `env.*` context
 - `edictum validate` catches schema errors at load time
 - `edictum test` runs YAML test cases with expected verdicts
@@ -119,7 +121,7 @@ pip install edictum[server]         # server SDK (approval, audit, session via H
 pip install edictum[all]            # everything
 ```
 
-Requires Python 3.11+. Current version: **v0.10.0**. See the [quickstart](quickstart.md) to write your first contract and deny a dangerous call in five minutes.
+Requires Python 3.11+. Current version: **v0.11.0**. See the [quickstart](quickstart.md) to write your first contract and deny a dangerous call in five minutes.
 
 ## Framework Support
 
@@ -139,10 +141,10 @@ See the [adapter overview](adapters/overview.md) for setup guides and known limi
 
 ## What's Coming
 
-- **Server SDK** (shipped) -- `pip install edictum[server]` connects agents to the edictum-server for centralized approvals, audit ingestion, distributed sessions, and SSE contract updates
-- **PII detection** -- Pluggable detectors for postcondition contracts (regex built-in, Presidio for enterprise)
-- **Production audit sinks** -- Webhook, Splunk HEC, and Datadog
-- **Central policy server** -- Agents pull contracts on startup with versioning, hot-reload, and dashboard
+- **Server SDK** (shipped) -- `pip install edictum[server]` connects agents to edictum-server for centralized approvals, audit ingestion, distributed sessions, and SSE contract updates
+- **edictum-server** (coming soon) -- open-source server for production approval workflows, governance dashboard, distributed sessions, hot-reload contracts, and RBAC
+- **PII detection** -- pluggable detectors for postcondition contracts (regex built-in, Presidio as optional dependency)
+- **Production audit sinks** -- Webhook, Splunk HEC, and Datadog as core sinks or via server-managed ingestion
 
 See the [roadmap](roadmap.md) for the full plan.
 
@@ -151,6 +153,6 @@ See the [roadmap](roadmap.md) for the full plan.
 - [Quickstart](quickstart.md) -- Install, write a contract, and deny your first dangerous call
 - [Use Cases](use-cases.md) -- Six domains with complete YAML bundles
 - [How It Works](concepts/how-it-works.md) -- The pipeline, adapters, and what happens on every tool call
-- [Contracts](concepts/contracts.md) -- Preconditions, postconditions, session limits, and observe mode
+- [Contracts](concepts/contracts.md) -- Preconditions, postconditions, sandbox allowlists, session limits, and observe mode
 - [YAML Reference](contracts/yaml-reference.md) -- Full schema for `edictum/v1` contract bundles
 - [Adapters](adapters/overview.md) -- Integration guides for all seven frameworks

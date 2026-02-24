@@ -6,7 +6,7 @@ allowed-tools: Read, Edit, Write, Bash, Grep, Glob
 
 # Fix Bug Procedure
 
-Read CLAUDE.md first. Understand the tier boundary and terminology rules before writing code.
+Read CLAUDE.md first. Understand the boundary principle (core vs server) and terminology rules before writing code.
 
 ## Step 1: Understand the bug
 
@@ -87,5 +87,5 @@ ALL must pass before committing.
 
 - Skip the behavior test — every bug fix must prove the fix works
 - Fix multiple bugs in one commit — one fix per commit
-- Import from `ee/` — core is self-contained
+- Break core's standalone capability — core must run without the server
 - Use banned terminology — check `.docs-style-guide.md` before writing any user-facing string

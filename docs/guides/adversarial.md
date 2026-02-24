@@ -90,6 +90,35 @@ DeepSeek v3.2 was *more aggressive* than GPT-4.1 in the PII exfiltration scenari
 
 ---
 
+## Using Sandbox Contracts for Defense in Depth
+
+The test scenarios above use precondition deny-lists -- `contains: ".env"`, `starts_with: "https://internal"`. These work for known-bad patterns, but red team sessions reveal their limits: there are infinite ways to read a sensitive file (`cat`, `base64`, `awk`, `sed`, `tar`...).
+
+Sandbox contracts flip the model. Instead of listing what's bad, define what's allowed:
+
+```yaml
+contracts:
+  - id: exec-sandbox
+    type: sandbox
+    tool: exec
+    allows:
+      commands: [ls, cat, git, python3]
+    within:
+      - /workspace
+      - /tmp
+    not_within:
+      - /etc
+      - /root/.ssh
+    outside: deny
+    message: "Command outside sandbox"
+```
+
+Now `base64 /etc/shadow` is denied -- not because `base64` is in a denylist, but because `/etc/shadow` is outside the `within` boundary. Every new command variation is automatically denied.
+
+**Belt and suspenders:** Use deny contracts for known-dangerous patterns (`rm -rf /`, reverse shells) and sandbox contracts for everything else. Deny runs first in the pipeline, sandbox runs second.
+
+---
+
 ## Writing Your Own Adversarial Tests
 
 Use `Edictum.run()` directly with crafted arguments and assert that `EdictumDenied` is raised:
@@ -137,6 +166,11 @@ def test_role_escalation_denied(guard):
             deploy_service,
             principal=principal,
         ))
+
+def test_sandbox_path_bypass(guard):
+    """base64 /etc/shadow -- path denied by sandbox even with a new tool."""
+    result = guard.evaluate("exec", {"command": "base64 /etc/shadow"})
+    assert result.verdict == "deny"
 ```
 
 Structure your adversarial test suite around the four scenarios above. For each scenario:

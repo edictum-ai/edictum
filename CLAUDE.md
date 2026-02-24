@@ -6,43 +6,27 @@ Runtime contract enforcement for AI agent tool calls. Deterministic pipeline: pr
 
 Current version: 0.11.0 (PyPI: `edictum`)
 
-## Architecture: Open-Core with ee/ Directory
+## Architecture: Core + Server
 
-Single repo, two license zones. PostHog/GitLab monorepo pattern.
+Two deployment units. One library, one server.
 
-```
-edictum/
-├── src/edictum/          <- MIT license (open source core)
-│   ├── core/             pipeline, envelope, session (MemoryBackend)
-│   ├── contracts/        YAML parser, templates, composition
-│   ├── adapters/         7 framework adapters
-│   ├── audit.py          AuditEvent, StdoutAuditSink, FileAuditSink, RedactionPolicy
-│   ├── telemetry.py      OTel spans, GovernanceTelemetry
-│   └── cli/              check, test, validate, diff, replay
-├── ee/                   <- Proprietary license (not yet created)
-│   ├── pii/              RegexPIIDetector, PresidioPIIDetector, CompositePIIDetector
-│   ├── sinks/            Webhook, Splunk HEC, Datadog
-│   ├── server/           Central policy server, hot-reload, dashboard
-│   ├── auth/             JWT/OIDC verification, SSO
-│   ├── sequences/        Sequence-aware contracts
-│   └── nl_authoring/     Natural language -> YAML contract generation
-├── LICENSE               <- MIT (covers everything except ee/)
-└── README.md
-```
+- `src/edictum/` -- MIT core. All contract types (pre, post, session, sandbox), pipeline, 7 adapters, CLI, audit to stdout/file/OTel, local approval backend, single-process session tracking.
+- `src/edictum/server/` -- Server SDK client (`pip install edictum[server]`). Implements core protocols (`ApprovalBackend`, `AuditSink`, `StorageBackend`) over HTTP to connect agents to the server.
+- `edictum-server` -- A separate deployment (coming soon, open source). Centralized approval workflows, audit dashboards, distributed sessions, hot-reload contracts, RBAC.
 
 ## THE ONE RULE
 
-**Core code (src/edictum/) NEVER imports from ee/.**
-**ee/ imports from core freely.**
+**Core code (src/edictum/) runs fully standalone. The server SDK (src/edictum/server/) imports from core. The server itself is a separate deployment.**
 
-Core provides protocols/interfaces. ee/ provides implementations.
+Core provides protocols and interfaces. The server SDK provides HTTP-backed implementations. The server provides the coordination infrastructure.
 
-## OSS Core (MIT)
+## Core (MIT)
 
 - GovernancePipeline (evaluation engine)
 - ToolEnvelope, Principal model, Session (MemoryBackend)
 - YAML contract parsing + validation + templates + composition
 - All 7 framework adapters
+- Sandbox contracts (`type: sandbox`) — allowlist-based governance for file paths, commands, and domains
 - Observe mode (shadow deploy)
 - on_postcondition_warn callbacks
 - edictum check + edictum test CLI
@@ -50,31 +34,28 @@ Core provides protocols/interfaces. ee/ provides implementations.
 - OTel span instrumentation + GovernanceTelemetry
 - Finding classification (findings.py) with pii_detected, secret_detected, policy_violation types
 
-## Enterprise (ee/) — not yet created
+## Server (edictum-server)
 
-- PII detection backends: PresidioPIIDetector, CompositePIIDetector
-- YAML `pii_detection` shorthand
-- Audit sinks: Webhook, Splunk HEC, Datadog
-- Alert rules (denial spikes, PII detections, session exhaustion)
-- Sequence-aware contracts
-- NL -> YAML contract authoring
-- Central Policy Server (agent pull, versioning, hot-reload)
-- Dashboard (denial rates, contract drift)
-- RBAC for contract management
-- SSO integration (Okta, Azure AD)
-- JWT/OIDC principal verification
-- Human approval workflows
-- Cross-agent session tracking
+The server is a separate deployment, coming soon as open source. It provides:
+
+- Production approval workflows (ServerApprovalBackend connects to webhooks, Slack/Teams, review dashboard)
+- Centralized audit ingestion and governance dashboard (denial rates, contract drift, sandbox violations)
+- Distributed session state for multi-agent tracking across processes
+- Hot-reload contracts via SSE push (ServerContractSource) without restarting agents
+- RBAC for contract management (who can create/modify/deploy contracts)
+- Cross-agent session tracking (correlate tool calls across agents)
+- SSO integration (Okta, Azure AD) and JWT/OIDC principal verification
 
 ## Boundary Principle
 
-The tier split follows one rule: **evaluation engine = OSS, infrastructure = enterprise.**
+The split follows one rule: **evaluation = core library, coordination = server.**
 
-- Pipeline that takes a tool call and returns allow/deny/warn -- OSS
-- Persistence beyond local files, networking, coordination -- enterprise
-- Stdout + File (.jsonl) sinks for dev/local audit -- OSS. Network destinations (Webhook, Splunk, Datadog) -- enterprise
-- OTel instrumentation (emitting spans) -- OSS. Dashboards and alerting -- enterprise
-- Session (MemoryBackend) for single-process -- OSS. Multi-process coordination via Edictum Server -- enterprise
+- Pipeline that takes a tool call and returns allow/deny/warn -- core
+- Persistence beyond local files, networking, coordination across processes -- server
+- Stdout + File (.jsonl) sinks for dev/local audit -- core. Centralized audit dashboards and alerting -- server
+- OTel instrumentation (emitting spans) -- core. Governance dashboards -- server
+- Session (MemoryBackend) for single-process -- core. Multi-process session state via edictum-server -- server
+- LocalApprovalBackend for development approval -- core. Production approval workflows (webhooks, Slack, review UI) -- server
 
 ## Dropped Features (do NOT implement)
 
@@ -98,10 +79,12 @@ The tier split follows one rule: **evaluation engine = OSS, infrastructure = ent
 - v0.9.0: YAML extensibility (custom_operators, custom_selectors, metadata.* selector, template_dirs, from_yaml_string), adapter lifecycle (on_deny, on_allow, success_check, set_principal, principal_resolver), CompositeSink, CLI --json/--environment, OTel TLS
 - Docs overhaul: homepage, quickstart, concepts section, patterns, 7 guides
 - edictum-demo repo: github.com/acartag7/edictum-demo
+- v0.10.0: HITL approval workflows (ApprovalBackend, effect: approve, timeout/timeout_effect), wildcard tool matching (fnmatch), Nanobot adapter, Server SDK package (edictum[server])
+- v0.11.0: Sandbox contracts (type: sandbox) — allowlist-based governance for file paths, commands, and domains. Pipeline stage between preconditions and session.
 
 ## Session Model
 
-MemoryBackend stores counters in a Python dict — one process, one agent. This covers the vast majority of use cases. For multi-agent coordination across processes, the Edictum Server (planned, ee/) handles centralized session tracking. There is no DIY Redis/DynamoDB path.
+MemoryBackend stores counters in a Python dict -- one process, one agent. This covers the vast majority of use cases. For multi-agent coordination across processes, edictum-server handles centralized session tracking. There is no DIY Redis/DynamoDB path.
 
 ## Build & Test
 
@@ -187,7 +170,7 @@ Before tagging a release:
 ## YAML Schema (locked)
 
 - `apiVersion: edictum/v1`, `kind: ContractBundle`
-- Contract types: `type: pre` (deny only), `type: post` (warn/redact/deny), `type: session` (deny only)
+- Contract types: `type: pre` (deny/approve), `type: post` (warn/redact/deny), `type: session` (deny only), `type: sandbox` (allowlist-based, outside: deny/approve)
 - Conditions: `when:` with boolean AST (`all/any/not`) and leaves (`selector: {operator: value}`)
 - 15 operators: exists, equals, not_equals, in, not_in, contains, contains_any, starts_with, ends_with, matches, matches_any, gt, gte, lt, lte
 - Missing fields evaluate to `false`. Type mismatches yield deny/warn + `policy_error: true`

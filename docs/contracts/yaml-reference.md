@@ -40,7 +40,7 @@ contracts:
 | `defaults.mode` | string | yes | `enforce` or `observe`. Applied to every contract that does not set its own `mode`. |
 | `tools` | object | no | Tool side-effect classifications. See [Tool Classifications](#tool-classifications). |
 | `observe_alongside` | boolean | no | When `true`, contracts in this bundle become shadow copies that evaluate in parallel without affecting real decisions. See [Bundle Composition](#bundle-composition). |
-| `contracts` | array | yes | Minimum one contract. Each item is a precondition, postcondition, or session contract. |
+| `contracts` | array | yes | Minimum one contract. Each item is a precondition, postcondition, session, or sandbox contract. |
 
 The bundle is loaded with `Edictum.from_yaml()`:
 
@@ -147,10 +147,10 @@ Every contract shares a common set of fields, plus type-specific fields determin
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `id` | string | yes | -- | Unique within the bundle. Format: `[a-z0-9][a-z0-9_-]*`. |
-| `type` | string | yes | -- | `pre`, `post`, or `session`. |
+| `type` | string | yes | -- | `pre`, `post`, `session`, or `sandbox`. |
 | `enabled` | boolean | no | `true` | Set to `false` to skip during evaluation. The contract still participates in validation. |
 | `mode` | string | no | `defaults.mode` | Per-contract override: `enforce` or `observe`. |
-| `then` | object | yes | -- | Action block. See [Action Block](#action-block). |
+| `then` | object | conditional | -- | Action block. Required for `pre`, `post`, and `session` types. Not used by `sandbox` type. See [Action Block](#action-block). |
 
 ### Precondition (`type: pre`) {#precondition}
 
@@ -295,6 +295,133 @@ Session contracts enforce session-level gates that apply across all tool calls. 
     effect: deny
     message: "Session limit reached. Summarize progress and stop."
     tags: [rate-limit]
+```
+
+### Sandbox Contract (`type: sandbox`) {#sandbox-contract}
+
+Sandbox contracts define allowlists -- what agents are permitted to do. Instead of enumerating dangerous patterns (deny-lists), sandbox contracts enumerate safe boundaries and deny everything outside them.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `tool` | string | conditional | Tool name or glob pattern. One of `tool` or `tools` is required. |
+| `tools` | array of strings | conditional | Multiple tool names or glob patterns. One of `tool` or `tools` is required. |
+| `within` | array of strings | conditional | Allowed directory prefixes for file paths. At least one of `within` or `allows` must be present. |
+| `not_within` | array of strings | no | Excluded directory prefixes (overrides `within`). Requires `within`. |
+| `allows.commands` | array of strings | no | Allowed first-token commands for exec tools. |
+| `allows.domains` | array of strings | no | Allowed domain patterns for URL tools (supports `*` wildcards via `fnmatch`). |
+| `not_allows.domains` | array of strings | no | Excluded domains (overrides `allows.domains`). Requires `allows`. |
+| `outside` | `deny` or `approve` | yes | Effect when a tool call falls outside the sandbox boundary. |
+| `message` | string | yes | Human-readable message. Supports `{placeholder}` expansion. |
+| `timeout` | integer | no | Seconds to wait for approval (only when `outside: approve`). Default `300`. |
+| `timeout_effect` | `deny` or `allow` | no | What happens on approval timeout. Default `deny`. |
+
+**Constraints:**
+
+- No `when`/`then` block. Sandbox contracts use declarative boundary fields instead.
+- `not_within` requires `within`. `not_allows` requires `allows`.
+- At least one of `within` or `allows` must be present.
+- Sandbox contracts have separate tool matching: they only evaluate for tools matching `tool`/`tools` patterns.
+
+#### Path Matching
+
+Paths are extracted from the envelope args: keys named `path`, `file_path`, `directory`, or any arg value starting with `/`, plus tokens parsed from command strings.
+
+Matching uses string prefix logic: `path == allowed OR path.startswith(allowed.rstrip("/") + "/")`. This means `/workspace` allows `/workspace` itself and all children like `/workspace/src/main.py`.
+
+`not_within` overrides `within` -- if a path matches an exclusion, it is denied even if it falls inside an allowed directory.
+
+#### Command Matching
+
+The first whitespace-delimited token of `args.command` or `envelope.bash_command` is extracted. That token must appear in the `allows.commands` list. If the command is `git status`, the first token is `git`.
+
+#### Domain Matching
+
+All envelope arg values are scanned for strings containing `://`. Hostnames are extracted with `urlparse`. Checking order: `not_allows.domains` first (deny on match), then `allows.domains` (must match at least one).
+
+Domain patterns support `fnmatch` wildcards: `*.googleapis.com` matches `storage.googleapis.com`.
+
+#### File Sandbox Example
+
+```yaml
+- id: file-sandbox
+  type: sandbox
+  tools: [read_file, write_file, edit_file]
+  within:
+    - /workspace
+    - /tmp
+  not_within:
+    - /workspace/.git
+  outside: deny
+  message: "File access outside workspace: {args.path}"
+```
+
+#### Exec Sandbox Example
+
+```yaml
+- id: exec-sandbox
+  type: sandbox
+  tool: bash
+  allows:
+    commands: [git, npm, pnpm, node, python, pytest, ruff, ls, cat, grep]
+  outside: deny
+  message: "Command not in allowlist: {args.command}"
+```
+
+#### Web Sandbox Example
+
+```yaml
+- id: web-sandbox
+  type: sandbox
+  tools: [web_fetch, http_request]
+  allows:
+    domains:
+      - "*.googleapis.com"
+      - "api.github.com"
+      - "registry.npmjs.org"
+  not_allows:
+    domains:
+      - "internal.googleapis.com"
+  outside: deny
+  message: "Domain not allowed: {args.url}"
+```
+
+#### Combined Sandbox Example
+
+A coding agent with file, exec, and web access -- all sandboxed in a single bundle:
+
+```yaml
+contracts:
+  - id: file-sandbox
+    type: sandbox
+    tools: [read_file, write_file, edit_file]
+    within:
+      - /workspace
+      - /tmp
+    not_within:
+      - /workspace/.git
+      - /workspace/.env
+    outside: deny
+    message: "File access outside workspace: {args.path}"
+
+  - id: exec-sandbox
+    type: sandbox
+    tool: bash
+    allows:
+      commands: [git, npm, pnpm, node, python, pytest, ruff]
+    outside: deny
+    message: "Command not in allowlist: {args.command}"
+
+  - id: web-sandbox
+    type: sandbox
+    tools: [web_fetch, http_request]
+    allows:
+      domains:
+        - "api.github.com"
+        - "registry.npmjs.org"
+    outside: approve
+    message: "Domain requires approval: {args.url}"
+    timeout: 120
+    timeout_effect: deny
 ```
 
 ---
@@ -446,7 +573,7 @@ For detailed examples of every operator, see the [Operator Reference](operators.
 
 ## Action Block {#action-block}
 
-The `then` block defines what happens when a contract's condition matches.
+The `then` block defines what happens when a contract's condition matches. It is used by `pre`, `post`, and `session` contracts. Sandbox contracts (`type: sandbox`) do not use the `then` block -- they use `outside` and `message` fields directly at the contract level instead. See [Sandbox Contract](#sandbox-contract).
 
 ```yaml
 then:
@@ -474,6 +601,7 @@ The allowed effect depends on the contract type:
 | `pre` | `deny`, `approve` | Preconditions deny or pause for human approval. |
 | `post` | `warn`, `redact`, `deny` | `warn` produces findings. `redact` replaces matched patterns. `deny` suppresses output. See [Postcondition Effects](#postcondition-effects). |
 | `session` | `deny` only | Session limits gate further execution. |
+| `sandbox` | `outside: deny`, `outside: approve` | Sandbox contracts deny or request approval for calls outside the boundary. Set via the `outside` field, not via `then.effect`. |
 
 Using an invalid effect for a contract type is a validation error at load time.
 
@@ -518,7 +646,7 @@ YAML contracts integrate with the audit system automatically. Every contract eva
 |---|---|
 | `policy_version` | SHA256 hash of the raw YAML bytes. |
 | `decision_name` | The contract's `id` field. |
-| `decision_source` | `yaml_precondition`, `yaml_postcondition`, or `yaml_session`. |
+| `decision_source` | `yaml_precondition`, `yaml_postcondition`, `yaml_session`, or `yaml_sandbox`. |
 | `contracts_evaluated[].tags` | From `then.tags` on each contract. |
 | `policy_error` | `true` if contract evaluation threw an error. |
 
@@ -708,7 +836,7 @@ composed = compose_bundles(
 
 ## Complete Example {#complete-example}
 
-The following bundle demonstrates all three contract types working together for a DevOps agent:
+The following bundle demonstrates all four contract types working together for a DevOps agent:
 
 ```yaml
 apiVersion: edictum/v1
@@ -813,6 +941,19 @@ contracts:
       message: "Expensive API call detected (observe mode)."
       tags: [cost, experimental]
 
+  # --- File path sandbox ---
+  - id: file-sandbox
+    type: sandbox
+    tools: [read_file, bash]
+    within:
+      - /opt/app
+      - /tmp
+    not_within:
+      - /opt/app/.git
+      - /opt/app/.env
+    outside: deny
+    message: "File access outside allowed directories: {args.path}"
+
   # --- Session limits ---
   - id: session-limits
     type: session
@@ -828,12 +969,13 @@ contracts:
       tags: [rate-limit]
 ```
 
-This bundle enforces six distinct concerns:
+This bundle enforces eight distinct concerns:
 
-1. **Secret file protection** -- blocks reads of `.env`, credentials, and key files.
-2. **Destructive command prevention** -- blocks `rm -rf`, `mkfs`, `dd`, and writes to `/dev/`.
+1. **Secret file protection** -- denies reads of `.env`, credentials, and key files.
+2. **Destructive command prevention** -- denies `rm -rf`, `mkfs`, `dd`, and writes to `/dev/`.
 3. **Role-based production gate** -- only senior engineers, SREs, and admins can deploy to production.
 4. **Ticket-required production gate** -- production deploys must have a ticket reference.
 5. **PII detection** -- warns when tool output contains SSN or IBAN patterns.
 6. **Observe-mode experimentation** -- logs expensive API calls without denying, for cost analysis.
-7. **Session limits** -- caps total calls at 50, attempts at 120, and per-tool limits on deploy and notification tools.
+7. **File path sandbox** -- restricts file access to `/opt/app` and `/tmp`, excluding `.git` and `.env` directories.
+8. **Session limits** -- caps total calls at 50, attempts at 120, and per-tool limits on deploy and notification tools.

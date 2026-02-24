@@ -244,3 +244,58 @@ Since v0.6.0, postconditions support three effects:
 ```
 
 The effect you choose depends on the severity: `warn` for logging, `redact` for targeted cleanup, `deny` for full suppression when any match means the output is unsafe.
+
+---
+
+## Writing Sandbox Contracts
+
+When deny-lists grow too long or bypass vectors keep appearing, switch to sandbox contracts. Instead of listing what's bad, define what's allowed.
+
+### Example: File Path Sandbox
+
+Requirement: the agent should only read/write files in `/workspace` and `/tmp`, never in `/workspace/.git`.
+
+```yaml
+- id: file-sandbox
+  type: sandbox
+  tools: [read_file, write_file, edit_file]
+  within:
+    - /workspace
+    - /tmp
+  not_within:
+    - /workspace/.git
+  outside: deny
+  message: "File access outside workspace: {args.path}"
+```
+
+Key differences from preconditions:
+
+- No `when`/`then` structure. Sandbox uses declarative boundary fields.
+- `tools` accepts a list. One sandbox contract covers multiple tools.
+- `within` + `not_within` define path allowlists, not pattern denylists.
+- `outside` controls the effect: `deny` or `approve` (human approval gate).
+
+### Command and Domain Allowlists
+
+Sandbox contracts also support command and domain boundaries:
+
+```yaml
+- id: network-sandbox
+  type: sandbox
+  tool: fetch_url
+  allows:
+    domains: [api.example.com, cdn.example.com]
+  not_allows:
+    domains: [internal.example.com]
+  outside: deny
+  message: "Domain not in allowlist: {args.url}"
+```
+
+### When to Use Sandbox vs. Precondition
+
+| Use... | When... |
+|---|---|
+| Precondition (`type: pre`) | You have a short, stable list of things to deny (`rm -rf /`, reverse shells, `.env` reads). The list does not grow with every red team. |
+| Sandbox (`type: sandbox`) | The attack surface is open-ended. You would rather define what is allowed. New bypasses are denied by default. |
+
+They compose: deny runs first (catch known-bad), sandbox runs second (catch unknown-bad).

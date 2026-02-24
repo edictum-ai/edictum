@@ -48,7 +48,7 @@ Takes one or more file paths as positional arguments. Each file is validated ind
 ```
 $ edictum validate contracts/production.yaml
 
-  production.yaml — 12 contracts (2 post, 8 pre, 2 session)
+  production.yaml — 14 contracts (2 post, 8 pre, 1 sandbox, 2 session)
 ```
 
 **Example -- multi-file composition**
@@ -56,10 +56,10 @@ $ edictum validate contracts/production.yaml
 ```
 $ edictum validate contracts/base.yaml contracts/overrides.yaml
 
-  base.yaml — 8 contracts (1 post, 5 pre, 2 session)
+  base.yaml — 9 contracts (1 post, 5 pre, 1 sandbox, 2 session)
   overrides.yaml — 3 contracts (3 pre)
 
-Composed: 9 contracts (1 post, 6 pre, 2 session)
+Composed: 10 contracts (1 post, 6 pre, 1 sandbox, 2 session)
 
 Composition report:
   ⇄ block-sensitive-reads — overridden by contracts/overrides.yaml (was in base.yaml)
@@ -83,8 +83,8 @@ $ edictum validate contracts/production.yaml --json
     {
       "file": "production.yaml",
       "valid": true,
-      "contracts": 12,
-      "breakdown": {"pre": 8, "post": 2, "session": 2}
+      "contracts": 14,
+      "breakdown": {"pre": 8, "post": 2, "sandbox": 1, "session": 2}
     }
   ],
   "valid": true
@@ -98,8 +98,8 @@ Exit codes: `0` on success, `1` on validation errors.
 ### `edictum check`
 
 Simulate a single tool call against your contracts. Builds a `ToolEnvelope`
-from the provided tool name and arguments, evaluates all matching preconditions, and
-prints the verdict. No tool actually executes.
+from the provided tool name and arguments, evaluates all matching preconditions and
+sandbox contracts, and prints the verdict. No tool actually executes.
 
 **Usage**
 
@@ -171,6 +171,20 @@ $ edictum check contracts/production.yaml \
     --principal-ticket INC-4421
 
 ALLOWED
+  Contracts evaluated: 2
+```
+
+**Example -- denied by sandbox contract**
+
+Sandbox contracts are also evaluated during `check`. A call outside the sandbox boundary is denied even if no precondition matches:
+
+```
+$ edictum check contracts/production.yaml \
+    --tool read_file \
+    --args '{"path": "/etc/shadow"}'
+
+DENIED by sandbox contract file-sandbox
+  Message: File access outside workspace: /etc/shadow
   Contracts evaluated: 2
 ```
 
@@ -280,6 +294,8 @@ Each event in the audit log is re-evaluated as if the new contracts were in effe
 the time. This answers the question: "If I deploy these contracts, which past calls
 would have been treated differently?"
 
+Sandbox contracts are replayed alongside preconditions. Past tool calls that would now fall outside a sandbox boundary appear as changed verdicts.
+
 **Usage**
 
 ```
@@ -327,7 +343,7 @@ edictum test <file.yaml> --calls <calls.json> [--json]
 
 | Flag | Description |
 |------|-------------|
-| `--cases PATH` | YAML file with test cases (preconditions only) |
+| `--cases PATH` | YAML file with test cases (preconditions and sandbox contracts) |
 | `--calls PATH` | JSON file with tool calls to evaluate (pre + postconditions) |
 | `--json` | Output results as JSON (only with `--calls`) |
 | `--environment TEXT` | Environment name for evaluation, defaults to `production` |
@@ -422,8 +438,8 @@ $ edictum test contracts/production.yaml --cases tests/cases.yaml
 0/1 passed, 1 failed
 ```
 
-!!! note "Preconditions only"
-    `--cases` evaluates preconditions only. For postcondition testing, use `--calls`
+!!! note "Preconditions and sandbox contracts only"
+    `--cases` evaluates preconditions and sandbox contracts. For postcondition testing, use `--calls`
     (see below) or [unit tests with pytest](guides/testing-contracts.md#unit-testing-with-pytest).
 
 ---
@@ -468,6 +484,7 @@ $ edictum test contracts/production.yaml --calls tests/calls.json
   2  read_file   DENY     1          Sensitive file '/app/.env' denied.
   3  bash        ALLOW    0          all contracts passed
   4  read_file   WARN     1          PII detected.
+  5  read_file   DENY     1          File access outside workspace: /etc/shadow
 ```
 
 **Example -- JSON output**

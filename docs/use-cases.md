@@ -90,6 +90,35 @@ asyncio.run(main())
 
 **What this showcases: automatic security.** Secret values are auto-redacted in audit events and denial messages. Bash commands are sanitized (passwords, tokens, connection strings). Contract errors fail closed -- a misconfigured contract denies by default, never silently passes.
 
+**Stronger alternative: sandbox contracts.** The deny-list contracts above catch known-bad patterns. If red team bypasses keep appearing (`base64 /etc/shadow`, `awk '{print}' /etc/shadow`), switch to a sandbox that defines what's allowed:
+
+```yaml
+contracts:
+  # Allowlist: only /workspace and /tmp
+  - id: file-sandbox
+    type: sandbox
+    tools: [read_file, write_file, edit_file]
+    within:
+      - /workspace
+      - /tmp
+    not_within:
+      - /workspace/.git
+      - /workspace/.env
+    outside: deny
+    message: "File access outside workspace: {args.path}"
+
+  # Allowlist: only approved commands
+  - id: exec-sandbox
+    type: sandbox
+    tool: bash
+    allows:
+      commands: [git, npm, pnpm, node, python, pytest, ruff, ls, cat, grep, find]
+    outside: deny
+    message: "Command not in allowlist: {args.command}"
+```
+
+Now `base64 /etc/shadow` is denied -- not because `base64` is in a denylist, but because `/etc/shadow` is not in `/workspace` or `/tmp`. See [sandbox contracts](concepts/sandbox-contracts.md) for the full concept.
+
 ---
 
 ## Healthcare / Pharma

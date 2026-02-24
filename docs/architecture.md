@@ -16,6 +16,7 @@ Agent decides to call tool
   |    Pipeline    |
   +----------------+
   | Preconditions  | <-- YAML contracts checked BEFORE execution
+  |   Sandbox      | <-- Allowlist boundaries checked
   | Session limits |
   | Principal      |
   +-------+--------+
@@ -35,7 +36,7 @@ In enforce mode, if any precondition fails, the tool call is denied. The tool ne
 
 ## Pre-Execution Detail
 
-`GovernancePipeline.pre_execute()` runs six checks in order. The first failure in steps 1-5 short-circuits -- remaining checks are skipped. Step 6 (shadow evaluation) always runs when the decision is "allow."
+`GovernancePipeline.pre_execute()` runs seven checks in order. The first failure in steps 1-5.5 short-circuits -- remaining checks are skipped. Step 6 (shadow evaluation) always runs when the decision is "allow."
 
 ```
 ToolEnvelope --> pre_execute(envelope, session)
@@ -56,6 +57,15 @@ ToolEnvelope --> pre_execute(envelope, session)
                     |      Contracts with effect=approve return "pending_approval"
                     |      instead of deny, delegating to approval_backend.
                     |
+                    +-- 3.5. Evaluate sandbox contracts
+                    |      Sandbox contracts define allowlist boundaries.
+                    |      Checks file paths (within/not_within), commands
+                    |      (allows.commands), and domains (allows.domains).
+                    |      Tool matching uses fnmatch on tool/tools patterns.
+                    |      Effect: outside=deny -> deny; outside=approve -> pending_approval.
+                    |      In observe mode, failures are recorded but do not deny.
+                    |      First failure short-circuits.
+                    |
                     +-- 4. Evaluate session contracts
                     |      Session contracts receive the Session object.
                     |      Used for cross-turn limits and stateful contracts.
@@ -67,10 +77,10 @@ ToolEnvelope --> pre_execute(envelope, session)
                     |      Counts only successful past executions, not attempts.
                     |
                     +-- 6. Evaluate shadow contracts
-                           Shadow preconditions and session contracts from
-                           observe_alongside composition. Never affect the
-                           real decision. Results emitted as audit events
-                           with mode: "observe".
+                           Shadow preconditions, sandbox contracts, and session
+                           contracts from observe_alongside composition. Never
+                           affect the real decision. Results emitted as audit
+                           events with mode: "observe".
 
                     --> PreDecision(action="allow"|"deny"|"pending_approval", shadow_results=[...], ...)
 ```
@@ -129,7 +139,9 @@ YAML file(s)
   |
   +-- compiler.py
   |     Convert each definition into @precondition / @postcondition /
-  |       @session_contract decorated callables
+  |       @session_contract / @sandbox_contract decorated callables
+  |     Sandbox contracts compile within/not_within, allows.commands,
+  |       allows.domains, and outside effect into boundary-check callables
   |     Stamp _edictum_shadow on shadow contracts (from observe_alongside)
   |     Compile regex match patterns
   |     Build OperationLimits from session limits section
@@ -137,8 +149,9 @@ YAML file(s)
   |     Return list of contract objects + OperationLimits + tool registry
   |
   +-- Result: identical objects to Python-defined contracts
-        Regular contracts registered in standard evaluation lists
-        Shadow contracts registered in separate lists (never block calls)
+        Regular contracts (preconditions, sandbox, postconditions, session)
+          registered in standard evaluation lists
+        Shadow contracts registered in separate lists (never deny calls)
         Both executed by the same pipeline
 ```
 
@@ -203,7 +216,7 @@ class StorageBackend(Protocol):
 
 `increment()` must be atomic. This is the fundamental requirement for correctness under concurrent access.
 
-`MemoryBackend` stores counters in a Python dict -- one process, one agent. This covers the vast majority of use cases: a single agent process enforcing session limits on its own tool calls. For multi-agent coordination across processes, the Edictum Server (planned) handles centralized session tracking. See the [roadmap](roadmap.md).
+`MemoryBackend` stores counters in a Python dict -- one process, one agent. This covers the vast majority of use cases: a single agent process enforcing session limits on its own tool calls. For multi-agent coordination across processes, edictum-server handles centralized session tracking. See the [roadmap](roadmap.md).
 
 ### Operation Limits
 
@@ -252,17 +265,29 @@ Audit events record `policy_error: true` when contract loading fails, ensuring t
 
 Edictum is currently an in-process library -- contracts are loaded and enforced within the same process as the agent. This covers single-agent deployments and most production use cases today.
 
-The **server SDK** (`pip install edictum[server]`) provides the client-side connectivity for agents to talk to the edictum-server control plane. It implements the core protocols (`ApprovalBackend`, `AuditSink`, `StorageBackend`) over HTTP, letting agents use server-managed approvals, centralized audit ingestion, distributed session state, and SSE-pushed contract updates. The server itself is a separate deployment. See the [roadmap](roadmap.md) for details.
+The **server SDK** (`pip install edictum[server]`) is shipped and provides the client-side connectivity for agents to talk to edictum-server. It implements the core protocols (`ApprovalBackend`, `AuditSink`, `StorageBackend`) over HTTP, letting agents use server-managed approvals, centralized audit ingestion, distributed session state, and SSE-pushed contract updates.
+
+The **server** (`edictum-server`) is a separate deployment, coming soon as an open-source project. It provides the coordination infrastructure that cannot run in-process: production approval workflows, centralized audit dashboards, distributed sessions, hot-reload contracts, and RBAC. See the [roadmap](roadmap.md) for details.
 
 ### The Boundary Principle
 
-The split between OSS core and enterprise follows one principle: **evaluation pipeline = OSS, infrastructure = enterprise.**
+The split between core and server follows one principle: **evaluation = core library, coordination = server.**
 
-- The pipeline that takes a tool call and returns allow/deny/warn is OSS
-- Anything that requires persistence beyond local files, networking, or coordination is enterprise
-- Stdout + File (.jsonl) sinks ship in OSS for dev and local audit. Network destinations (Webhook, Splunk, Datadog) are enterprise
-- OTel instrumentation (emitting spans) is OSS. Dashboards and alerting are enterprise
-- Session (MemoryBackend) is OSS for single-process. Server SDK client (`edictum[server]`) connects to the Edictum Server for multi-process coordination
+| Capability | Core (`pip install edictum`) | Server (`edictum-server` + `edictum[server]`) |
+|---|---|---|
+| Contract evaluation (pre, post, session, sandbox) | Yes | -- |
+| `outside: deny` | Yes | -- |
+| `outside: approve` (development) | Yes (LocalApprovalBackend) | -- |
+| `outside: approve` (production) | -- | Yes (ServerApprovalBackend) |
+| Audit to stdout/file/OTel | Yes | -- |
+| Centralized audit dashboard | -- | Yes |
+| Session tracking (single process) | Yes (MemoryBackend) | -- |
+| Session tracking (multi-process) | -- | Yes (ServerBackend) |
+| Hot-reload contracts | -- | Yes (ServerContractSource) |
+| 7 framework adapters | Yes | -- |
+| CLI tools | Yes | -- |
+
+The pipeline that takes a tool call and returns allow/deny/warn runs entirely in-process with zero external dependencies. Anything that requires coordination across processes, networking to external systems, or centralized management is server scope.
 
 ---
 
@@ -287,7 +312,7 @@ src/edictum/
   yaml_engine/
     loader.py              Parse YAML, validate against JSON Schema, SHA-256 hash
     evaluator.py           Condition evaluation (match, principal checks, etc.)
-    compiler.py            YAML contracts -> @precondition/@postcondition objects
+    compiler.py            YAML contracts -> @precondition/@postcondition/@sandbox objects
     composer.py            Bundle composition (compose_bundles, observe_alongside)
 
   otel.py                  configure_otel(), has_otel(), get_tracer() (OTel spans)

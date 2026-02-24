@@ -77,9 +77,18 @@ contracts:
     then:
       effect: deny
       message: "Session limit reached."
+
+  - id: file-sandbox
+    type: sandbox
+    tool: read_file
+    within:
+      - /workspace
+      - /tmp
+    outside: deny
+    message: "File read outside workspace: {args.path}"
 ```
 
-Three contracts: one denies reads of `.env` files, one denies destructive commands, and one caps the session at 50 tool calls.
+Four contracts: one denies reads of `.env` files, one denies destructive commands, one caps the session at 50 tool calls, and one restricts file reads to `/workspace` and `/tmp`.
 
 ## 3. Run It
 
@@ -118,6 +127,12 @@ async def main():
     except EdictumDenied as e:
         print(f"DENIED: {e.reason}")
 
+    # DENIED: agent tries to read outside sandbox
+    try:
+        await guard.run("read_file", {"path": "/etc/shadow"}, read_file)
+    except EdictumDenied as e:
+        print(f"DENIED: {e.reason}")
+
 
 asyncio.run(main())
 ```
@@ -134,9 +149,10 @@ Expected output:
 OK: contents of readme.txt
 DENIED: Read of sensitive file denied: .env
 DENIED: Destructive command denied: rm -rf /tmp
+DENIED: File read outside workspace: /etc/shadow
 ```
 
-The `.env` file was never read. The `rm -rf` command never executed. Both calls were denied by contracts evaluated in Python, outside the LLM. The agent cannot talk its way past these checks.
+The `.env` file was never read. The `rm -rf` command never executed. The `/etc/shadow` read was denied by the sandbox allowlist. All three calls were denied by contracts evaluated in Python, outside the LLM. The agent cannot talk its way past these checks.
 
 **Tip:** If your YAML is generated programmatically or fetched from an API, use `from_yaml_string()` instead:
 
@@ -272,7 +288,8 @@ Both methods are synchronous -- no `await` needed. See [Dry-Run Evaluation](eval
 
 - **Concepts** -- start here to understand the system:
     - [How it works](concepts/how-it-works.md) -- the pipeline that evaluates every tool call
-    - [Contracts](concepts/contracts.md) -- the three contract types
+    - [Contracts](concepts/contracts.md) -- the four contract types
+    - [Sandbox Contracts](concepts/sandbox-contracts.md) -- allowlists for file paths, commands, and domains
     - [Principals](concepts/principals.md) -- attaching identity context
     - [Observe mode](concepts/observe-mode.md) -- shadow-testing before enforcement
 - [YAML reference](contracts/yaml-reference.md) -- full contract syntax

@@ -10,7 +10,7 @@ Ensures documentation stays in sync with code changes. Run before or during ever
 
 ## Before anything else
 
-1. **Read CLAUDE.md** — understand tier boundaries (core vs ee/), dropped features, and session model
+1. **Read CLAUDE.md** — understand boundaries (core vs server), dropped features, and session model
 2. **Read .docs-style-guide.md** — binding terminology reference
 
 ## Step 1: Detect what changed
@@ -61,13 +61,14 @@ For each affected page:
    - Use `adapter` (not "integration" or "plugin")
    - Use `observe mode` (see .docs-style-guide.md for banned alternatives)
    - Use `finding` / `findings` (not "alert")
-6. **Verify tier boundaries** against CLAUDE.md:
-   - FileAuditSink is core (not ee/)
-   - StdoutAuditSink is core
-   - Webhook/Splunk/Datadog sinks are ee/
-   - PIIDetector protocol is core, implementations are ee/
-   - MemoryBackend is the only StorageBackend (no Redis/DB)
-   - No references to dropped features
+6. **Verify core vs server boundaries** against CLAUDE.md:
+   - All contract evaluation (pre, post, session, sandbox) is core
+   - StdoutAuditSink, FileAuditSink, OTel are core
+   - Production approval workflows (ServerApprovalBackend) require the server
+   - Centralized audit dashboards require the server
+   - Multi-process session tracking requires the server
+   - MemoryBackend is the only local StorageBackend (no Redis/DB)
+   - No references to dropped features or ee/ tier
 
 ## Step 4: Update README if needed
 

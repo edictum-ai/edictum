@@ -58,6 +58,7 @@ nav:
   - Concepts:
     - How It Works: concepts/how-it-works.md
     - Contracts: concepts/contracts.md
+    - Sandbox Contracts: concepts/sandbox-contracts.md
     - Principals: concepts/principals.md
     - Observe Mode: concepts/observe-mode.md
   - Contracts Reference:

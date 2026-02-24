@@ -2,11 +2,22 @@
 
 A contract is a check that Edictum evaluates on every tool call. Contracts are written in YAML and compiled to deterministic checks -- the LLM cannot bypass them.
 
-There are three contract types: **preconditions** check before execution, **postconditions** check after, and **session contracts** track state across multiple calls.
+There are four contract types: **preconditions** check before execution, **postconditions** check after, **session contracts** track state across multiple calls, and **sandbox contracts** define allowlists for what agents can do.
 
 ## When to use this
 
-Read this page when you are writing or modifying contracts. It covers all three contract types -- preconditions that deny dangerous inputs before the tool runs, postconditions that scan output after execution, and session contracts that cap cumulative usage. If you need the full YAML syntax, see [YAML reference](../contracts/yaml-reference.md). For the evaluation order between contract types, see [how it works](how-it-works.md).
+Read this page when you are writing or modifying contracts. It covers all four contract types -- preconditions that deny dangerous inputs before the tool runs, postconditions that scan output after execution, session contracts that cap cumulative usage, and sandbox contracts that define allowlists for file paths, commands, and domains. If you need the full YAML syntax, see [YAML reference](../contracts/yaml-reference.md). For the evaluation order between contract types, see [how it works](how-it-works.md).
+
+### Choosing the Right Contract Type
+
+| Type | Question | Approach | Use when... |
+|---|---|---|---|
+| `pre` (deny) | "Is this specific thing bad?" | Denylist | Short, stable list of things to deny (`rm -rf /`, `.env` reads) |
+| `sandbox` | "Is this within allowed boundaries?" | Allowlist | Open-ended attack surface -- define what's allowed instead |
+| `post` | "Did the output contain something bad?" | Output scan | Dangerous content is in the output (SSNs, API keys) |
+| `session` | "Has the agent done too much?" | Rate limits | Cap total calls, per-tool calls, or retry attempts |
+
+They compose: deny runs first, sandbox second, postconditions after execution, session limits across turns. For detailed scenarios and the motivation behind sandbox contracts, see [sandbox contracts](sandbox-contracts.md#when-to-use-which-contract-type).
 
 ## Preconditions
 
@@ -86,6 +97,41 @@ Key properties:
 - `max_attempts` counts denied calls too, catching agents stuck in retry loops.
 - `effect: deny` is the only valid effect for session contracts.
 
+## Sandbox Contracts
+
+Deny-list contracts enumerate what's bad. Sandbox contracts flip this: they define what's allowed and deny everything else. When the attack surface is open-ended -- shell access, arbitrary file paths, unrestricted URLs -- defining what's bad is infinite. Defining what's good is finite.
+
+```yaml
+- id: file-sandbox
+  type: sandbox
+  tools: [read_file, write_file, edit_file]
+  within:
+    - /workspace
+    - /tmp
+  not_within:
+    - /workspace/.git
+  outside: deny
+  message: "File access outside workspace: {args.path}"
+```
+
+This contract restricts all file tools to `/workspace` and `/tmp`, excluding `/workspace/.git`. Any file path that falls outside the allowed directories is denied -- regardless of what command is used to access it.
+
+Sandbox contracts do not use the `when`/`then` structure. Instead, they use declarative boundary fields: `within`/`not_within` for file paths, `allows.commands` for command allowlists, and `allows.domains`/`not_allows.domains` for URL domain restrictions.
+
+The pipeline evaluates sandbox contracts after preconditions but before session limits. The full order is: preconditions (deny) -> sandbox -> session -> limits -> allow.
+
+Key properties:
+
+- `type: sandbox` marks this as a sandbox contract.
+- `tool` or `tools` targets one or more tools. Unlike other contract types, sandbox contracts can target multiple tools in a single contract.
+- `within` and `not_within` define file path boundaries. `not_within` overrides `within`.
+- `allows.commands` restricts which commands an exec tool can run (first token only).
+- `allows.domains` and `not_allows.domains` restrict URL domains (supports `fnmatch` wildcards).
+- `outside` is required: `deny` to deny calls outside the sandbox, or `approve` to request human approval.
+- No `when` or `then` block. The boundary fields and `outside`/`message` replace them.
+
+For the full sandbox schema, path matching details, and combined examples, see the [YAML reference sandbox section](../contracts/yaml-reference.md#sandbox-contract). For the conceptual motivation and known limitations, see [sandbox contracts](sandbox-contracts.md).
+
 ## The `when` / `then` Structure
 
 Every precondition and postcondition has a `when` block (the condition) and a `then` block (the action).
@@ -122,8 +168,8 @@ then:
 
 Each contract can run in one of two modes:
 
-- **`mode: enforce`** -- the contract actively denies tool calls (preconditions) or produces findings (postconditions). This is the default.
-- **`mode: observe`** -- the contract evaluates but does not deny. Preconditions that would fire emit `CALL_WOULD_DENY` audit events instead. The tool call proceeds.
+- **`mode: enforce`** -- the contract actively denies tool calls (preconditions, sandbox) or produces findings (postconditions). This is the default.
+- **`mode: observe`** -- the contract evaluates but does not deny. Preconditions and sandbox contracts that would fire emit `CALL_WOULD_DENY` audit events instead. The tool call proceeds.
 
 Set the default for all contracts in the bundle:
 
@@ -177,6 +223,7 @@ The bundle is hashed (SHA-256) at load time. The hash is stamped as `policy_vers
 
 ## Next Steps
 
+- [Sandbox contracts](sandbox-contracts.md) -- allowlist-based enforcement for file paths, commands, and domains
 - [YAML reference](../contracts/yaml-reference.md) -- full contract syntax and schema
 - [Operators](../contracts/operators.md) -- all 15 operators with examples
 - [How it works](how-it-works.md) -- the pipeline that evaluates contracts

@@ -46,8 +46,8 @@ Tool outputs often contain personally identifiable information that should not p
 - **What exists today:** `classify_finding()` in findings.py classifies postcondition failures as `pii_detected` based on contract ID and message heuristics. Postcondition contracts can match PII patterns via YAML `matches:` operator and use `effect: redact` to strip them.
 - **What's planned:**
     - `PIIDetector` protocol in core -- a pluggable detection interface decoupled from postcondition contracts
-    - `RegexPIIDetector` in core -- built-in regex patterns (SSN, email, phone, etc.) for immediate use without enterprise dependencies
-    - Enterprise detectors in `ee/`: `PresidioPIIDetector` (ML/NER via Presidio), `CompositePIIDetector` (multiple detectors with configurable thresholds)
+    - `RegexPIIDetector` in core -- built-in regex patterns (SSN, email, phone, etc.) for immediate use
+    - ML-based detectors (Presidio) will be available as optional dependencies: `PresidioPIIDetector` (ML/NER via Presidio), `CompositePIIDetector` (multiple detectors with configurable thresholds)
     - YAML `pii_detection` shorthand for declaring PII checks directly in contract bundles
 
 ---
@@ -66,26 +66,26 @@ Teams can now compose multiple YAML bundles and shadow-test contract changes aga
 
 ## [Planned] Production Observability
 
-Stdout and File (.jsonl) sinks ship today in OSS core for development and local audit. Production deployments need audit data flowing to existing infrastructure.
+Stdout and File (.jsonl) sinks ship today in core for development and local audit. Production deployments need audit data flowing to existing infrastructure.
 
-- **Enterprise audit sinks**: Webhook, Splunk HEC, Datadog -- network destinations for compliance-grade audit trails
+- **Network audit sinks** -- Webhook, Splunk HEC, Datadog as core sink implementations or via server-managed ingestion for compliance-grade audit trails
 - **Finding notifications** -- notifications on abnormal patterns (denial spikes, PII detections, session exhaustion)
-- **Deployment recipes**: end-to-end guides for OTel to Grafana, Datadog, and Splunk
+- **Deployment recipes** -- end-to-end guides for OTel to Grafana, Datadog, and Splunk
 
 ---
 
-## [Planned] Enterprise Contracts
+## [Planned] Advanced Contracts
 
 Single-call contracts cover most enforcement scenarios. Some problems require looking across multiple calls or letting non-engineers author contracts.
 
 - **Sequence-aware contracts** -- detect suspicious patterns across multiple tool calls, not just single calls (e.g., read credentials then call external API)
-- **NL → YAML authoring** -- compliance officers describe a contract in English, system generates the YAML contract
+- **NL -> YAML authoring** -- compliance officers describe a contract in English, system generates the YAML contract
 
 ---
 
-## [In Progress] Server SDK & Enterprise Control Plane
+## [In Progress] edictum-server
 
-Single-agent, in-process enforcement covers most use cases today. For organizations running fleets of agents, the next step is centralized contract management.
+Single-agent, in-process enforcement covers most use cases today. For organizations running fleets of agents, the next step is centralized contract management. The server will be published as an open-source project.
 
 **Shipped: Server SDK client** (`pip install edictum[server]`):
 
@@ -95,12 +95,12 @@ Single-agent, in-process enforcement covers most use cases today. For organizati
 - **`ServerBackend`** -- implements `StorageBackend` protocol for distributed session state
 - **`ServerContractSource`** -- SSE client for receiving contract bundle updates with auto-reconnect
 
-**Planned: Server-side components:**
+**Coming soon: edictum-server:**
 
-- **Central Policy Server** -- agents pull contracts on startup, with versioning and hot-reload
-- **Governance Dashboard** -- visualize contract evaluations, denial rates, and contract drift across agents
+- **Central policy server** -- agents pull contracts on startup, with versioning and hot-reload
+- **Governance dashboard** -- visualize contract evaluations, denial rates, and contract drift across agents
 - **RBAC for contract management** -- control who can create, modify, and deploy contracts
 - **SSO integration** -- Okta, Azure AD
 - **JWT/OIDC principal verification** -- server verifies the agent's claimed identity instead of trusting the caller
-- **Human approval workflows** -- require human sign-off before specific tool calls execute
+- **Production approval workflows** -- require human sign-off before specific tool calls execute (webhooks, Slack/Teams, review dashboard)
 - **Cross-agent session tracking** -- correlate tool calls across multiple agents in a single workflow
