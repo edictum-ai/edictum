@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.1
+
+### Fixed
+- **Sandbox path traversal bypass** — path traversal sequences (`..`, `.`, `//`) in tool call arguments now normalized with `os.path.normpath()` before `within`/`not_within` evaluation. Previously, paths like `/tmp/../etc/shadow` bypassed `within: [/tmp]` because matching used raw string prefix comparison. Both extracted paths and contract boundaries are normalized.
+
 ## 0.11.0
 
 ### Added
