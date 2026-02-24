@@ -324,9 +324,9 @@ Sandbox contracts define allowlists -- what agents are permitted to do. Instead 
 
 #### Path Matching
 
-Paths are extracted from the envelope args: keys named `path`, `file_path`, `directory`, or any arg value starting with `/`, plus tokens parsed from command strings.
+Paths are extracted from the envelope args: keys named `path`, `file_path`, `directory`, or any arg value starting with `/`, plus tokens parsed from command strings. All extracted paths are normalized with `os.path.normpath()` before evaluation -- this resolves `..` and `.` segments and collapses redundant slashes (`//`). For example, `/tmp/../etc/shadow` becomes `/etc/shadow`. The `within` and `not_within` boundaries are also normalized at compile time.
 
-Matching uses string prefix logic: `path == allowed OR path.startswith(allowed.rstrip("/") + "/")`. This means `/workspace` allows `/workspace` itself and all children like `/workspace/src/main.py`.
+After normalization, matching uses string prefix logic: `path == allowed OR path.startswith(allowed.rstrip("/") + "/")`. This means `/workspace` allows `/workspace` itself and all children like `/workspace/src/main.py`.
 
 `not_within` overrides `within` -- if a path matches an exclusion, it is denied even if it falls inside an allowed directory.
 

@@ -116,7 +116,7 @@ When the pipeline encounters a sandbox contract, it runs through these steps in 
 
 **1. Tool match.** The pipeline checks whether the current tool name matches the sandbox's `tool` or `tools` patterns using `fnmatch`. If the tool does not match, the sandbox contract is skipped entirely.
 
-**2. Path check.** The pipeline extracts file paths from the envelope args -- keys named `path`, `file_path`, `directory`, any arg value starting with `/`, and tokens parsed from command strings. For each extracted path:
+**2. Path check.** The pipeline extracts file paths from the envelope args -- keys named `path`, `file_path`, `directory`, any arg value starting with `/`, and tokens parsed from command strings. Each extracted path is normalized with `os.path.normpath()` before comparison, which resolves `..` and `.` segments and collapses redundant slashes. For example, `/tmp/../etc/shadow` becomes `/etc/shadow`. The `within` and `not_within` boundaries are also normalized at compile time. For each normalized path:
 
 - Check `not_within` first. If the path matches any exclusion prefix, the call is denied (or sent for approval).
 - Check `within`. If the path matches any allowed prefix, it passes.
@@ -223,14 +223,15 @@ Most sandbox features work with just `pip install edictum`. The server (`edictum
 
 ## Known Limitations
 
-Sandbox contracts match against the literal strings in the tool call envelope. They do not resolve or expand values at the OS level. This means several patterns can bypass path-based sandbox enforcement:
+Sandbox contracts normalize path traversal sequences (`..`, `.`, `//`) before evaluation using `os.path.normpath()`. This means `/tmp/../etc/shadow` is correctly resolved to `/etc/shadow` and denied by a `within: [/tmp]` boundary. However, `normpath` is a pure string operation -- it does not access the filesystem. Several patterns remain outside its reach:
 
+- **Symlinks:** `ln -s /etc/shadow /tmp/evil && cat /tmp/evil` -- the sandbox sees `/tmp/evil`, which passes `within: [/tmp]`, but the file resolves to `/etc/shadow`. Symlink attacks require write access to an allowed directory (which the sandbox itself restricts) and a command that follows symlinks.
 - **Tilde expansion:** `cat ~/secrets` -- the sandbox sees `~/secrets`, not `/home/user/secrets`.
 - **Environment variables:** `cat "$HOME/.ssh/id_rsa"` -- the sandbox sees `$HOME/.ssh/id_rsa`, not the resolved path.
 - **Variable interpolation:** `x=/etc; cat $x/shadow` -- the sandbox sees `$x/shadow`.
-- **Relative paths:** `cat ../../etc/shadow` from a working directory inside `/workspace` -- the sandbox sees the relative path, not the resolved absolute path.
+- **Relative paths without leading `/`:** `cat ../../etc/shadow` from a working directory inside `/workspace` -- the sandbox sees the relative path, not the resolved absolute path.
 
-These are inherent to string-level enforcement. For full path resolution, you need OS-level sandboxing (containers, seccomp, AppArmor) as a complementary layer. Edictum's sandbox contracts provide application-level defense -- they catch the common case and raise the bar, but they are not a substitute for OS-level isolation when the threat model requires it.
+These are inherent to string-level enforcement. For full path resolution (including symlinks), you need OS-level sandboxing (containers, seccomp, AppArmor) as a complementary layer. Edictum's sandbox contracts provide application-level defense -- they catch the common case and raise the bar, but they are not a substitute for OS-level isolation when the threat model requires it.
 
 ## Next Steps
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -422,9 +423,11 @@ def _extract_paths(envelope: ToolEnvelope) -> list[str]:
     seen: set[str] = set()
 
     def _add(p: str) -> None:
-        if p and p not in seen:
-            seen.add(p)
-            paths.append(p)
+        if p:
+            p = os.path.normpath(p)
+            if p not in seen:
+                seen.add(p)
+                paths.append(p)
 
     # 1. Envelope convenience field
     if envelope.file_path:
@@ -498,8 +501,8 @@ def _compile_sandbox(contract: dict, mode: str) -> Any:
     else:
         tool_patterns = [contract["tool"]]
 
-    within = contract.get("within", [])
-    not_within = contract.get("not_within", [])
+    within = [os.path.normpath(p) for p in contract.get("within", [])]
+    not_within = [os.path.normpath(p) for p in contract.get("not_within", [])]
     allows = contract.get("allows", {})
     not_allows = contract.get("not_allows", {})
     allowed_commands = allows.get("commands", [])
