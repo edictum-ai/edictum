@@ -216,6 +216,8 @@ class StorageBackend(Protocol):
 
 `increment()` must be atomic. This is the fundamental requirement for correctness under concurrent access.
 
+`MemoryBackend` enforces atomicity via `asyncio.Lock` on `increment()` and `delete()`. Single dict reads (`get()`, `set()`) are not locked -- they do not have read-modify-write patterns.
+
 `MemoryBackend` stores counters in a Python dict -- one process, one agent. This covers the vast majority of use cases: a single agent process enforcing session limits on its own tool calls. For multi-agent coordination across processes, edictum-server handles centralized session tracking. See the [roadmap](roadmap.md).
 
 ### Operation Limits
@@ -256,6 +258,9 @@ Edictum follows a fail-closed default with explicit opt-in to permissive behavio
 - **Contract evaluation errors** deny the tool call rather than silently allowing it
 - **Observe mode** is opt-in per-contract or per-pipeline, never the default
 - **Postconditions** default to warn; `redact` and `deny` effects are enforced for READ/PURE tools but fall back to warn for WRITE/IRREVERSIBLE tools
+- **Backend errors** propagate as exceptions. `ServerBackend.get()` returns `None` only for HTTP 404 (key not found); all other errors (connection refused, timeout, 500) propagate to the pipeline which converts them to deny decisions
+- **Input validation** in `create_envelope()` rejects tool names with null bytes, newlines, or path separators before any pipeline processing
+- **Concurrent access** is safe: `MemoryBackend.increment()` and `delete()` use `asyncio.Lock` to prevent lost updates under `asyncio.gather`
 
 Audit events record `policy_error: true` when contract loading fails, ensuring that broken contract bundles are visible in monitoring even when the system falls back to a safe default.
 
@@ -301,13 +306,17 @@ src/edictum/
   envelope.py              ToolEnvelope, Principal, ToolRegistry, BashClassifier
   contracts.py             @precondition, @postcondition, @session_contract, Verdict
   pipeline.py              GovernancePipeline -- PreDecision, PostDecision
+  evaluation.py            ContractResult, EvaluationResult (dry-run evaluation API)
+  findings.py              Finding, PostCallResult, classify_finding (postcondition output)
   hooks.py                 HookResult, HookDecision (allow/deny)
   session.py               Session (atomic counters via StorageBackend)
   storage.py               StorageBackend protocol, MemoryBackend
   limits.py                OperationLimits (max_attempts, max_tool_calls, per-tool)
   audit.py                 AuditEvent, AuditAction, AuditSink, RedactionPolicy
+  approval.py              ApprovalBackend protocol, ApprovalRequest/Decision, LocalApprovalBackend
   telemetry.py             GovernanceTelemetry (OTel spans + metrics, no-op fallback)
   builtins.py              deny_sensitive_reads() built-in precondition
+  types.py                 HookRegistration, ToolConfig (internal shared types)
 
   yaml_engine/
     loader.py              Parse YAML, validate against JSON Schema, SHA-256 hash

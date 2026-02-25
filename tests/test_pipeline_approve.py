@@ -84,6 +84,7 @@ class TestPreDecisionApproval:
         assert decision.approval_message == "Requires human approval"
 
 
+@pytest.mark.security
 class TestRunApprovalBackend:
     """run() approval backend integration."""
 

@@ -13,6 +13,8 @@ import pytest
 from edictum import Edictum
 from edictum.storage import MemoryBackend
 
+pytestmark = pytest.mark.security
+
 
 class NullSink:
     def __init__(self):

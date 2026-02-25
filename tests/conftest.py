@@ -19,6 +19,46 @@ class NullAuditSink:
         self.events.append(event)
 
 
+class CapturingAuditSink:
+    """Test fixture that records all emitted audit events.
+
+    Use to assert not just enforcement outcomes (allow/deny)
+    but audit fidelity (correct AuditAction emitted).
+    """
+
+    def __init__(self):
+        self.events: list = []
+
+    async def emit(self, event) -> None:
+        self.events.append(event)
+
+    @property
+    def actions(self) -> list:
+        return [e.action for e in self.events]
+
+    def get_by_action(self, action) -> list:
+        return [e for e in self.events if e.action == action]
+
+    def assert_action_emitted(self, action, *, times: int = 1):
+        actual = len(self.get_by_action(action))
+        assert actual == times, (
+            f"Expected {action.value} emitted {times} time(s), "
+            f"got {actual}. Actions emitted: {[a.value for a in self.actions]}"
+        )
+
+    def assert_action_not_emitted(self, action):
+        matches = self.get_by_action(action)
+        assert not matches, f"Expected {action.value} NOT emitted, " f"but found {len(matches)} event(s)"
+
+    def reset(self):
+        self.events.clear()
+
+
+@pytest.fixture
+def capturing_sink():
+    return CapturingAuditSink()
+
+
 @pytest.fixture
 def backend():
     return MemoryBackend()

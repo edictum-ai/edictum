@@ -114,6 +114,32 @@ If the PR changes any governance file, verify internal consistency:
 - GitHub Actions workflows: untrusted input (issue titles, PR bodies, commit messages) must use `env:` variables, never inline in `run:` blocks
 - Flag any new dependency additions for review
 
+#### Fail-Open / Fail-Closed (GOVERNANCE-CRITICAL)
+
+- Exception handlers in governance-relevant code paths MUST fail closed (deny), not open (allow)
+- Flag any `except Exception: return None` or `except Exception: pass` in code paths that affect allow/deny decisions
+- Storage backend implementations: `get()` returning None on network error silently resets rate limits. Only 404 should return None
+- When reviewing error handlers, ask: "If this exception fires in production, does the agent get MORE or LESS permission?" If more, flag as fail-open
+
+#### Audit Fidelity
+
+- Audit events must accurately describe the decision path, not just the outcome
+- A tool allowed via timeout fallback must emit TIMEOUT, not GRANTED
+- A tool allowed via observe mode must emit WOULD_DENY, not ALLOWED
+- Review audit action selection logic any time the approval, observe, or shadow code paths change
+
+#### Path and Filesystem Security
+
+- Path normalization must use `os.path.realpath()` not `os.path.normpath()`
+- Any new `within:` / `not_within:` / path-based check needs a symlink bypass test
+- Document TOCTOU limitations when filesystem state can change between check and use
+
+#### Input Validation at Trust Boundaries
+
+- Strings used in storage keys, log format strings, or audit records must be validated
+- Tool names, session IDs, and user-supplied identifiers: reject null bytes, control characters, path separators
+- Flag any string interpolation of untrusted input into storage keys or audit fields
+
 ### 10. Agentic engineering
 
 - Tool call validation: every parameter the pipeline accepts must be checked and tested
