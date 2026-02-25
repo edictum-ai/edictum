@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.11.3
+
+### Added
+- Adversarial test suite (`tests/test_adversarial/`) covering shell metacharacter bypasses, sandbox symlink escapes, input injection, backend failure modes, and session concurrency
+- Protocol compliance tests verifying StorageBackend and AuditSink protocol contracts
+- `CapturingAuditSink` test fixture for asserting audit event fidelity
+- `@pytest.mark.security` marker on 114 security boundary tests
+- bandit static security analysis in CI
+- Dedicated `pytest -m security` step in CI
+- Security review criteria in code-reviewer.md: fail-open/fail-closed, audit fidelity, path security, input validation
+
+### Changed
+- Updated architecture.md with missing source files and v0.11.2 security hardening details
+
 ## 0.11.2
 
 ### Fixed

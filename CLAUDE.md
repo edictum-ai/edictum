@@ -4,7 +4,7 @@
 
 Runtime contract enforcement for AI agent tool calls. Deterministic pipeline: preconditions, postconditions, session contracts, principal-aware enforcement. Seven framework adapters (LangChain, CrewAI, Agno, Semantic Kernel, OpenAI Agents SDK, Claude Agent SDK, Nanobot). Zero runtime deps in core.
 
-Current version: 0.11.2 (PyPI: `edictum`)
+Current version: 0.11.3 (PyPI: `edictum`)
 
 ## Architecture: Core + Server
 
@@ -83,6 +83,7 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - v0.11.0: Sandbox contracts (type: sandbox) — allowlist-based governance for file paths, commands, and domains. Pipeline stage between preconditions and session.
 - v0.11.1: Fix path traversal bypass in sandbox within/not_within checks (os.path.normpath normalization)
 - v0.11.2: Security hardening — ServerBackend fail-closed, BashClassifier operator coverage, symlink resolution in sandbox, approval timeout audit accuracy, tool_name validation, MemoryBackend atomicity
+- v0.11.3: Adversarial test suite, CI hardening (bandit + security test step), code-reviewer security criteria, architecture.md refresh
 
 ## Session Model
 
