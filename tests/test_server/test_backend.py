@@ -30,11 +30,35 @@ class TestServerBackend:
         mock_client.get.assert_called_once_with("/api/v1/sessions/my-key")
 
     @pytest.mark.asyncio
-    async def test_get_returns_none_on_error(self, mock_client):
+    async def test_get_returns_none_on_404(self, mock_client):
         mock_client.get.side_effect = EdictumServerError(404, "Not Found")
         backend = ServerBackend(mock_client)
         result = await backend.get("missing-key")
         assert result is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.security
+    async def test_get_raises_on_connection_error(self, mock_client):
+        mock_client.get.side_effect = ConnectionError("refused")
+        backend = ServerBackend(mock_client)
+        with pytest.raises(ConnectionError, match="refused"):
+            await backend.get("key")
+
+    @pytest.mark.asyncio
+    @pytest.mark.security
+    async def test_get_raises_on_timeout(self, mock_client):
+        mock_client.get.side_effect = TimeoutError("timeout")
+        backend = ServerBackend(mock_client)
+        with pytest.raises(TimeoutError, match="timeout"):
+            await backend.get("key")
+
+    @pytest.mark.asyncio
+    @pytest.mark.security
+    async def test_get_raises_on_500(self, mock_client):
+        mock_client.get.side_effect = EdictumServerError(500, "Internal")
+        backend = ServerBackend(mock_client)
+        with pytest.raises(EdictumServerError, match="HTTP 500"):
+            await backend.get("key")
 
     @pytest.mark.asyncio
     async def test_set_value(self, mock_client):

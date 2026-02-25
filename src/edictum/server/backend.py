@@ -1,4 +1,11 @@
-"""Server-backed storage backend for distributed session state."""
+"""Server-backed storage backend for distributed session state.
+
+Fail-closed contract: when the server is unreachable or returns a
+non-404 error, methods raise rather than returning defaults.  The
+governance pipeline treats unhandled exceptions as deny decisions,
+so propagating errors here ensures that session-based rate limits
+cannot be silently bypassed by a network outage.
+"""
 
 from __future__ import annotations
 
@@ -16,12 +23,18 @@ class ServerBackend:
         self._client = client
 
     async def get(self, key: str) -> str | None:
-        """Retrieve a value from the server session store."""
+        """Retrieve a value from the server session store.
+
+        Returns None only when the key genuinely does not exist (HTTP 404).
+        All other errors propagate so the pipeline fails closed.
+        """
         try:
             response = await self._client.get(f"/api/v1/sessions/{key}")
             return response.get("value")
-        except Exception:
-            return None
+        except EdictumServerError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
 
     async def set(self, key: str, value: str) -> None:
         """Set a value in the server session store."""
