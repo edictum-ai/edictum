@@ -82,6 +82,7 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - v0.10.0: HITL approval workflows (ApprovalBackend, effect: approve, timeout/timeout_effect), wildcard tool matching (fnmatch), Nanobot adapter, Server SDK package (edictum[server])
 - v0.11.0: Sandbox contracts (type: sandbox) — allowlist-based governance for file paths, commands, and domains. Pipeline stage between preconditions and session.
 - v0.11.1: Fix path traversal bypass in sandbox within/not_within checks (os.path.normpath normalization)
+- v0.11.2: Security hardening — ServerBackend fail-closed, BashClassifier operator coverage, symlink resolution in sandbox, approval timeout audit accuracy, tool_name validation, MemoryBackend atomicity
 
 ## Session Model
 

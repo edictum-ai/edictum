@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.2
+
+### Fixed
+- Fixed ServerBackend error handling to fail-closed on network errors
+- Fixed BashClassifier to detect additional shell metacharacters
+- Fixed sandbox path resolution to resolve symlinks
+- Fixed approval timeout audit event classification
+- Added tool_name validation in create_envelope
+- Added atomicity lock to MemoryBackend
+
 ## 0.11.1
 
 ### Fixed

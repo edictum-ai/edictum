@@ -70,6 +70,13 @@ For each affected page:
    - MemoryBackend is the only local StorageBackend (no Redis/DB)
    - No references to dropped features or ee/ tier
 
+## Step 3.5: Update repo-level markdown files
+
+These files live outside `docs/` but track code changes:
+
+1. **CHANGELOG.md** — if the PR introduces user-visible changes (fixes, features, breaking changes), add an entry under the current version heading. Use the existing entry format. Keep descriptions neutral (no exploit details for security fixes).
+2. **CLAUDE.md "What's Shipped" section** — if this is a new version, add a one-line entry to the version history list matching the existing format.
+
 ## Step 4: Update README if needed
 
 If public API, install extras, framework support, or version changed:
