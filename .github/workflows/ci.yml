@@ -44,4 +44,4 @@ jobs:
           python-version: "3.11"
       - run: pip install bandit
       - name: Security lint (bandit)
-        run: bandit -r src/ -ll -ii --exclude src/edictum/server/
+        run: bandit -r src/ -ll -ii
