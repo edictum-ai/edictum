@@ -5,12 +5,24 @@ Each test proves an observable effect of the approval_backend parameter:
 - When provided, it's stored and accessible
 - from_yaml(), from_yaml_string(), from_template() accept the parameter
 - from_multiple() preserves the approval backend from the first guard
+- Timeout audit labels are accurate (TIMEOUT, not GRANTED)
 """
 
 from __future__ import annotations
 
-from edictum import Edictum
-from edictum.approval import ApprovalBackend, LocalApprovalBackend
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from edictum import Edictum, EdictumDenied, Verdict, precondition
+from edictum.approval import (
+    ApprovalBackend,
+    ApprovalDecision,
+    ApprovalRequest,
+    ApprovalStatus,
+    LocalApprovalBackend,
+)
+from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
 
@@ -128,3 +140,127 @@ class TestApprovalBackendFromMultiple:
 
         merged = Edictum.from_multiple([guard1, guard2])
         assert merged._approval_backend is None
+
+
+# ---------------------------------------------------------------------------
+# Approval timeout audit accuracy tests
+# ---------------------------------------------------------------------------
+
+
+def _make_approval_contract(timeout_effect: str = "deny"):
+    """Create a precondition with effect=approve and given timeout_effect."""
+
+    @precondition("*")
+    def requires_approval(envelope):
+        return Verdict.fail("Requires human approval")
+
+    requires_approval._edictum_effect = "approve"
+    requires_approval._edictum_timeout = 60
+    requires_approval._edictum_timeout_effect = timeout_effect
+    return requires_approval
+
+
+def _make_mock_approval_backend(decision: ApprovalDecision) -> ApprovalBackend:
+    """Create a mock approval backend that returns a fixed decision."""
+    backend = MagicMock(spec=ApprovalBackend)
+    backend.request_approval = AsyncMock(
+        return_value=ApprovalRequest(
+            approval_id="test-id",
+            tool_name="test-tool",
+            tool_args={},
+            message="Approve?",
+            timeout=10,
+        )
+    )
+    backend.wait_for_decision = AsyncMock(return_value=decision)
+    return backend
+
+
+@pytest.mark.security
+class TestApprovalTimeoutAuditAccuracy:
+    """Security: timeout emits TIMEOUT, not GRANTED, regardless of approved flag."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_with_allow_emits_timeout_not_granted(self):
+        """When timeout_effect=allow and timeout occurs, audit says TIMEOUT not GRANTED."""
+        sink = NullAuditSink()
+        decision = ApprovalDecision(approved=True, status=ApprovalStatus.TIMEOUT)
+        approval = _make_mock_approval_backend(decision)
+
+        guard = Edictum(
+            environment="test",
+            contracts=[_make_approval_contract(timeout_effect="allow")],
+            audit_sink=sink,
+            backend=MemoryBackend(),
+            approval_backend=approval,
+        )
+
+        await guard.run("TestTool", {}, lambda: "ok")
+
+        audit_actions = [e.action for e in sink.events]
+        assert AuditAction.CALL_APPROVAL_TIMEOUT in audit_actions
+        assert AuditAction.CALL_APPROVAL_GRANTED not in audit_actions
+
+    @pytest.mark.asyncio
+    async def test_timeout_with_deny_emits_timeout(self):
+        """When timeout_effect=deny and timeout occurs, audit says TIMEOUT and call is denied."""
+        sink = NullAuditSink()
+        decision = ApprovalDecision(approved=False, status=ApprovalStatus.TIMEOUT)
+        approval = _make_mock_approval_backend(decision)
+
+        guard = Edictum(
+            environment="test",
+            contracts=[_make_approval_contract(timeout_effect="deny")],
+            audit_sink=sink,
+            backend=MemoryBackend(),
+            approval_backend=approval,
+        )
+
+        with pytest.raises(EdictumDenied):
+            await guard.run("TestTool", {}, lambda: "ok")
+
+        audit_actions = [e.action for e in sink.events]
+        assert AuditAction.CALL_APPROVAL_TIMEOUT in audit_actions
+
+    @pytest.mark.asyncio
+    async def test_explicit_approval_emits_granted(self):
+        """Explicit human approval emits GRANTED (regression guard)."""
+        sink = NullAuditSink()
+        decision = ApprovalDecision(approved=True, status=ApprovalStatus.APPROVED, approver="human")
+        approval = _make_mock_approval_backend(decision)
+
+        guard = Edictum(
+            environment="test",
+            contracts=[_make_approval_contract(timeout_effect="allow")],
+            audit_sink=sink,
+            backend=MemoryBackend(),
+            approval_backend=approval,
+        )
+
+        await guard.run("TestTool", {}, lambda: "ok")
+
+        audit_actions = [e.action for e in sink.events]
+        assert AuditAction.CALL_APPROVAL_GRANTED in audit_actions
+        assert AuditAction.CALL_APPROVAL_TIMEOUT not in audit_actions
+
+    @pytest.mark.asyncio
+    async def test_explicit_denial_emits_denied(self):
+        """Explicit human denial emits DENIED (regression guard)."""
+        sink = NullAuditSink()
+        decision = ApprovalDecision(approved=False, status=ApprovalStatus.DENIED, approver="human")
+        approval = _make_mock_approval_backend(decision)
+
+        guard = Edictum(
+            environment="test",
+            contracts=[_make_approval_contract(timeout_effect="deny")],
+            audit_sink=sink,
+            backend=MemoryBackend(),
+            approval_backend=approval,
+        )
+
+        with pytest.raises(EdictumDenied):
+            await guard.run("TestTool", {}, lambda: "ok")
+
+        audit_actions = [e.action for e in sink.events]
+        assert AuditAction.CALL_APPROVAL_DENIED in audit_actions
+        assert AuditAction.CALL_APPROVAL_TIMEOUT not in audit_actions

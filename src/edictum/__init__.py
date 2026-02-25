@@ -1056,15 +1056,19 @@ class Edictum:
                 timeout=pre.approval_timeout,
             )
             # Resolve approval: approved, denied, or timeout (with timeout_effect)
-            approved = decision.approved
-            if not approved and decision.status == ApprovalStatus.TIMEOUT:
+            approved = False
+            if decision.status == ApprovalStatus.TIMEOUT:
+                # Timeout — audit as timeout regardless of approved flag
                 await self._emit_run_pre_audit(envelope, session, AuditAction.CALL_APPROVAL_TIMEOUT, pre)
                 if pre.approval_timeout_effect == "allow":
                     approved = True
-            elif decision.approved:
-                await self._emit_run_pre_audit(envelope, session, AuditAction.CALL_APPROVAL_GRANTED, pre)
-            else:
+            elif not decision.approved:
+                # Explicit human denial
                 await self._emit_run_pre_audit(envelope, session, AuditAction.CALL_APPROVAL_DENIED, pre)
+            else:
+                # Explicit human approval
+                approved = True
+                await self._emit_run_pre_audit(envelope, session, AuditAction.CALL_APPROVAL_GRANTED, pre)
 
             if approved:
                 self.telemetry.record_allowed(envelope)
