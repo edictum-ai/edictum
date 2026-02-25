@@ -149,7 +149,7 @@ class BashClassifier:
         "more",
     ]
 
-    SHELL_OPERATORS = [">", ">>", "|", ";", "&&", "||", "$(", "`", "#{"]
+    SHELL_OPERATORS = ["\n", "\r", "<(", "<<", "${", ">", ">>", "|", ";", "&&", "||", "$(", "`", "#{"]
 
     @classmethod
     def classify(cls, command: str) -> SideEffect:
@@ -181,6 +181,10 @@ def create_envelope(
     Deep-copies args and metadata. This is the ONLY sanctioned
     way to create ToolEnvelope instances.
     """
+    # Validate tool_name: reject null bytes, control chars, path separators
+    if not tool_name or "\x00" in tool_name or "\n" in tool_name or "/" in tool_name:
+        raise ValueError(f"Invalid tool_name: {tool_name!r}")
+
     # Deep-copy for immutability
     try:
         safe_args = json.loads(json.dumps(tool_input))
