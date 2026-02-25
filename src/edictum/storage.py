@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Protocol
 
 
@@ -31,6 +32,7 @@ class MemoryBackend:
     def __init__(self):
         self._data: dict[str, str] = {}
         self._counters: dict[str, float] = {}
+        self._lock = asyncio.Lock()
 
     async def get(self, key: str) -> str | None:
         if key in self._data:
@@ -44,9 +46,11 @@ class MemoryBackend:
         self._data[key] = value
 
     async def delete(self, key: str) -> None:
-        self._data.pop(key, None)
-        self._counters.pop(key, None)
+        async with self._lock:
+            self._data.pop(key, None)
+            self._counters.pop(key, None)
 
     async def increment(self, key: str, amount: float = 1) -> float:
-        self._counters[key] = self._counters.get(key, 0) + amount
-        return self._counters[key]
+        async with self._lock:
+            self._counters[key] = self._counters.get(key, 0) + amount
+            return self._counters[key]
