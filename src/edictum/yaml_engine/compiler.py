@@ -418,13 +418,18 @@ def _extract_paths(envelope: ToolEnvelope) -> list[str]:
     2. Args values with path-like keys
     3. Args string values starting with /
     4. Parse command string for /-prefixed tokens
+
+    Note: paths are resolved via ``os.path.realpath()`` which handles both
+    ``..`` traversals AND symlinks.  TOCTOU caveat: a symlink created after
+    evaluation but before tool execution is not caught; full mitigation
+    requires OS-level enforcement.
     """
     paths: list[str] = []
     seen: set[str] = set()
 
     def _add(p: str) -> None:
         if p:
-            p = os.path.normpath(p)
+            p = os.path.realpath(p)
             if p not in seen:
                 seen.add(p)
                 paths.append(p)
@@ -501,8 +506,8 @@ def _compile_sandbox(contract: dict, mode: str) -> Any:
     else:
         tool_patterns = [contract["tool"]]
 
-    within = [os.path.normpath(p) for p in contract.get("within", [])]
-    not_within = [os.path.normpath(p) for p in contract.get("not_within", [])]
+    within = [os.path.realpath(p) for p in contract.get("within", [])]
+    not_within = [os.path.realpath(p) for p in contract.get("not_within", [])]
     allows = contract.get("allows", {})
     not_allows = contract.get("not_allows", {})
     allowed_commands = allows.get("commands", [])

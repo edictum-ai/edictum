@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 from edictum import Edictum, create_envelope
 from edictum.storage import MemoryBackend
 from edictum.yaml_engine.compiler import _extract_paths
@@ -30,42 +32,43 @@ def _guard(yaml: str) -> Edictum:
 
 
 class TestExtractPathsNormalization:
-    """Paths extracted from envelopes are normalized via os.path.normpath."""
+    """Paths extracted from envelopes are resolved via os.path.realpath."""
 
     def test_traversal_resolved(self):
-        """Paths with .. segments are normalized before extraction."""
+        """Paths with .. segments are resolved before extraction."""
         envelope = create_envelope("read_file", {"path": "/tmp/../etc/shadow"})
         paths = _extract_paths(envelope)
-        assert paths == ["/etc/shadow"]
+        assert paths == [os.path.realpath("/etc/shadow")]
 
     def test_dot_segments_collapsed(self):
         """Redundant . segments are collapsed."""
         envelope = create_envelope("read_file", {"path": "/tmp/./foo/../bar"})
         paths = _extract_paths(envelope)
-        assert paths == ["/tmp/bar"]
+        assert paths == [os.path.realpath("/tmp/bar")]
 
     def test_double_slash_collapsed(self):
         """Double slashes are collapsed."""
         envelope = create_envelope("read_file", {"path": "/tmp//foo//bar"})
         paths = _extract_paths(envelope)
-        assert paths == ["/tmp/foo/bar"]
+        assert paths == [os.path.realpath("/tmp/foo/bar")]
 
     def test_workspace_breakout_resolved(self):
         """Workspace-rooted traversal is resolved."""
         envelope = create_envelope("read_file", {"path": "/root/.nanobot/workspace/../../.ssh/id_rsa"})
         paths = _extract_paths(envelope)
-        assert paths == ["/root/.ssh/id_rsa"]
+        assert paths == [os.path.realpath("/root/.ssh/id_rsa")]
 
     def test_command_path_tokens_normalized(self):
-        """Path tokens in commands are also normalized."""
+        """Path tokens in commands are also resolved."""
         envelope = create_envelope("exec", {"command": "cat /tmp/../etc/shadow"})
         paths = _extract_paths(envelope)
-        assert "/etc/shadow" in paths
+        assert os.path.realpath("/etc/shadow") in paths
 
     def test_clean_paths_unchanged(self):
-        """normpath on already-clean paths is identity."""
-        assert os.path.normpath("/tmp/foo/bar") == "/tmp/foo/bar"
-        assert os.path.normpath("/root/.nanobot/workspace") == "/root/.nanobot/workspace"
+        """realpath on already-clean paths without symlinks is identity."""
+        # Use paths that don't involve symlinks on this platform
+        clean = os.path.realpath("/usr/local/bin")
+        assert os.path.realpath(clean) == clean
 
 
 # --- Sandbox within bypass ---
@@ -248,4 +251,147 @@ contracts:
     def test_clean_workspace_path_still_allowed(self):
         guard = _guard(self.YAML)
         result = guard.evaluate("read_file", {"path": "/root/.nanobot/workspace/README.md"})
+        assert result.verdict == "allow"
+
+
+@pytest.mark.security
+class TestSymlinkSandboxEscape:
+    """Security: symlinks inside allowed dirs pointing outside are denied."""
+
+    def test_symlink_inside_allowed_dir_pointing_outside_denied(self, tmp_path):
+        """Symlink inside within dir pointing outside is denied."""
+        allowed = tmp_path / "workspace"
+        allowed.mkdir()
+        target = tmp_path / "secrets"
+        target.mkdir()
+        (target / "creds.txt").write_text("secret")
+
+        # Create symlink: workspace/escape -> ../secrets
+        escape_link = allowed / "escape"
+        escape_link.symlink_to(target)
+
+        yaml_str = f"""\
+apiVersion: edictum/v1
+kind: ContractBundle
+metadata:
+  name: symlink-test
+defaults:
+  mode: enforce
+contracts:
+  - id: file-sandbox
+    type: sandbox
+    tools: [read_file]
+    within: ["{allowed}"]
+    outside: deny
+    message: "Denied"
+"""
+        guard = _guard(yaml_str)
+        # Access through symlink: workspace/escape/creds.txt
+        result = guard.evaluate("read_file", {"path": str(escape_link / "creds.txt")})
+        assert result.verdict == "deny"
+
+    def test_symlink_chain_resolved(self, tmp_path):
+        """Chained symlinks resolved: a -> b -> outside."""
+        allowed = tmp_path / "workspace"
+        allowed.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+
+        # Chain: workspace/a -> workspace/b -> outside
+        b_link = allowed / "b"
+        b_link.symlink_to(outside)
+        a_link = allowed / "a"
+        a_link.symlink_to(b_link)
+
+        yaml_str = f"""\
+apiVersion: edictum/v1
+kind: ContractBundle
+metadata:
+  name: chain-test
+defaults:
+  mode: enforce
+contracts:
+  - id: file-sandbox
+    type: sandbox
+    tools: [read_file]
+    within: ["{allowed}"]
+    outside: deny
+    message: "Denied"
+"""
+        guard = _guard(yaml_str)
+        result = guard.evaluate("read_file", {"path": str(a_link / "data.txt")})
+        assert result.verdict == "deny"
+
+    def test_realpath_still_allows_normal_paths(self, tmp_path):
+        """Regular file inside within dir is still allowed."""
+        allowed = tmp_path / "workspace"
+        allowed.mkdir()
+        (allowed / "readme.txt").write_text("hello")
+
+        yaml_str = f"""\
+apiVersion: edictum/v1
+kind: ContractBundle
+metadata:
+  name: normal-test
+defaults:
+  mode: enforce
+contracts:
+  - id: file-sandbox
+    type: sandbox
+    tools: [read_file]
+    within: ["{allowed}"]
+    outside: deny
+    message: "Denied"
+"""
+        guard = _guard(yaml_str)
+        result = guard.evaluate("read_file", {"path": str(allowed / "readme.txt")})
+        assert result.verdict == "allow"
+
+    def test_realpath_still_blocks_dotdot_traversal(self, tmp_path):
+        """Existing .. traversal protection still works."""
+        allowed = tmp_path / "workspace"
+        allowed.mkdir()
+
+        yaml_str = f"""\
+apiVersion: edictum/v1
+kind: ContractBundle
+metadata:
+  name: dotdot-test
+defaults:
+  mode: enforce
+contracts:
+  - id: file-sandbox
+    type: sandbox
+    tools: [read_file]
+    within: ["{allowed}"]
+    outside: deny
+    message: "Denied"
+"""
+        guard = _guard(yaml_str)
+        result = guard.evaluate("read_file", {"path": str(allowed / ".." / "etc" / "passwd")})
+        assert result.verdict == "deny"
+
+    def test_nonexistent_path_handled(self, tmp_path):
+        """Non-existent path doesn't crash -- realpath normalizes it."""
+        allowed = tmp_path / "workspace"
+        allowed.mkdir()
+
+        yaml_str = f"""\
+apiVersion: edictum/v1
+kind: ContractBundle
+metadata:
+  name: nonexistent-test
+defaults:
+  mode: enforce
+contracts:
+  - id: file-sandbox
+    type: sandbox
+    tools: [read_file]
+    within: ["{allowed}"]
+    outside: deny
+    message: "Denied"
+"""
+        guard = _guard(yaml_str)
+        # Non-existent path within workspace -- should not crash, still allowed
+        result = guard.evaluate("read_file", {"path": str(allowed / "nonexistent" / "file.txt")})
         assert result.verdict == "allow"
