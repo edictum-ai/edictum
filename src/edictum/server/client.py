@@ -32,12 +32,16 @@ class EdictumServerClient:
         api_key: str,
         *,
         agent_id: str = "default",
+        env: str = "production",
+        bundle_name: str = "default",
         timeout: float = 30.0,
         max_retries: int = 3,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.agent_id = agent_id
+        self.env = env
+        self.bundle_name = bundle_name
         self.timeout = timeout
         self.max_retries = max_retries
         self._client: httpx.AsyncClient | None = None

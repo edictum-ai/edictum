@@ -204,6 +204,7 @@ class Edictum:
         agent_id: str,
         *,
         env: str | None = None,
+        bundle_name: str = "default",
         audit_sink: AuditSink | None = None,
         approval_backend: ApprovalBackend | None = None,
         storage_backend: StorageBackend | None = None,
@@ -225,6 +226,8 @@ class Edictum:
             api_key: API key for authentication.
             agent_id: Unique identifier for this agent instance.
             env: Environment name (defaults to ``"production"``).
+            bundle_name: Which bundle lineage this agent tracks
+                (defaults to ``"default"``).
             audit_sink: Override the default ``ServerAuditSink``.
             approval_backend: Override the default ``ServerApprovalBackend``.
             storage_backend: Override the default ``ServerBackend``.
@@ -256,7 +259,13 @@ class Edictum:
         environment = env or "production"
 
         # 1. Shared HTTP client
-        client = EdictumServerClient(url, api_key, agent_id=agent_id)
+        client = EdictumServerClient(
+            url,
+            api_key,
+            agent_id=agent_id,
+            env=environment,
+            bundle_name=bundle_name,
+        )
 
         # 2. Server-backed components (use overrides if provided)
         effective_sink = audit_sink or ServerAuditSink(client)
@@ -326,8 +335,7 @@ class Edictum:
         references to the old contract lists are unaffected (Python
         list identity guarantees).
 
-        Emits a ``CONTRACTS_RELOADED`` audit event on success.  On
-        failure, existing contracts are preserved (fail-closed).
+        On failure, existing contracts are preserved (fail-closed).
 
         Args:
             contracts_yaml: Raw YAML bundle as bytes or a string.

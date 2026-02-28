@@ -175,6 +175,22 @@ class TestEdictumServerClient:
 
         await client.close()
 
+    def test_stores_env(self):
+        client = EdictumServerClient("https://example.com", "key", env="staging")
+        assert client.env == "staging"
+
+    def test_default_env(self):
+        client = EdictumServerClient("https://example.com", "key")
+        assert client.env == "production"
+
+    def test_stores_bundle_name(self):
+        client = EdictumServerClient("https://example.com", "key", bundle_name="devops-agent")
+        assert client.bundle_name == "devops-agent"
+
+    def test_default_bundle_name(self):
+        client = EdictumServerClient("https://example.com", "key")
+        assert client.bundle_name == "default"
+
     @pytest.mark.asyncio
     async def test_close_when_no_client(self):
         client = EdictumServerClient("https://example.com", "key")

@@ -57,12 +57,13 @@ class ServerAuditSink:
             "payload": {
                 "tool_args": event.tool_args,
                 "side_effect": event.side_effect,
-                "environment": event.environment,
+                "environment": getattr(event, "environment", None) or self._client.env,
                 "principal": event.principal,
                 "decision_source": event.decision_source,
                 "decision_name": event.decision_name,
                 "reason": event.reason,
                 "policy_version": event.policy_version,
+                "bundle_name": self._client.bundle_name,
             },
         }
 
