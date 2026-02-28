@@ -224,7 +224,13 @@ pip install edictum[server]
 ```python
 from edictum.server import EdictumServerClient, ServerAuditSink
 
-client = EdictumServerClient("https://edictum.example.com", api_key="...", agent_id="my-agent")
+client = EdictumServerClient(
+    "https://edictum.example.com",
+    api_key="...",
+    agent_id="my-agent",
+    env="production",
+    bundle_name="devops-agent",
+)
 sink = ServerAuditSink(client, batch_size=50, flush_interval=5.0)
 
 guard = Edictum(audit_sink=sink)
@@ -240,8 +246,9 @@ guard = Edictum(audit_sink=sink)
 
 Events are mapped to the server's ingest format (`POST /api/v1/events`) with
 `call_id`, `agent_id`, `tool_name`, `verdict`, `mode`, `timestamp`, and a
-`payload` dict containing the full enforcement context. If a flush fails, events
-are retained in the buffer for the next attempt.
+`payload` dict containing the full enforcement context including `bundle_name`
+and `environment` (falls back to the client's `env` if not set on the event).
+If a flush fails, events are retained in the buffer for the next attempt.
 
 Call `await sink.close()` to flush remaining events and stop the background timer.
 

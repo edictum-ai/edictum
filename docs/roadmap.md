@@ -89,11 +89,14 @@ Single-agent, in-process enforcement covers most use cases today. For organizati
 
 **Shipped: Server SDK client** (`pip install edictum[server]`):
 
-- **`EdictumServerClient`** -- async HTTP client with Bearer auth, agent ID headers, and exponential backoff retry
+- **`EdictumServerClient`** -- async HTTP client with Bearer auth, agent ID headers, exponential backoff retry, `env` and `bundle_name` for multi-bundle targeting
 - **`ServerApprovalBackend`** -- implements `ApprovalBackend` protocol via server approval queue (POST to create, poll GET until resolved)
-- **`ServerAuditSink`** -- implements `AuditSink` protocol with batched event ingestion to server
+- **`ServerAuditSink`** -- implements `AuditSink` protocol with batched event ingestion; includes `bundle_name` and `environment` in every event payload
 - **`ServerBackend`** -- implements `StorageBackend` protocol for distributed session state
-- **`ServerContractSource`** -- SSE client for receiving contract bundle updates with auto-reconnect
+- **`ServerContractSource`** -- SSE client for receiving contract bundle updates with auto-reconnect; passes `env`, `bundle_name`, and `policy_version` as query params for server-side filtering and drift detection
+- **`Edictum.from_server()`** -- one-line wiring of all server SDK components from a URL and API key
+- **`Edictum.reload()`** -- atomic contract swap from new YAML bundle (fail-closed on errors)
+- **`Edictum.close()`** -- graceful shutdown of SSE watcher, contract source, HTTP client, and audit sink
 
 **Coming soon: edictum-server:**
 
