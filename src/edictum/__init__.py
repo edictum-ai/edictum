@@ -10,6 +10,7 @@ except Exception:  # pragma: no cover — editable installs, test envs
     __version__ = "0.0.0-dev"
 
 import asyncio
+import base64
 import json
 import logging
 import uuid
@@ -274,10 +275,12 @@ class Edictum:
 
         # 3. Fetch current contracts from the server
         try:
-            response = await client.get("/api/v1/bundles/current")
-            bundle_yaml = response.get("yaml", "")
-            if isinstance(bundle_yaml, str):
-                bundle_yaml = bundle_yaml.encode("utf-8")
+            response = await client.get(
+                f"/api/v1/bundles/{client.bundle_name}/current",
+                env=client.env,
+            )
+            yaml_b64 = response.get("yaml_bytes", "")
+            bundle_yaml = base64.b64decode(yaml_b64) if yaml_b64 else b""
         except Exception as exc:
             await client.close()
             raise EdictumConfigError(f"Failed to fetch contracts from server: {exc}") from exc
@@ -380,10 +383,9 @@ class Edictum:
         async def _watch_loop() -> None:
             try:
                 async for bundle in source.watch():
-                    yaml_data = bundle.get("yaml", "")
-                    if isinstance(yaml_data, str):
-                        yaml_data = yaml_data.encode("utf-8")
                     try:
+                        yaml_b64 = bundle.get("yaml_bytes", "")
+                        yaml_data = base64.b64decode(yaml_b64) if yaml_b64 else b""
                         await self.reload(yaml_data)
                     except Exception:
                         # Fail closed: keep existing contracts on reload error

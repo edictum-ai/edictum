@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,13 +30,20 @@ contracts:
 """
 
 
+def _b64_yaml(yaml_str: str = VALID_BUNDLE_YAML) -> str:
+    """Base64-encode a YAML string, matching the server's yaml_bytes format."""
+    return base64.b64encode(yaml_str.encode("utf-8")).decode("ascii")
+
+
 def _make_client_mock(response=None, side_effect=None):
     """Create a mock EdictumServerClient."""
     client = MagicMock()
+    client.bundle_name = "default"
+    client.env = "production"
     if side_effect:
         client.get = AsyncMock(side_effect=side_effect)
     else:
-        client.get = AsyncMock(return_value=response or {"yaml": VALID_BUNDLE_YAML})
+        client.get = AsyncMock(return_value=response or {"yaml_bytes": _b64_yaml()})
     client.close = AsyncMock()
     return client
 
@@ -89,16 +97,21 @@ class TestFromServer:
                 env="production",
                 bundle_name="default",
             )
-            client.get.assert_called_once_with("/api/v1/bundles/current")
+            client.get.assert_called_once_with(
+                "/api/v1/bundles/default/current",
+                env="production",
+            )
 
             await guard.close()
 
     @pytest.mark.asyncio
     async def test_custom_environment(self):
-        """env parameter sets the environment on the guard."""
+        """env parameter sets the environment on the guard and is used in the fetch URL."""
         p_client, p_sink, p_approval, p_backend, p_source = _server_patches()
         with p_client as mock_cls, p_sink, p_approval, p_backend, p_source as mock_src_cls:
-            mock_cls.return_value = _make_client_mock()
+            client = _make_client_mock()
+            client.env = "staging"
+            mock_cls.return_value = client
             mock_src_cls.return_value = _make_source_mock()
 
             guard = await Edictum.from_server(
@@ -110,6 +123,10 @@ class TestFromServer:
             )
 
             assert guard.environment == "staging"
+            client.get.assert_called_once_with(
+                "/api/v1/bundles/default/current",
+                env="staging",
+            )
             await guard.close()
 
     @pytest.mark.asyncio
@@ -149,7 +166,7 @@ class TestFromServer:
     async def test_invalid_yaml_raises_config_error(self):
         """from_server() raises EdictumConfigError when server returns invalid YAML."""
         with patch("edictum.server.client.EdictumServerClient") as mock_cls:
-            client = _make_client_mock(response={"yaml": "not: valid: yaml: ["})
+            client = _make_client_mock(response={"yaml_bytes": _b64_yaml("not: valid: yaml: [")})
             mock_cls.return_value = client
 
             with pytest.raises(EdictumConfigError, match="Failed to parse server contracts"):
@@ -159,10 +176,12 @@ class TestFromServer:
 
     @pytest.mark.asyncio
     async def test_bundle_name_forwarded_to_client(self):
-        """bundle_name parameter is forwarded to EdictumServerClient."""
+        """bundle_name parameter is forwarded to EdictumServerClient and used in fetch URL."""
         p_client, p_sink, p_approval, p_backend, p_source = _server_patches()
         with p_client as mock_cls, p_sink, p_approval, p_backend, p_source as mock_src_cls:
-            mock_cls.return_value = _make_client_mock()
+            client = _make_client_mock()
+            client.bundle_name = "devops-agent"
+            mock_cls.return_value = client
             mock_src_cls.return_value = _make_source_mock()
 
             guard = await Edictum.from_server(
@@ -179,6 +198,10 @@ class TestFromServer:
                 agent_id="agent-1",
                 env="production",
                 bundle_name="devops-agent",
+            )
+            client.get.assert_called_once_with(
+                "/api/v1/bundles/devops-agent/current",
+                env="production",
             )
             await guard.close()
 

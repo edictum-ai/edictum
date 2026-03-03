@@ -195,3 +195,58 @@ class TestEdictumServerClient:
     async def test_close_when_no_client(self):
         client = EdictumServerClient("https://example.com", "key")
         await client.close()  # Should not raise
+
+
+class TestClientInputValidation:
+    """Validate that bundle_name, env, and agent_id reject unsafe values."""
+
+    @pytest.mark.security
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("bundle_name", "../../admin/x"),
+            ("bundle_name", "name\x00null"),
+            ("bundle_name", "name\ninjection"),
+            ("bundle_name", "name\rinjection"),
+            ("bundle_name", ""),
+            ("bundle_name", "a" * 129),
+            ("bundle_name", "has space"),
+            ("env", "../etc/passwd"),
+            ("env", "env\x00null"),
+            ("env", "prod\nX-Injected: true"),
+            ("env", ""),
+            ("agent_id", "agent/../../admin"),
+            ("agent_id", "agent\x00null"),
+            ("agent_id", "agent\nHeader: inject"),
+            ("agent_id", ""),
+        ],
+    )
+    def test_rejects_unsafe_identifiers(self, field, value):
+        kwargs = {field: value}
+        with pytest.raises(ValueError, match=f"Invalid {field}"):
+            EdictumServerClient("https://example.com", "key", **kwargs)
+
+    @pytest.mark.security
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "default",
+            "my-agent",
+            "devops_agent",
+            "prod.v2",
+            "Agent-123",
+            "a",
+            "a" * 128,
+        ],
+    )
+    def test_accepts_safe_identifiers(self, value):
+        client = EdictumServerClient(
+            "https://example.com",
+            "key",
+            agent_id=value,
+            env=value,
+            bundle_name=value,
+        )
+        assert client.agent_id == value
+        assert client.env == value
+        assert client.bundle_name == value

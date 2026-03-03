@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from edictum import Edictum
+
+
+def _b64(yaml_str: str) -> str:
+    """Base64-encode YAML, matching server's yaml_bytes format."""
+    return base64.b64encode(yaml_str.encode("utf-8")).decode("ascii")
+
 
 BUNDLE_V1 = """\
 apiVersion: edictum/v1
@@ -74,14 +81,16 @@ class TestSSEReload:
         p_client, p_sink, p_approval, p_backend, p_source = _server_patches()
         with p_client as mock_cls, p_sink, p_approval, p_backend, p_source as mock_src_cls:
             client = MagicMock()
-            client.get = AsyncMock(return_value={"yaml": BUNDLE_V1})
+            client.bundle_name = "default"
+            client.env = "production"
+            client.get = AsyncMock(return_value={"yaml_bytes": _b64(BUNDLE_V1)})
             client.close = AsyncMock()
             mock_cls.return_value = client
 
             update_received = asyncio.Event()
 
             async def mock_watch():
-                yield {"yaml": BUNDLE_V2}
+                yield {"yaml_bytes": _b64(BUNDLE_V2)}
                 update_received.set()
 
             source = MagicMock()
@@ -105,19 +114,65 @@ class TestSSEReload:
             await guard.close()
 
     @pytest.mark.asyncio
-    async def test_sse_invalid_yaml_preserves_contracts(self):
-        """SSE event with invalid YAML keeps existing contracts."""
+    async def test_sse_malformed_base64_does_not_kill_watcher(self):
+        """Malformed base64 in SSE event skips the event but keeps watcher alive."""
         p_client, p_sink, p_approval, p_backend, p_source = _server_patches()
         with p_client as mock_cls, p_sink, p_approval, p_backend, p_source as mock_src_cls:
             client = MagicMock()
-            client.get = AsyncMock(return_value={"yaml": BUNDLE_V1})
+            client.bundle_name = "default"
+            client.env = "production"
+            client.get = AsyncMock(return_value={"yaml_bytes": _b64(BUNDLE_V1)})
             client.close = AsyncMock()
             mock_cls.return_value = client
 
             update_received = asyncio.Event()
 
             async def mock_watch():
-                yield {"yaml": "invalid: yaml: ["}
+                # First event: malformed base64 — should be skipped
+                yield {"yaml_bytes": "!!!not-valid-base64!!!"}
+                # Second event: valid bundle — should be applied
+                yield {"yaml_bytes": _b64(BUNDLE_V2)}
+                update_received.set()
+
+            source = MagicMock()
+            source.connect = AsyncMock()
+            source.close = AsyncMock()
+            source.watch = mock_watch
+            mock_src_cls.return_value = source
+
+            guard = await Edictum.from_server(
+                "https://example.com",
+                "key",
+                "agent-1",
+                auto_watch=True,
+            )
+
+            assert len(guard._preconditions) == 1  # V1: deny-rm only
+
+            await asyncio.wait_for(update_received.wait(), timeout=2.0)
+            await asyncio.sleep(0.05)
+
+            # V2 was applied despite the bad event before it
+            assert len(guard._preconditions) == 2
+
+            await guard.close()
+
+    @pytest.mark.asyncio
+    async def test_sse_invalid_yaml_preserves_contracts(self):
+        """SSE event with invalid YAML keeps existing contracts."""
+        p_client, p_sink, p_approval, p_backend, p_source = _server_patches()
+        with p_client as mock_cls, p_sink, p_approval, p_backend, p_source as mock_src_cls:
+            client = MagicMock()
+            client.bundle_name = "default"
+            client.env = "production"
+            client.get = AsyncMock(return_value={"yaml_bytes": _b64(BUNDLE_V1)})
+            client.close = AsyncMock()
+            mock_cls.return_value = client
+
+            update_received = asyncio.Event()
+
+            async def mock_watch():
+                yield {"yaml_bytes": _b64("invalid: yaml: [")}
                 update_received.set()
 
             source = MagicMock()
@@ -148,7 +203,9 @@ class TestSSEReload:
         p_client, p_sink, p_approval, p_backend, p_source = _server_patches()
         with p_client as mock_cls, p_sink, p_approval, p_backend, p_source as mock_src_cls:
             client = MagicMock()
-            client.get = AsyncMock(return_value={"yaml": BUNDLE_V1})
+            client.bundle_name = "default"
+            client.env = "production"
+            client.get = AsyncMock(return_value={"yaml_bytes": _b64(BUNDLE_V1)})
             client.close = AsyncMock()
             mock_cls.return_value = client
 
@@ -191,7 +248,9 @@ class TestSSEReload:
         p_client, p_sink, p_approval, p_backend, p_source = _server_patches()
         with p_client as mock_cls, p_sink, p_approval, p_backend, p_source as mock_src_cls:
             client = MagicMock()
-            client.get = AsyncMock(return_value={"yaml": BUNDLE_V1})
+            client.bundle_name = "default"
+            client.env = "production"
+            client.get = AsyncMock(return_value={"yaml_bytes": _b64(BUNDLE_V1)})
             client.close = AsyncMock()
             mock_cls.return_value = client
 
