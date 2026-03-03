@@ -141,7 +141,7 @@ See the [adapter overview](adapters/overview.md) for setup guides and known limi
 
 ## What's Coming
 
-- **Server SDK** (shipped) -- `pip install edictum[server]` connects agents to edictum-server for centralized approvals, audit ingestion, distributed sessions, and SSE contract updates
+- **Server SDK** (shipped) -- `pip install edictum[server]` connects agents to edictum-server for centralized approvals, audit ingestion, distributed sessions, and SSE contract updates. `Edictum.from_server()` wires everything from a single URL; `reload()` atomically swaps contracts; multi-bundle targeting via `env` and `bundle_name`
 - **edictum-server** (coming soon) -- open-source server for production approval workflows, governance dashboard, distributed sessions, hot-reload contracts, and RBAC
 - **PII detection** -- pluggable detectors for postcondition contracts (regex built-in, Presidio as optional dependency)
 - **Production audit sinks** -- Webhook, Splunk HEC, and Datadog as core sinks or via server-managed ingestion

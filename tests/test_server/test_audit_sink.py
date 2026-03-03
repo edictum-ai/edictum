@@ -16,6 +16,8 @@ from edictum.server.client import EdictumServerClient
 def mock_client():
     client = MagicMock(spec=EdictumServerClient)
     client.agent_id = "test-agent"
+    client.env = "production"
+    client.bundle_name = "default"
     client.post = AsyncMock(return_value={"accepted": 1, "duplicates": 0})
     return client
 
@@ -133,3 +135,30 @@ class TestServerAuditSink:
         assert len(sink._buffer) <= 5
         # Oldest events should have been dropped
         assert sink._buffer[0]["call_id"] == "call-3"
+
+    @pytest.mark.asyncio
+    async def test_event_mapping_includes_bundle_name(self, mock_client):
+        """bundle_name from client is included in mapped event payload."""
+        mock_client.bundle_name = "devops-agent"
+        sink = ServerAuditSink(mock_client, batch_size=50, flush_interval=999)
+        event = _make_event()
+        mapped = sink._map_event(event)
+        assert mapped["payload"]["bundle_name"] == "devops-agent"
+
+    @pytest.mark.asyncio
+    async def test_event_mapping_uses_client_env_as_fallback(self, mock_client):
+        """When event has no environment, client.env is used as fallback."""
+        mock_client.env = "staging"
+        sink = ServerAuditSink(mock_client, batch_size=50, flush_interval=999)
+        event = _make_event(environment=None)
+        mapped = sink._map_event(event)
+        assert mapped["payload"]["environment"] == "staging"
+
+    @pytest.mark.asyncio
+    async def test_event_mapping_preserves_event_environment(self, mock_client):
+        """When event has environment set, it takes precedence over client.env."""
+        mock_client.env = "production"
+        sink = ServerAuditSink(mock_client, batch_size=50, flush_interval=999)
+        event = _make_event(environment="staging")
+        mapped = sink._map_event(event)
+        assert mapped["payload"]["environment"] == "staging"

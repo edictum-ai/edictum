@@ -270,7 +270,7 @@ Audit events record `policy_error: true` when contract loading fails, ensuring t
 
 Edictum is currently an in-process library -- contracts are loaded and enforced within the same process as the agent. This covers single-agent deployments and most production use cases today.
 
-The **server SDK** (`pip install edictum[server]`) is shipped and provides the client-side connectivity for agents to talk to edictum-server. It implements the core protocols (`ApprovalBackend`, `AuditSink`, `StorageBackend`) over HTTP, letting agents use server-managed approvals, centralized audit ingestion, distributed session state, and SSE-pushed contract updates.
+The **server SDK** (`pip install edictum[server]`) is shipped and provides the client-side connectivity for agents to talk to edictum-server. It implements the core protocols (`ApprovalBackend`, `AuditSink`, `StorageBackend`) over HTTP, letting agents use server-managed approvals, centralized audit ingestion, distributed session state, and SSE-pushed contract updates. `Edictum.from_server()` wires all five server components from a single URL and API key. `Edictum.reload()` atomically swaps contracts from a new YAML bundle (fail-closed on errors). The SSE watcher passes `env`, `bundle_name`, and `policy_version` as query params so the server can filter events per-bundle and detect drift.
 
 The **server** (`edictum-server`) is a separate deployment, coming soon as an open-source project. It provides the coordination infrastructure that cannot run in-process: production approval workflows, centralized audit dashboards, distributed sessions, hot-reload contracts, and RBAC. See the [roadmap](roadmap.md) for details.
 
@@ -288,7 +288,8 @@ The split between core and server follows one principle: **evaluation = core lib
 | Centralized audit dashboard | -- | Yes |
 | Session tracking (single process) | Yes (MemoryBackend) | -- |
 | Session tracking (multi-process) | -- | Yes (ServerBackend) |
-| Hot-reload contracts | -- | Yes (ServerContractSource) |
+| Atomic contract reload (`reload()`) | Yes | -- |
+| SSE-driven hot-reload | -- | Yes (ServerContractSource + `from_server()`) |
 | 7 framework adapters | Yes | -- |
 | CLI tools | Yes | -- |
 
@@ -339,11 +340,11 @@ src/edictum/
     nanobot.py             Nanobot governed ToolRegistry
 
   server/                  pip install edictum[server]
-    client.py              EdictumServerClient (async HTTP, auth, retries)
+    client.py              EdictumServerClient (async HTTP, auth, retries, env, bundle_name)
     approval_backend.py    ServerApprovalBackend (ApprovalBackend via HTTP)
-    audit_sink.py          ServerAuditSink (batched event ingestion)
+    audit_sink.py          ServerAuditSink (batched event ingestion, bundle_name in payload)
     backend.py             ServerBackend (StorageBackend via HTTP)
-    contract_source.py     ServerContractSource (SSE contract bundle updates)
+    contract_source.py     ServerContractSource (SSE with env/bundle_name/policy_version params)
 ```
 
 </details>

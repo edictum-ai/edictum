@@ -31,6 +31,8 @@ class ServerContractSource:
         self._max_reconnect_delay = max_reconnect_delay
         self._connected = False
         self._closed = False
+        self._current_revision: str | None = None
+        self._last_public_key: str | None = None
 
     async def connect(self) -> None:
         """Mark the source as ready to receive events."""
@@ -40,6 +42,8 @@ class ServerContractSource:
     async def watch(self) -> AsyncIterator[dict]:
         """Yield contract bundles as they arrive via SSE.
 
+        Passes ``env``, ``bundle_name``, and ``policy_version`` as query
+        params so the server can filter events and detect drift.
         Auto-reconnects on disconnect with exponential backoff.
         """
         import httpx_sse
@@ -49,10 +53,17 @@ class ServerContractSource:
         while not self._closed:
             try:
                 http_client = self._client._ensure_client()
+                params: dict[str, str] = {"env": self._client.env}
+                if self._client.bundle_name:
+                    params["bundle_name"] = self._client.bundle_name
+                if self._current_revision:
+                    params["policy_version"] = self._current_revision
+
                 async with httpx_sse.aconnect_sse(
                     http_client,
                     "GET",
                     "/api/v1/stream",
+                    params=params,
                 ) as event_source:
                     self._connected = True
                     delay = self._reconnect_delay
@@ -63,6 +74,10 @@ class ServerContractSource:
                         if event.event == "contract_update":
                             try:
                                 bundle = json.loads(event.data)
+                                if "revision_hash" in bundle:
+                                    self._current_revision = bundle["revision_hash"]
+                                if "public_key" in bundle:
+                                    self._last_public_key = bundle["public_key"]
                                 yield bundle
                             except json.JSONDecodeError:
                                 logger.warning("Invalid JSON in SSE contract_update event")

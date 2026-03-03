@@ -197,6 +197,238 @@ class Edictum:
             self._register_hook(item)
 
     @classmethod
+    async def from_server(
+        cls,
+        url: str,
+        api_key: str,
+        agent_id: str,
+        *,
+        env: str | None = None,
+        bundle_name: str = "default",
+        audit_sink: AuditSink | None = None,
+        approval_backend: ApprovalBackend | None = None,
+        storage_backend: StorageBackend | None = None,
+        mode: str = "enforce",
+        on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
+        on_allow: Callable[[ToolEnvelope], None] | None = None,
+        success_check: Callable[[str, Any], bool] | None = None,
+        principal: Principal | None = None,
+        principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
+        auto_watch: bool = True,
+    ) -> Edictum:
+        """Create an Edictum instance wired to a remote edictum-server.
+
+        Auto-configures all server components (audit, approval, session,
+        contract source) from a single URL and API key.
+
+        Args:
+            url: Base URL of the edictum-server (e.g. ``https://console.edictum.dev``).
+            api_key: API key for authentication.
+            agent_id: Unique identifier for this agent instance.
+            env: Environment name (defaults to ``"production"``).
+            bundle_name: Which bundle lineage this agent tracks
+                (defaults to ``"default"``).
+            audit_sink: Override the default ``ServerAuditSink``.
+            approval_backend: Override the default ``ServerApprovalBackend``.
+            storage_backend: Override the default ``ServerBackend``.
+            mode: Enforcement mode (``"enforce"`` or ``"observe"``).
+            on_deny: Callback invoked when a tool call is denied.
+            on_allow: Callback invoked when a tool call is allowed.
+            success_check: Callable ``(tool_name, result) -> bool``.
+            principal: Static principal for all tool calls.
+            principal_resolver: Per-call dynamic principal resolution.
+            auto_watch: If True (default), start an SSE background task
+                that automatically reloads contracts when the server
+                pushes updates.
+
+        Returns:
+            Configured Edictum instance connected to the server.
+
+        Raises:
+            EdictumConfigError: If the server is unreachable or returns
+                invalid contract data.
+        """
+        from edictum.server.approval_backend import ServerApprovalBackend
+        from edictum.server.audit_sink import ServerAuditSink
+        from edictum.server.backend import ServerBackend
+        from edictum.server.client import EdictumServerClient
+        from edictum.server.contract_source import ServerContractSource
+        from edictum.yaml_engine.compiler import compile_contracts
+        from edictum.yaml_engine.loader import load_bundle_string
+
+        environment = env or "production"
+
+        # 1. Shared HTTP client
+        client = EdictumServerClient(
+            url,
+            api_key,
+            agent_id=agent_id,
+            env=environment,
+            bundle_name=bundle_name,
+        )
+
+        # 2. Server-backed components (use overrides if provided)
+        effective_sink = audit_sink or ServerAuditSink(client)
+        effective_approval = approval_backend or ServerApprovalBackend(client)
+        effective_backend = storage_backend or ServerBackend(client)
+
+        # 3. Fetch current contracts from the server
+        try:
+            response = await client.get("/api/v1/bundles/current")
+            bundle_yaml = response.get("yaml", "")
+            if isinstance(bundle_yaml, str):
+                bundle_yaml = bundle_yaml.encode("utf-8")
+        except Exception as exc:
+            await client.close()
+            raise EdictumConfigError(f"Failed to fetch contracts from server: {exc}") from exc
+
+        # 4. Parse and compile contracts
+        try:
+            bundle_data, bundle_hash = load_bundle_string(bundle_yaml)
+            compiled = compile_contracts(bundle_data)
+        except Exception as exc:
+            await client.close()
+            raise EdictumConfigError(f"Failed to parse server contracts: {exc}") from exc
+
+        policy_version = str(bundle_hash)
+        effective_mode = mode or compiled.default_mode
+        all_contracts = (
+            compiled.preconditions + compiled.postconditions + compiled.session_contracts + compiled.sandbox_contracts
+        )
+
+        # Merge YAML tools
+        yaml_tools = compiled.tools
+
+        guard = cls(
+            environment=environment,
+            mode=effective_mode,
+            limits=compiled.limits,
+            tools=yaml_tools if yaml_tools else None,
+            contracts=all_contracts,
+            audit_sink=effective_sink,
+            backend=effective_backend,
+            policy_version=policy_version,
+            on_deny=on_deny,
+            on_allow=on_allow,
+            success_check=success_check,
+            principal=principal,
+            principal_resolver=principal_resolver,
+            approval_backend=effective_approval,
+        )
+
+        # Store server resources for lifecycle management
+        guard._server_client = client
+        guard._contract_source = ServerContractSource(client)
+        guard._sse_task: asyncio.Task | None = None
+
+        # 5. Optionally start SSE watcher for live contract updates
+        if auto_watch:
+            await guard._start_sse_watcher()
+
+        return guard
+
+    async def reload(self, contracts_yaml: bytes | str) -> None:
+        """Atomically replace all contracts from a YAML bundle.
+
+        Parses the YAML, compiles contracts, and swaps the contract
+        lists in place.  In-flight evaluations that already obtained
+        references to the old contract lists are unaffected (Python
+        list identity guarantees).
+
+        On failure, existing contracts are preserved (fail-closed).
+
+        Args:
+            contracts_yaml: Raw YAML bundle as bytes or a string.
+        """
+        from edictum.yaml_engine.compiler import compile_contracts
+        from edictum.yaml_engine.loader import load_bundle_string
+
+        bundle_data, bundle_hash = load_bundle_string(contracts_yaml)
+        compiled = compile_contracts(bundle_data)
+
+        # Atomic swaps — each assignment replaces the list reference.
+        # In-flight evaluations that already captured the old list are
+        # unaffected because they hold their own reference.
+        self._preconditions = compiled.preconditions
+        self._postconditions = compiled.postconditions
+        self._session_contracts = compiled.session_contracts
+        self._sandbox_contracts = compiled.sandbox_contracts
+        self.policy_version = str(bundle_hash)
+
+        # Update limits if the new bundle redefines them
+        self.limits = compiled.limits
+
+        # Merge tool classifications from the new bundle
+        if compiled.tools:
+            for tool_name, config in compiled.tools.items():
+                self.tool_registry.register(
+                    tool_name,
+                    side_effect=SideEffect(config.get("side_effect", "irreversible")),
+                    idempotent=config.get("idempotent", False),
+                )
+
+        logger.info("Contracts reloaded, policy_version=%s", self.policy_version)
+
+    async def _start_sse_watcher(self) -> None:
+        """Start a background task that watches for SSE contract updates."""
+        source = getattr(self, "_contract_source", None)
+        if source is None:
+            return
+
+        await source.connect()
+
+        async def _watch_loop() -> None:
+            try:
+                async for bundle in source.watch():
+                    yaml_data = bundle.get("yaml", "")
+                    if isinstance(yaml_data, str):
+                        yaml_data = yaml_data.encode("utf-8")
+                    try:
+                        await self.reload(yaml_data)
+                    except Exception:
+                        # Fail closed: keep existing contracts on reload error
+                        logger.warning("Failed to reload contracts from SSE update, keeping existing contracts")
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                logger.warning("SSE watcher loop exited unexpectedly")
+
+        self._sse_task = asyncio.create_task(_watch_loop())
+
+    async def _stop_sse_watcher(self) -> None:
+        """Stop the SSE background watcher and close server resources."""
+        task = getattr(self, "_sse_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            self._sse_task = None
+
+        source = getattr(self, "_contract_source", None)
+        if source is not None:
+            await source.close()
+
+        client = getattr(self, "_server_client", None)
+        if client is not None:
+            await client.close()
+
+    async def close(self) -> None:
+        """Shut down server resources (SSE watcher, HTTP client).
+
+        Safe to call on non-server instances (no-op).
+        """
+        await self._stop_sse_watcher()
+
+        # Flush audit sink if it supports close()
+        sink_close = getattr(self.audit_sink, "close", None)
+        if sink_close is not None:
+            result = sink_close()
+            if asyncio.iscoroutine(result):
+                await result
+
+    @classmethod
     def from_yaml(
         cls,
         *paths: str | Path,
