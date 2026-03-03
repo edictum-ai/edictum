@@ -93,6 +93,8 @@ class ServerContractSource:
                 if self._closed:
                     return
 
+                self._connected = False
+
                 if connected_at is not None:
                     elapsed = time.monotonic() - connected_at
                     if elapsed >= _STABLE_CONNECTION_SECS:
@@ -120,6 +122,10 @@ class ServerContractSource:
 
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, self._max_reconnect_delay)
+            else:
+                # Stream ended cleanly — reset so next failure isn't
+                # measured against this now-closed connection's timestamp.
+                connected_at = None
 
     async def close(self) -> None:
         """Stop watching for updates."""

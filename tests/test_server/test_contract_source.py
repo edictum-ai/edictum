@@ -352,3 +352,98 @@ class TestServerContractSource:
         assert sse_records[2].levelno == logging.INFO  # attempt 3
         assert sse_records[3].levelno == logging.DEBUG  # attempt 4
         assert sse_records[4].levelno == logging.DEBUG  # attempt 5
+
+    @pytest.mark.asyncio
+    async def test_watch_stale_connected_at_after_clean_stream_exit(self):
+        """After a clean stream close, connected_at must not leak into the next failure."""
+        client = _make_client()
+        source = ServerContractSource(client, reconnect_delay=1.0, max_reconnect_delay=60.0)
+
+        attempt = 0
+        sleep_delays: list[float] = []
+
+        @asynccontextmanager
+        async def sse_then_fail(http_client, method, url, *, params=None):
+            nonlocal attempt
+            attempt += 1
+            source_mock = MagicMock()
+
+            if attempt == 1:
+                # First: long-lived stream that ends cleanly (no events, iterator exhausts)
+                async def aiter_clean():
+                    return
+                    yield  # noqa: RET503
+
+                source_mock.aiter_sse = aiter_clean
+                yield source_mock
+            else:
+                # Second+: connection established then immediate error
+                async def aiter_fail():
+                    raise ConnectionError("refused")
+                    yield  # noqa: RET503
+
+                source_mock.aiter_sse = aiter_fail
+                yield source_mock
+
+        mod = ModuleType("httpx_sse")
+        mod.aconnect_sse = sse_then_fail  # type: ignore[attr-defined]
+        sys.modules["httpx_sse"] = mod
+
+        # attempt 1: connect at t=0, clean exit at t=50 (>30s stable)
+        # attempt 2: connect at t=51, fail at t=52 (short)
+        # Without the fix, connected_at from attempt 1 (t=0) would leak,
+        # and elapsed would be t=52 - t=0 = 52s → incorrectly reset backoff.
+        # With the fix, connected_at is None after clean exit, so attempt 2
+        # sets connected_at=t=51, elapsed=t=52-t=51=1s → backoff escalates.
+        monotonic_values = [
+            0.0,  # attempt 1 connected_at
+            # clean exit, no monotonic call in except (connected_at is None)
+            51.0,  # attempt 2 connected_at
+            52.0,  # attempt 2 elapsed check
+        ]
+
+        async def capture_sleep(delay):
+            sleep_delays.append(delay)
+            await source.close()
+
+        with patch("asyncio.sleep", side_effect=capture_sleep):
+            with patch("time.monotonic", side_effect=monotonic_values):
+                async for _bundle in source.watch():
+                    pass
+
+        # Backoff should NOT have reset — short-lived connection
+        assert sleep_delays == [1.0]
+
+    @pytest.mark.asyncio
+    async def test_watch_connected_flag_false_during_backoff(self):
+        """_connected must be False while waiting to reconnect."""
+        client = _make_client()
+        source = ServerContractSource(client, reconnect_delay=1.0)
+
+        connected_during_sleep: list[bool] = []
+
+        @asynccontextmanager
+        async def failing_sse(http_client, method, url, *, params=None):
+            source_mock = MagicMock()
+
+            async def aiter():
+                raise ConnectionError("dropped")
+                yield  # noqa: RET503
+
+            source_mock.aiter_sse = aiter
+            yield source_mock
+
+        mod = ModuleType("httpx_sse")
+        mod.aconnect_sse = failing_sse  # type: ignore[attr-defined]
+        sys.modules["httpx_sse"] = mod
+
+        async def check_connected(delay):
+            connected_during_sleep.append(source._connected)
+            await source.close()
+
+        with patch("asyncio.sleep", side_effect=check_connected):
+            with patch("time.monotonic", side_effect=[0.0, 1.0]):
+                async for _bundle in source.watch():
+                    pass
+
+        assert connected_during_sleep == [False]
