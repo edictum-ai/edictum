@@ -8,7 +8,7 @@
 - **`Edictum.close()`** — graceful shutdown of SSE watcher, contract source, HTTP client, and audit sink
 - **SSE watcher** — background asyncio task subscribing to `ServerContractSource.watch()` that auto-reloads contracts on `contract_update` events; controlled via `auto_watch` parameter on `from_server()`
 - **`env` and `bundle_name` on `EdictumServerClient`** — SSE connections pass `env`, `bundle_name`, and `policy_version` as query params for server-side filtering and drift detection
-- **`ServerContractSource` revision tracking** — `_current_revision` updated on each received bundle; `_last_public_key` stored for future signature verification
+- **`ServerContractSource` revision tracking** — `_current_revision` updated on each received bundle, passed as `policy_version` on reconnect for server-side drift detection
 - **`ServerAuditSink` multi-bundle support** — `bundle_name` included in every event payload; `environment` falls back to `client.env` when not set on the event
 
 ### Fixed

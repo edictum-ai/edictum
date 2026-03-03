@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 
 from edictum.server.client import EdictumServerClient
 
 logger = logging.getLogger(__name__)
+
+_STABLE_CONNECTION_SECS = 30.0
 
 
 class ServerContractSource:
@@ -32,7 +35,6 @@ class ServerContractSource:
         self._connected = False
         self._closed = False
         self._current_revision: str | None = None
-        self._last_public_key: str | None = None
 
     async def connect(self) -> None:
         """Mark the source as ready to receive events."""
@@ -46,9 +48,12 @@ class ServerContractSource:
         params so the server can filter events and detect drift.
         Auto-reconnects on disconnect with exponential backoff.
         """
+        import httpx
         import httpx_sse
 
         delay = self._reconnect_delay
+        consecutive_failures = 0
+        connected_at: float | None = None
 
         while not self._closed:
             try:
@@ -66,7 +71,7 @@ class ServerContractSource:
                     params=params,
                 ) as event_source:
                     self._connected = True
-                    delay = self._reconnect_delay
+                    connected_at = time.monotonic()
 
                     async for event in event_source.aiter_sse():
                         if self._closed:
@@ -74,20 +79,56 @@ class ServerContractSource:
                         if event.event == "contract_update":
                             try:
                                 bundle = json.loads(event.data)
-                                if "revision_hash" in bundle:
-                                    self._current_revision = bundle["revision_hash"]
-                                if "public_key" in bundle:
-                                    self._last_public_key = bundle["public_key"]
-                                yield bundle
                             except json.JSONDecodeError:
                                 logger.warning("Invalid JSON in SSE contract_update event")
+                                continue
+                            if not isinstance(bundle, dict):
+                                logger.warning("SSE contract_update payload is not an object")
+                                continue
+                            if "revision_hash" in bundle:
+                                self._current_revision = bundle["revision_hash"]
+                            yield bundle
 
-            except Exception:
+            except (httpx.TransportError, httpx.HTTPStatusError, OSError) as exc:
                 if self._closed:
                     return
-                logger.warning("SSE connection lost, reconnecting in %.1fs", delay)
+
+                self._connected = False
+
+                if connected_at is not None:
+                    elapsed = time.monotonic() - connected_at
+                    if elapsed >= _STABLE_CONNECTION_SECS:
+                        delay = self._reconnect_delay
+                        consecutive_failures = 0
+                    connected_at = None
+
+                consecutive_failures += 1
+                if consecutive_failures == 1:
+                    logger.warning("SSE connection lost (%s), reconnecting in %.1fs", exc, delay)
+                elif consecutive_failures <= 3:
+                    logger.info(
+                        "SSE reconnect attempt %d (%s), retrying in %.1fs",
+                        consecutive_failures,
+                        exc,
+                        delay,
+                    )
+                else:
+                    logger.debug(
+                        "SSE reconnect attempt %d (%s), retrying in %.1fs",
+                        consecutive_failures,
+                        exc,
+                        delay,
+                    )
+
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, self._max_reconnect_delay)
+            else:
+                # Stream ended cleanly — full reset so any subsequent
+                # failure is treated as a new sequence.
+                self._connected = False
+                connected_at = None
+                delay = self._reconnect_delay
+                consecutive_failures = 0
 
     async def close(self) -> None:
         """Stop watching for updates."""
