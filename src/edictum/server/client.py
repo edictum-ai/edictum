@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Safe identifier: alphanumeric, hyphens, underscores, dots. No path separators,
+# control chars, or whitespace. Matches tool_name validation in envelope.py.
+_SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 
 
 class EdictumServerError(Exception):
@@ -37,6 +42,11 @@ class EdictumServerClient:
         timeout: float = 30.0,
         max_retries: int = 3,
     ) -> None:
+        for name, value in [("agent_id", agent_id), ("env", env), ("bundle_name", bundle_name)]:
+            if not _SAFE_IDENTIFIER_RE.match(value):
+                raise ValueError(
+                    f"Invalid {name}: {value!r}. " "Must be 1-128 alphanumeric chars, hyphens, underscores, or dots."
+                )
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.agent_id = agent_id
