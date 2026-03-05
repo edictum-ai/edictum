@@ -164,7 +164,7 @@ See [Use Cases](https://docs.edictum.dev/use-cases/) for complete YAML bundles a
 
 ## Install
 
-Requires Python 3.11+. Current version: **v0.12.2**.
+Requires Python 3.11+. Current version: **v0.13.0**.
 
 ```bash
 pip install edictum              # core (zero deps)
