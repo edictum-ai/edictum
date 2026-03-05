@@ -2,7 +2,7 @@
 
 ## What is Edictum
 
-Runtime contract enforcement for AI agent tool calls. Deterministic pipeline: preconditions, postconditions, session contracts, principal-aware enforcement. Seven framework adapters (LangChain, CrewAI, Agno, Semantic Kernel, OpenAI Agents SDK, Claude Agent SDK, Nanobot). Zero runtime deps in core.
+Runtime contract enforcement for AI agent tool calls. Deterministic pipeline: preconditions, postconditions, session contracts, principal-aware enforcement. Eight framework adapters (LangChain, CrewAI, Agno, Semantic Kernel, OpenAI Agents SDK, Claude Agent SDK, Nanobot, Google ADK). Zero runtime deps in core.
 
 Current version: 0.13.0 (PyPI: `edictum`)
 
@@ -10,7 +10,7 @@ Current version: 0.13.0 (PyPI: `edictum`)
 
 Two deployment units. One library, one server.
 
-- `src/edictum/` -- MIT core. All contract types (pre, post, session, sandbox), pipeline, 7 adapters, CLI, audit to stdout/file/OTel, local approval backend, single-process session tracking.
+- `src/edictum/` -- MIT core. All contract types (pre, post, session, sandbox), pipeline, 8 adapters, CLI, audit to stdout/file/OTel, local approval backend, single-process session tracking.
 - `src/edictum/server/` -- Server SDK client (`pip install edictum[server]`). Implements core protocols (`ApprovalBackend`, `AuditSink`, `StorageBackend`) over HTTP to connect agents to the server.
 - `edictum-server` -- A separate deployment (coming soon, open source). Centralized approval workflows, audit dashboards, distributed sessions, hot-reload contracts, RBAC.
 
@@ -25,7 +25,7 @@ Core provides protocols and interfaces. The server SDK provides HTTP-backed impl
 - GovernancePipeline (evaluation engine)
 - ToolEnvelope, Principal model, Session (MemoryBackend)
 - YAML contract parsing + validation + templates + composition
-- All 7 framework adapters
+- All 8 framework adapters
 - Sandbox contracts (`type: sandbox`) — allowlist-based governance for file paths, commands, and domains
 - Observe mode (shadow deploy)
 - on_postcondition_warn callbacks

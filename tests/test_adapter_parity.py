@@ -63,18 +63,31 @@ async def _openai_post(adapter, result="ok"):
     return await adapter._post("call-1", result)
 
 
+async def _adk_pre(adapter, tool_name="TestTool", args=None):
+    return await adapter._pre(tool_name, args or {}, "call-1")
+
+
+async def _adk_post(adapter, result="ok"):
+    return await adapter._post("call-1", result)
+
+
 def _adapter_configs():
     from edictum.adapters.crewai import CrewAIAdapter
+    from edictum.adapters.google_adk import GoogleADKAdapter
     from edictum.adapters.langchain import LangChainAdapter
     from edictum.adapters.openai_agents import OpenAIAgentsAdapter
 
     def _crewai_deny(r):
         return isinstance(r, str) and "DENIED" in r
 
+    def _adk_deny(r):
+        return isinstance(r, dict) and "DENIED" in str(r.get("error", ""))
+
     return [
         ("CrewAI", CrewAIAdapter, _crewai_pre, _crewai_post, lambda r: r is None, _crewai_deny),
         ("OpenAI", OpenAIAgentsAdapter, _openai_pre, _openai_post, lambda r: r is None, lambda r: r is not None),
         ("LangChain", LangChainAdapter, _langchain_pre, _langchain_post, lambda r: r is None, lambda r: r is not None),
+        ("GoogleADK", GoogleADKAdapter, _adk_pre, _adk_post, lambda r: r is None, _adk_deny),
     ]
 
 
@@ -203,6 +216,7 @@ def _all_adapter_configs():
     from edictum.adapters.agno import AgnoAdapter
     from edictum.adapters.claude_agent_sdk import ClaudeAgentSDKAdapter
     from edictum.adapters.crewai import CrewAIAdapter
+    from edictum.adapters.google_adk import GoogleADKAdapter
     from edictum.adapters.langchain import LangChainAdapter
     from edictum.adapters.openai_agents import OpenAIAgentsAdapter
     from edictum.adapters.semantic_kernel import SemanticKernelAdapter
@@ -214,6 +228,7 @@ def _all_adapter_configs():
         ("ClaudeSDK", ClaudeAgentSDKAdapter, _claude_sdk_pre),
         ("Agno", AgnoAdapter, _agno_pre),
         ("SK", SemanticKernelAdapter, _sk_pre),
+        ("GoogleADK", GoogleADKAdapter, _adk_pre),
     ]
 
 
@@ -270,6 +285,7 @@ def _all_adapter_pre_post_configs():
     from edictum.adapters.agno import AgnoAdapter
     from edictum.adapters.claude_agent_sdk import ClaudeAgentSDKAdapter
     from edictum.adapters.crewai import CrewAIAdapter
+    from edictum.adapters.google_adk import GoogleADKAdapter
     from edictum.adapters.langchain import LangChainAdapter
     from edictum.adapters.openai_agents import OpenAIAgentsAdapter
     from edictum.adapters.semantic_kernel import SemanticKernelAdapter
@@ -281,6 +297,7 @@ def _all_adapter_pre_post_configs():
         ("ClaudeSDK", ClaudeAgentSDKAdapter, _claude_sdk_pre, _claude_sdk_post),
         ("Agno", AgnoAdapter, _agno_pre, _agno_post),
         ("SK", SemanticKernelAdapter, _sk_pre, _sk_post),
+        ("GoogleADK", GoogleADKAdapter, _adk_pre, _adk_post),
     ]
 
 
@@ -322,6 +339,10 @@ def _is_denied(result) -> bool:
     if isinstance(result, str):
         return "DENIED" in result
     if isinstance(result, dict):
+        # ADK adapter returns {"error": "DENIED: ..."}
+        if "DENIED" in str(result.get("error", "")):
+            return True
+        # Claude SDK format
         hook = result.get("hookSpecificOutput", {})
         return hook.get("permissionDecision") == "deny"
     # LangChain ToolMessage
@@ -359,10 +380,15 @@ async def _sk_pre_2(adapter, tool_name="TestTool", args=None):
     return await adapter._pre(tool_name, args or {}, "call-2")
 
 
+async def _adk_pre_2(adapter, tool_name="TestTool", args=None):
+    return await adapter._pre(tool_name, args or {}, "call-2")
+
+
 def _all_adapter_configs_with_pre2():
     from edictum.adapters.agno import AgnoAdapter
     from edictum.adapters.claude_agent_sdk import ClaudeAgentSDKAdapter
     from edictum.adapters.crewai import CrewAIAdapter
+    from edictum.adapters.google_adk import GoogleADKAdapter
     from edictum.adapters.langchain import LangChainAdapter
     from edictum.adapters.openai_agents import OpenAIAgentsAdapter
     from edictum.adapters.semantic_kernel import SemanticKernelAdapter
@@ -374,6 +400,7 @@ def _all_adapter_configs_with_pre2():
         ("ClaudeSDK", ClaudeAgentSDKAdapter, _claude_sdk_pre, _claude_sdk_pre_2),
         ("Agno", AgnoAdapter, _agno_pre, _agno_pre_2),
         ("SK", SemanticKernelAdapter, _sk_pre, _sk_pre_2),
+        ("GoogleADK", GoogleADKAdapter, _adk_pre, _adk_pre_2),
     ]
 
 

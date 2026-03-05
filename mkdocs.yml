@@ -82,6 +82,7 @@ nav:
     - Semantic Kernel: adapters/semantic-kernel.md
     - Claude SDK: adapters/claude-sdk.md
     - Nanobot: adapters/nanobot.md
+    - Google ADK: adapters/google-adk.md
   - Guides:
     - Writing Contracts: guides/writing-contracts.md
     - Testing Contracts: guides/testing-contracts.md

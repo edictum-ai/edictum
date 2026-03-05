@@ -135,7 +135,7 @@ See the [quickstart guide](https://docs.edictum.dev/quickstart/) to write your f
 - File and stdout sinks included; `CompositeSink` fans out to multiple destinations
 - `--json` CLI output for CI/CD pipeline integration
 
-**Works with 7 frameworks**
+**Works with 8 frameworks**
 
 | Framework | Integration | PII Redaction | Complexity |
 |-----------|------------|---------------|------------|
@@ -146,6 +146,7 @@ See the [quickstart guide](https://docs.edictum.dev/quickstart/) to write your f
 | CrewAI | `register()` | Partial | High |
 | Claude Agent SDK | `to_hook_callables()` | Logged only | Low |
 | Nanobot | `wrap_registry()` | Full interception | Low |
+| Google ADK | `as_plugin()`, `as_agent_callbacks()` | Full interception | Low |
 
 See [Adapter Docs](https://docs.edictum.dev/adapters/overview/) for setup, known limitations, and recommendations.
 
