@@ -61,6 +61,8 @@ agent = LlmAgent(
 )
 ```
 
+`error_cb` handles tool exceptions (emits `CALL_FAILED` audit, cleans up pending state). ADK's `LlmAgent` does not accept an error callback parameter directly -- the plugin path handles errors automatically via `on_tool_error_callback`. In the agent-callbacks path, tool exceptions will bypass `after_cb`; if you need error-path audit coverage, use the plugin path instead or wrap your tools to catch exceptions and call `error_cb` manually.
+
 Use this path when:
 
 - You need different contracts per agent (create separate adapters)

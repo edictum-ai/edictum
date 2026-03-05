@@ -37,7 +37,7 @@ class GoogleADKAdapter:
       Applies governance globally to ALL agents/tools. Recommended path.
       Note: Plugins are NOT invoked in ADK's live/streaming mode.
 
-    - ``as_agent_callbacks()`` returns (before_cb, after_cb) for LlmAgent.
+    - ``as_agent_callbacks()`` returns (before_cb, after_cb, error_cb) for LlmAgent.
       Use for per-agent scoping or live/streaming mode governance.
     """
 
@@ -124,8 +124,12 @@ class GoogleADKAdapter:
         # Start OTel span
         span = self._guard.telemetry.start_tool_span(envelope)
 
-        # Run pipeline
-        decision = await self._pipeline.pre_execute(envelope, self._session)
+        try:
+            # Run pipeline
+            decision = await self._pipeline.pre_execute(envelope, self._session)
+        except Exception:
+            span.end()
+            raise
 
         # Handle observe mode: convert deny to allow with warning
         if self._guard.mode == "observe" and decision.action == "deny":
@@ -204,47 +208,49 @@ class GoogleADKAdapter:
 
         envelope, span = pending
 
-        # Derive tool_success from response
-        tool_success = self._check_tool_success(envelope.tool_name, tool_response)
+        try:
+            # Derive tool_success from response
+            tool_success = self._check_tool_success(envelope.tool_name, tool_response)
 
-        # Run pipeline
-        post_decision = await self._pipeline.post_execute(envelope, tool_response, tool_success)
+            # Run pipeline
+            post_decision = await self._pipeline.post_execute(envelope, tool_response, tool_success)
 
-        effective_response = (
-            post_decision.redacted_response if post_decision.redacted_response is not None else tool_response
-        )
-
-        # Record in session
-        await self._session.record_execution(envelope.tool_name, success=tool_success)
-
-        # Emit audit
-        action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
-        await self._guard.audit_sink.emit(
-            AuditEvent(
-                action=action,
-                run_id=envelope.run_id,
-                call_id=envelope.call_id,
-                call_index=envelope.call_index,
-                tool_name=envelope.tool_name,
-                tool_args=self._guard.redaction.redact_args(envelope.args),
-                side_effect=envelope.side_effect.value,
-                environment=envelope.environment,
-                principal=asdict(envelope.principal) if envelope.principal else None,
-                tool_success=tool_success,
-                postconditions_passed=post_decision.postconditions_passed,
-                contracts_evaluated=post_decision.contracts_evaluated,
-                session_attempt_count=await self._session.attempt_count(),
-                session_execution_count=await self._session.execution_count(),
-                mode=self._guard.mode,
-                policy_version=self._guard.policy_version,
-                policy_error=post_decision.policy_error,
+            effective_response = (
+                post_decision.redacted_response if post_decision.redacted_response is not None else tool_response
             )
-        )
 
-        # End span
-        span.set_attribute("governance.tool_success", tool_success)
-        span.set_attribute("governance.postconditions_passed", post_decision.postconditions_passed)
-        span.end()
+            # Record in session
+            await self._session.record_execution(envelope.tool_name, success=tool_success)
+
+            # Emit audit
+            action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
+            await self._guard.audit_sink.emit(
+                AuditEvent(
+                    action=action,
+                    run_id=envelope.run_id,
+                    call_id=envelope.call_id,
+                    call_index=envelope.call_index,
+                    tool_name=envelope.tool_name,
+                    tool_args=self._guard.redaction.redact_args(envelope.args),
+                    side_effect=envelope.side_effect.value,
+                    environment=envelope.environment,
+                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    tool_success=tool_success,
+                    postconditions_passed=post_decision.postconditions_passed,
+                    contracts_evaluated=post_decision.contracts_evaluated,
+                    session_attempt_count=await self._session.attempt_count(),
+                    session_execution_count=await self._session.execution_count(),
+                    mode=self._guard.mode,
+                    policy_version=self._guard.policy_version,
+                    policy_error=post_decision.policy_error,
+                )
+            )
+
+            # End span
+            span.set_attribute("governance.tool_success", tool_success)
+            span.set_attribute("governance.postconditions_passed", post_decision.postconditions_passed)
+        finally:
+            span.end()
 
         findings = build_findings(post_decision)
         post_result = PostCallResult(
