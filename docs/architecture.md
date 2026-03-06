@@ -314,7 +314,7 @@ src/edictum/
   session.py               Session (atomic counters via StorageBackend)
   storage.py               StorageBackend protocol, MemoryBackend
   limits.py                OperationLimits (max_attempts, max_tool_calls, per-tool)
-  audit.py                 AuditEvent, AuditAction, AuditSink, RedactionPolicy
+  audit.py                 AuditEvent, AuditAction, AuditSink, RedactionPolicy, CollectingAuditSink
   approval.py              ApprovalBackend protocol, ApprovalRequest/Decision, LocalApprovalBackend
   telemetry.py             GovernanceTelemetry (OTel spans + metrics, no-op fallback)
   builtins.py              deny_sensitive_reads() built-in precondition

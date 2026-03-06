@@ -49,7 +49,9 @@ guard = Edictum(
 )
 ```
 
-If no `audit_sink` is provided, a `StdoutAuditSink` is used by default.
+If no `audit_sink` is provided, only the built-in `CollectingAuditSink` is used
+(accessible via `guard.local_sink`). To also print events to stdout, pass
+`audit_sink=StdoutAuditSink()` or set `observability.stdout: true` in YAML.
 
 ---
 
@@ -211,6 +213,82 @@ subsequent sinks do not receive the event.
 
 CompositeSink is about the structured event log, not observability traces. OTel
 spans operate independently and are complementary — use both in production.
+
+### CollectingAuditSink
+
+In-memory sink for programmatic inspection of governance decisions. Stores events
+in a bounded ring buffer with mark-based windowed queries.
+
+```python
+from edictum import Edictum
+from edictum.audit import AuditAction
+
+guard = Edictum.from_yaml("contracts.yaml")
+
+# Take a mark before the tool call
+mark = guard.local_sink.mark()
+
+# ... tool call happens via adapter or guard.run() ...
+
+# Inspect what the pipeline decided
+events = guard.local_sink.since_mark(mark)
+for ev in events:
+    if ev.action == AuditAction.CALL_DENIED:
+        print(f"Denied: {ev.tool_name}")
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_events` | `int` | `50_000` | Maximum events in the ring buffer. Oldest events are evicted when full. |
+
+#### When to use CollectingAuditSink
+
+| Scenario | Who benefits |
+|----------|--------------|
+| **Adapter demos** — classify each tool call's outcome (denied, redacted, allowed) for display | Developers building demo scripts that show governance in action |
+| **Programmatic post-hoc inspection** — react to governance decisions in application code (logging, conditional logic, routing) | Application developers integrating Edictum into agent workflows |
+| **Server mode debugging** — inspect what the pipeline decided locally without querying the server | Developers troubleshooting contract behavior when connected to edictum-server |
+| **Testing** — assert that specific audit events were emitted during a test scenario | Test authors verifying contract behavior end-to-end |
+
+Every `Edictum` instance has a `local_sink` property that returns the always-present
+`CollectingAuditSink`. It works identically regardless of construction method
+(`__init__`, `from_yaml()`, `from_server()`).
+
+#### Mark-Based Queries
+
+Marks are absolute positions in the event stream. Use `mark()` before a tool call
+and `since_mark()` after to get exactly the events from that window:
+
+```python
+mark = guard.local_sink.mark()
+# ... tool calls ...
+events = guard.local_sink.since_mark(mark)
+```
+
+If events referenced by a mark have been evicted from the ring buffer (because
+more than `max_events` events were emitted since the mark was taken),
+`since_mark()` raises `MarkEvictedError`:
+
+```python
+from edictum.audit import MarkEvictedError
+
+try:
+    events = guard.local_sink.since_mark(old_mark)
+except MarkEvictedError:
+    # Events were evicted — reset the mark
+    old_mark = guard.local_sink.mark()
+```
+
+#### Other Methods
+
+| Method | Description |
+|--------|-------------|
+| `events` | All buffered events (returns a defensive copy) |
+| `last()` | Most recent event (raises `IndexError` if empty) |
+| `filter(action)` | Events matching a specific `AuditAction` |
+| `clear()` | Discard all events. Pre-clear marks raise `MarkEvictedError`. |
 
 ### ServerAuditSink (edictum[server])
 

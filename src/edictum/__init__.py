@@ -31,8 +31,10 @@ from edictum.audit import (
     AuditAction,
     AuditEvent,
     AuditSink,
+    CollectingAuditSink,
     CompositeSink,
     FileAuditSink,
+    MarkEvictedError,
     RedactionPolicy,
     StdoutAuditSink,
 )
@@ -95,9 +97,11 @@ __all__ = [
     "AuditAction",
     "AuditEvent",
     "AuditSink",
+    "CollectingAuditSink",
     "CompositeSink",
-    "StdoutAuditSink",
     "FileAuditSink",
+    "MarkEvictedError",
+    "StdoutAuditSink",
     "RedactionPolicy",
     "GovernanceTelemetry",
     "GovernancePipeline",
@@ -157,10 +161,13 @@ class Edictum:
         self.limits = limits or OperationLimits()
         self.backend = backend or MemoryBackend()
         self.redaction = redaction or RedactionPolicy()
+        self._local_sink = CollectingAuditSink()
         if isinstance(audit_sink, list):
-            self.audit_sink: AuditSink = CompositeSink(audit_sink)
+            self.audit_sink: AuditSink = CompositeSink([self._local_sink] + audit_sink)
+        elif audit_sink is not None:
+            self.audit_sink = CompositeSink([self._local_sink, audit_sink])
         else:
-            self.audit_sink = audit_sink or StdoutAuditSink(self.redaction)
+            self.audit_sink = self._local_sink
         self.telemetry = GovernanceTelemetry()
         self._gov_tracer = get_tracer("edictum.governance")
         self.policy_version = policy_version
@@ -200,6 +207,16 @@ class Edictum:
             self._register_contract(item)
         for item in hooks or []:
             self._register_hook(item)
+
+    @property
+    def local_sink(self) -> CollectingAuditSink:
+        """The local in-memory audit event collector.
+
+        Always present regardless of construction method (``__init__``,
+        ``from_yaml()``, ``from_server()``). Use ``mark()`` /
+        ``since_mark()`` to inspect governance decisions programmatically.
+        """
+        return self._local_sink
 
     @classmethod
     async def from_server(

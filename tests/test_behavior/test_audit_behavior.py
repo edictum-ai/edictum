@@ -10,7 +10,6 @@ from edictum.audit import (
     AuditEvent,
     AuditSink,
     CompositeSink,
-    StdoutAuditSink,
 )
 
 
@@ -76,18 +75,21 @@ class TestEdictumListAutoWrap:
         guard = Edictum(audit_sink=[sink_a, sink_b])
 
         assert isinstance(guard.audit_sink, CompositeSink)
-        assert guard.audit_sink.sinks == [sink_a, sink_b]
+        # local_sink is always first, then user-provided sinks
+        assert guard.audit_sink.sinks[0] is guard.local_sink
+        assert guard.audit_sink.sinks[1] is sink_a
+        assert guard.audit_sink.sinks[2] is sink_b
 
-    async def test_single_sink_still_works(self):
+    async def test_single_sink_wraps_in_composite(self):
         sink = _CaptureSink()
         guard = Edictum(audit_sink=sink)
 
-        assert guard.audit_sink is sink
-        assert not isinstance(guard.audit_sink, CompositeSink)
+        assert isinstance(guard.audit_sink, CompositeSink)
+        assert sink in guard.audit_sink.sinks
 
-    async def test_none_defaults_to_stdout(self):
+    async def test_none_defaults_to_local_sink_only(self):
         guard = Edictum()
-        assert isinstance(guard.audit_sink, StdoutAuditSink)
+        assert guard.audit_sink is guard.local_sink
 
     async def test_list_sinks_receive_events_through_run(self):
         sink_a = _CaptureSink()

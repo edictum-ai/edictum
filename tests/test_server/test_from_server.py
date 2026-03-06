@@ -152,7 +152,7 @@ class TestFromServer:
                 auto_watch=False,
             )
 
-            assert guard.audit_sink is custom_sink
+            assert custom_sink in guard.audit_sink.sinks
             await guard.close()
 
     @pytest.mark.asyncio

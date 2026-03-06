@@ -19,7 +19,7 @@ import pytest
 
 from edictum import (
     AuditAction,
-    AuditEvent,
+    CollectingAuditSink,
     Edictum,
     EdictumDenied,
     FileAuditSink,
@@ -234,26 +234,6 @@ contracts:
       message: "Session capped at 3 executions."
       tags: [rate-limit]
 """
-
-
-class CollectingAuditSink:
-    """Audit sink that collects events for test assertions."""
-
-    def __init__(self):
-        self.events: list[AuditEvent] = []
-
-    async def emit(self, event: AuditEvent) -> None:
-        self.events.append(event)
-
-    def last(self) -> AuditEvent:
-        assert self.events, "No audit events emitted"
-        return self.events[-1]
-
-    def filter(self, action: AuditAction) -> list[AuditEvent]:
-        return [e for e in self.events if e.action == action]
-
-    def clear(self):
-        self.events.clear()
 
 
 def write_yaml(content: str) -> Path:

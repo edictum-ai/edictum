@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- **`CollectingAuditSink`** — in-memory audit sink with bounded ring buffer and mark-based windowed queries for programmatic inspection of governance decisions
+- **`MarkEvictedError`** exception — raised when `since_mark()` references events evicted from the buffer
+- **`Edictum.local_sink`** property — always-present `CollectingAuditSink` on every `Edictum` instance, regardless of construction method
 - **`Edictum.from_server(url, api_key, agent_id)`** — one-line wiring of all server SDK components (client, audit sink, approval backend, session backend, contract source) from a single URL and API key
 - **`Edictum.reload(contracts_yaml)`** — atomically replace all contracts from a new YAML bundle; fail-closed on parse errors; in-flight evaluations unaffected
 - **`Edictum.close()`** — graceful shutdown of SSE watcher, contract source, HTTP client, and audit sink
@@ -10,6 +13,15 @@
 - **`env` and `bundle_name` on `EdictumServerClient`** — SSE connections pass `env`, `bundle_name`, and `policy_version` as query params for server-side filtering and drift detection
 - **`ServerContractSource` revision tracking** — `_current_revision` updated on each received bundle, passed as `policy_version` on reconnect for server-side drift detection
 - **`ServerAuditSink` multi-bundle support** — `bundle_name` included in every event payload; `environment` falls back to `client.env` when not set on the event
+
+### Changed
+- `Edictum.__init__` no longer adds `StdoutAuditSink` by default. When `audit_sink=None`, only the `CollectingAuditSink` is used. Stdout output is now controlled via YAML `observability.stdout: true` or by explicitly passing `StdoutAuditSink()`.
+- When `audit_sink` is provided (single sink or list), it is wrapped in a `CompositeSink` with the `CollectingAuditSink` first.
+- `from_server()` audit tee: local `CollectingAuditSink` is always composed alongside the server sink (or user-provided sink), enabling local inspection in server mode.
+
+### Migration
+- Code relying on `Edictum()` printing JSON to stdout by default should explicitly pass `audit_sink=StdoutAuditSink()` or set `observability.stdout: true` in YAML.
+- Code using `guard.audit_sink is my_sink` should use `my_sink in guard.audit_sink.sinks` instead (when a user sink is provided, `audit_sink` is a `CompositeSink`).
 
 ### Fixed
 - Fixed `reload()` docstring incorrectly claiming `CONTRACTS_RELOADED` audit event emission

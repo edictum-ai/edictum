@@ -242,3 +242,88 @@ class FileAuditSink:
     def _write_line(self, line: str) -> None:
         with open(self._path, "a") as f:
             f.write(line)
+
+
+class MarkEvictedError(Exception):
+    """Raised when a mark references events that have been evicted from the buffer."""
+
+
+class CollectingAuditSink:
+    """In-memory audit sink for programmatic inspection.
+
+    Stores emitted events in a bounded ring buffer. Supports mark-based
+    windowed queries so callers can ask "what happened since my last check?"
+
+    Marks track absolute positions. If events referenced by a mark have
+    been evicted due to buffer overflow, ``since_mark()`` raises
+    ``MarkEvictedError`` so callers know they missed events rather than
+    silently receiving a partial window.
+    """
+
+    def __init__(self, max_events: int = 50_000) -> None:
+        if max_events < 1:
+            raise ValueError(f"max_events must be >= 1, got {max_events}")
+        self._events: list[AuditEvent] = []
+        self._max_events = max_events
+        self._total_emitted: int = 0  # monotonic counter, never resets
+
+    async def emit(self, event: AuditEvent) -> None:
+        self._events.append(event)
+        self._total_emitted += 1
+        if len(self._events) > self._max_events:
+            self._events = self._events[-self._max_events :]
+
+    @property
+    def events(self) -> list[AuditEvent]:
+        """All collected events (defensive copy)."""
+        return list(self._events)
+
+    def mark(self) -> int:
+        """Return a position marker at the current end of the event stream.
+
+        The marker is an absolute offset into the total event stream,
+        not an index into the internal buffer.
+        """
+        return self._total_emitted
+
+    def since_mark(self, m: int) -> list[AuditEvent]:
+        """Return events emitted after the given mark.
+
+        Args:
+            m: A marker previously returned by ``mark()``.
+
+        Returns:
+            Events emitted since the mark.
+
+        Raises:
+            MarkEvictedError: If events between the mark and the current
+                buffer start have been evicted. Callers should handle
+                this by resetting their mark via a fresh ``mark()`` call.
+        """
+        if m > self._total_emitted:
+            raise ValueError(f"Mark {m} is ahead of total emitted ({self._total_emitted})")
+        evicted_count = self._total_emitted - len(self._events)
+        if m < evicted_count:
+            raise MarkEvictedError(
+                f"Mark {m} references evicted events "
+                f"(buffer starts at {evicted_count}, "
+                f"max_events={self._max_events})"
+            )
+        buffer_offset = m - evicted_count
+        return list(self._events[buffer_offset:])
+
+    def last(self) -> AuditEvent:
+        """Return the most recent event. Raises IndexError if empty."""
+        return self._events[-1]
+
+    def filter(self, action: AuditAction) -> list[AuditEvent]:
+        """Return all events matching the given action."""
+        return [e for e in self._events if e.action == action]
+
+    def clear(self) -> None:
+        """Discard all collected events. Does not reset the total counter.
+
+        Marks taken before clear will raise ``MarkEvictedError`` since the
+        referenced events are gone. Marks taken after clear remain valid.
+        """
+        self._events.clear()
