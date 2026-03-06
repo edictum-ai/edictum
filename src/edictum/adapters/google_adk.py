@@ -67,11 +67,27 @@ class GoogleADKAdapter:
         """Update the principal for subsequent tool calls."""
         self._principal = principal
 
-    def _resolve_principal(self, tool_name: str, tool_input: dict[str, Any]) -> Principal | None:
-        """Resolve principal: resolver overrides static."""
+    def _resolve_principal(
+        self, tool_name: str, tool_input: dict[str, Any], tool_context: Any = None
+    ) -> Principal | None:
+        """Resolve principal with full precedence chain.
+
+        Order: resolver (owns decision entirely) > static > auto from ToolContext.
+        Auto-resolution only runs when neither resolver nor static principal exist.
+        """
         if self._principal_resolver is not None:
             return self._principal_resolver(tool_name, tool_input)
-        return self._principal
+        if self._principal is not None:
+            return self._principal
+        if tool_context is not None:
+            user_id = getattr(tool_context, "user_id", None)
+            agent_name = getattr(tool_context, "agent_name", None)
+            if user_id or agent_name:
+                return Principal(
+                    user_id=user_id,
+                    claims={"adk_agent_name": agent_name} if agent_name else {},
+                )
+        return None
 
     async def _pre(
         self,
@@ -84,25 +100,7 @@ class GoogleADKAdapter:
 
         Exposed for direct testing without framework imports.
         """
-        # Resolve principal -- auto-resolve from tool_context only when
-        # no explicit principal AND no resolver is configured.
-        # If a resolver is set, it owns the decision — even if it returns None.
-        if self._principal_resolver is not None:
-            principal = self._principal_resolver(tool_name, tool_input)
-        elif self._principal is not None:
-            principal = self._principal
-        elif tool_context is not None:
-            user_id = getattr(tool_context, "user_id", None)
-            agent_name = getattr(tool_context, "agent_name", None)
-            if user_id or agent_name:
-                principal = Principal(
-                    user_id=user_id,
-                    claims={"adk_agent_name": agent_name} if agent_name else {},
-                )
-            else:
-                principal = None
-        else:
-            principal = None
+        principal = self._resolve_principal(tool_name, tool_input, tool_context)
 
         # Extract ADK-specific metadata
         metadata: dict[str, Any] = {}
@@ -375,26 +373,24 @@ class GoogleADKAdapter:
             span.end()
             return self._deny(reason)
 
+        # Exceptions from backend calls propagate to _pre()'s outer except,
+        # which ends the span uniformly.
         principal_dict = asdict(envelope.principal) if envelope.principal else None
-        try:
-            approval_request = await self._guard._approval_backend.request_approval(
-                tool_name=envelope.tool_name,
-                tool_args=envelope.args,
-                message=decision.approval_message or decision.reason or "",
-                timeout=decision.approval_timeout,
-                timeout_effect=decision.approval_timeout_effect,
-                principal=principal_dict,
-            )
+        approval_request = await self._guard._approval_backend.request_approval(
+            tool_name=envelope.tool_name,
+            tool_args=envelope.args,
+            message=decision.approval_message or decision.reason or "",
+            timeout=decision.approval_timeout,
+            timeout_effect=decision.approval_timeout_effect,
+            principal=principal_dict,
+        )
 
-            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_REQUESTED)
+        await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_REQUESTED)
 
-            approval_decision = await self._guard._approval_backend.wait_for_decision(
-                approval_id=approval_request.approval_id,
-                timeout=decision.approval_timeout,
-            )
-        except Exception:
-            span.end()
-            raise
+        approval_decision = await self._guard._approval_backend.wait_for_decision(
+            approval_id=approval_request.approval_id,
+            timeout=decision.approval_timeout,
+        )
 
         approved = approval_decision.approved
         if not approved and approval_decision.status == ApprovalStatus.TIMEOUT:
