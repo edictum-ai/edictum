@@ -324,29 +324,31 @@ class GoogleADKAdapter:
         if not pending:
             return
         envelope, span = pending
-        await self._session.record_execution(envelope.tool_name, success=False)
-        await self._guard.audit_sink.emit(
-            AuditEvent(
-                action=AuditAction.CALL_FAILED,
-                run_id=envelope.run_id,
-                call_id=envelope.call_id,
-                call_index=envelope.call_index,
-                tool_name=envelope.tool_name,
-                tool_args=self._guard.redaction.redact_args(envelope.args),
-                side_effect=envelope.side_effect.value,
-                environment=envelope.environment,
-                principal=asdict(envelope.principal) if envelope.principal else None,
-                tool_success=False,
-                error=str(error),
-                session_attempt_count=await self._session.attempt_count(),
-                session_execution_count=await self._session.execution_count(),
-                mode=self._guard.mode,
-                policy_version=self._guard.policy_version,
+        try:
+            await self._session.record_execution(envelope.tool_name, success=False)
+            await self._guard.audit_sink.emit(
+                AuditEvent(
+                    action=AuditAction.CALL_FAILED,
+                    run_id=envelope.run_id,
+                    call_id=envelope.call_id,
+                    call_index=envelope.call_index,
+                    tool_name=envelope.tool_name,
+                    tool_args=self._guard.redaction.redact_args(envelope.args),
+                    side_effect=envelope.side_effect.value,
+                    environment=envelope.environment,
+                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    tool_success=False,
+                    error=str(error),
+                    session_attempt_count=await self._session.attempt_count(),
+                    session_execution_count=await self._session.execution_count(),
+                    mode=self._guard.mode,
+                    policy_version=self._guard.policy_version,
+                )
             )
-        )
-        span.set_attribute("governance.tool_success", False)
-        span.set_attribute("governance.error", str(error))
-        span.end()
+            span.set_attribute("governance.tool_success", False)
+            span.set_attribute("governance.error", str(error))
+        finally:
+            span.end()
 
     async def _handle_approval(self, envelope: Any, decision: Any, span: Any) -> dict | None:
         """Handle pending_approval decisions. Returns denial dict or None to proceed."""
