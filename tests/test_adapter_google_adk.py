@@ -749,10 +749,13 @@ class TestApproval:
 
         require_approval._edictum_effect = "approve"
 
-        guard = make_guard(contracts=[require_approval])
+        sink = NullAuditSink()
+        guard = make_guard(contracts=[require_approval], audit_sink=sink)
         adapter = GoogleADKAdapter(guard)
 
         result = await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
         assert isinstance(result, dict)
         assert "DENIED:" in result["error"]
         assert "no approval backend" in result["error"].lower()
+        # Audit must record CALL_DENIED, not CALL_ALLOWED
+        assert any(e.action == AuditAction.CALL_DENIED for e in sink.events)

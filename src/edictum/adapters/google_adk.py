@@ -353,7 +353,7 @@ class GoogleADKAdapter:
     async def _handle_approval(self, envelope: Any, decision: Any, span: Any) -> dict | None:
         """Handle pending_approval decisions. Returns denial dict or None to proceed."""
         if self._guard._approval_backend is None:
-            await self._emit_audit_pre(envelope, decision)
+            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_DENIED)
             span.set_attribute("governance.action", "denied")
             span.end()
             return self._deny("Approval required but no approval backend configured")
