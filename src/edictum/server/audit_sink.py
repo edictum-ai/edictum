@@ -51,6 +51,11 @@ class ServerAuditSink:
                 loop_id = id(asyncio.get_running_loop())
             except RuntimeError:
                 return
+            # TOCTOU: two threads can both see task_active=False and create
+            # tasks; the second overwrites _flush_task, orphaning the first.
+            # Benign: the orphaned task does one harmless flush then is cancelled
+            # when the worker's asyncio.run() exits. close() always calls flush()
+            # regardless, so no data loss.
             task_active = (
                 self._flush_task is not None and not self._flush_task.done() and self._flush_task_loop_id == loop_id
             )
@@ -94,7 +99,7 @@ class ServerAuditSink:
         try:
             await self._client.post("/api/v1/events", {"events": events})
         except Exception:
-            logger.warning("Failed to flush %d audit events", len(events))
+            logger.warning("Failed to flush %d audit events, keeping in buffer for retry", len(events))
             self._restore_events(events)
         except BaseException:
             # CancelledError, KeyboardInterrupt, SystemExit — preserve events, re-raise

@@ -106,7 +106,9 @@ class EdictumServerClient:
             return client
         # Stale client from a dead loop — can't aclose() because the
         # underlying transport's sockets are bound to the closed loop.
-        # Let GC handle cleanup.
+        # GC will finalize the transport and close sockets. This may emit
+        # ResourceWarning in debug mode; acceptable since sync adapters
+        # process tool calls sequentially (bounded number of stale clients).
         client = httpx.AsyncClient(
             base_url=self.base_url,
             headers=self._headers(),
