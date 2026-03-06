@@ -359,21 +359,25 @@ class GoogleADKAdapter:
             return self._deny("Approval required but no approval backend configured")
 
         principal_dict = asdict(envelope.principal) if envelope.principal else None
-        approval_request = await self._guard._approval_backend.request_approval(
-            tool_name=envelope.tool_name,
-            tool_args=envelope.args,
-            message=decision.approval_message or decision.reason or "",
-            timeout=decision.approval_timeout,
-            timeout_effect=decision.approval_timeout_effect,
-            principal=principal_dict,
-        )
+        try:
+            approval_request = await self._guard._approval_backend.request_approval(
+                tool_name=envelope.tool_name,
+                tool_args=envelope.args,
+                message=decision.approval_message or decision.reason or "",
+                timeout=decision.approval_timeout,
+                timeout_effect=decision.approval_timeout_effect,
+                principal=principal_dict,
+            )
 
-        await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_REQUESTED)
+            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_REQUESTED)
 
-        approval_decision = await self._guard._approval_backend.wait_for_decision(
-            approval_id=approval_request.approval_id,
-            timeout=decision.approval_timeout,
-        )
+            approval_decision = await self._guard._approval_backend.wait_for_decision(
+                approval_id=approval_request.approval_id,
+                timeout=decision.approval_timeout,
+            )
+        except Exception:
+            span.end()
+            raise
 
         approved = approval_decision.approved
         if not approved and approval_decision.status == ApprovalStatus.TIMEOUT:
