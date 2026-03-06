@@ -108,6 +108,7 @@ class TestClientThreadLocal:
 
         http2 = client._ensure_client()
         assert http1 is not http2
+        await http1.aclose()
         await client.close()
 
     @pytest.mark.asyncio

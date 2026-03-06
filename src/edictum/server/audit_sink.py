@@ -107,7 +107,11 @@ class ServerAuditSink:
             raise
 
     def _restore_events(self, events: list[dict[str, Any]]) -> None:
-        """Re-add events to the front of the buffer after a failed flush."""
+        """Re-add events to the front of the buffer after a failed flush.
+
+        Concurrent flush failures may reorder events; the server uses
+        event timestamps for ordering, not insertion order.
+        """
         with self._lock:
             self._buffer = events + self._buffer
             if len(self._buffer) > self._max_buffer_size:
