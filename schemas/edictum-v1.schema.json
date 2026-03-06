@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://edictum.dev/schemas/edictum-v1-contractbundle.json",
   "title": "Edictum ContractBundle v1",
-  "description": "Schema for Edictum YAML contract bundles. Enforces structure, type-specific constraints, and effect rules.",
+  "description": "Schema for Edictum YAML contract bundles. Enforces structure, type-specific constraints, and effect constraints.",
   "type": "object",
   "required": ["apiVersion", "kind", "metadata", "defaults", "contracts"],
   "additionalProperties": false,
@@ -253,6 +253,11 @@
       "minProperties": 1,
       "maxProperties": 1,
       "description": "A single selector:operator pair. Selector validation done in Python validator.",
+      "properties": {
+        "all": false,
+        "any": false,
+        "not": false
+      },
       "additionalProperties": { "$ref": "#/$defs/Operator" }
     },
 

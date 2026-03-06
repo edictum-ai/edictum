@@ -367,6 +367,11 @@
       "minProperties": 1,
       "maxProperties": 1,
       "description": "A single selector:operator pair. Selector validation done in Python validator.",
+      "properties": {
+        "all": false,
+        "any": false,
+        "not": false
+      },
       "additionalProperties": { "$ref": "#/$defs/Operator" }
     },
 
