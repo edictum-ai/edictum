@@ -98,13 +98,13 @@ class TestClientThreadLocal:
         await client.close()
 
     @pytest.mark.asyncio
-    async def test_loop_id_mismatch_creates_fresh_client(self):
-        """When loop ID changes (thread reuse), a fresh client is created."""
+    async def test_loop_mismatch_creates_fresh_client(self):
+        """When stored loop object differs (thread reuse), a fresh client is created."""
         client = _make_client()
         http1 = client._ensure_client()
 
-        # Simulate thread reuse with a new loop by changing stored loop_id
-        client._local.loop_id = -1
+        # Simulate thread reuse with a new loop by setting a dummy loop ref
+        client._local.loop = object()
 
         http2 = client._ensure_client()
         assert http1 is not http2
@@ -135,7 +135,7 @@ class TestClientThreadLocal:
 
     @pytest.mark.asyncio
     async def test_aenter_client_reused_by_ensure_client(self):
-        """__aenter__ sets loop_id so _ensure_client reuses the same instance."""
+        """__aenter__ sets loop ref so _ensure_client reuses the same instance."""
         client = _make_client()
         async with client as c:
             aenter_http = getattr(c._local, "client", None)

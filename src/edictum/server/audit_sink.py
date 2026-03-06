@@ -34,7 +34,7 @@ class ServerAuditSink:
         self._max_buffer_size = max_buffer_size
         self._buffer: list[dict[str, Any]] = []
         self._flush_task: asyncio.Task | None = None
-        self._flush_task_loop_id: int | None = None
+        self._flush_task_loop: asyncio.AbstractEventLoop | None = None
         self._lock = threading.Lock()
 
     async def emit(self, event: Any) -> None:
@@ -48,7 +48,7 @@ class ServerAuditSink:
             await self._flush()
         else:
             try:
-                loop_id = id(asyncio.get_running_loop())
+                current_loop = asyncio.get_running_loop()
             except RuntimeError:
                 return
             # TOCTOU: two threads can both see task_active=False and create
@@ -57,11 +57,11 @@ class ServerAuditSink:
             # when the worker's asyncio.run() exits. close() always calls flush()
             # regardless, so no data loss.
             task_active = (
-                self._flush_task is not None and not self._flush_task.done() and self._flush_task_loop_id == loop_id
+                self._flush_task is not None and not self._flush_task.done() and self._flush_task_loop is current_loop
             )
             if not task_active:
                 self._flush_task = asyncio.create_task(self._auto_flush())
-                self._flush_task_loop_id = loop_id
+                self._flush_task_loop = current_loop
 
     def _map_event(self, event: Any) -> dict[str, Any]:
         """Map an AuditEvent to the server EventPayload format."""
@@ -123,10 +123,10 @@ class ServerAuditSink:
     async def close(self) -> None:
         """Flush remaining events and cancel the background flush task."""
         try:
-            loop_id = id(asyncio.get_running_loop())
+            current_loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop_id = None
-        if self._flush_task is not None and not self._flush_task.done() and self._flush_task_loop_id == loop_id:
+            current_loop = None
+        if self._flush_task is not None and not self._flush_task.done() and self._flush_task_loop is current_loop:
             self._flush_task.cancel()
             try:
                 await self._flush_task

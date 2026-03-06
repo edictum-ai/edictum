@@ -81,9 +81,9 @@ class EdictumServerClient:
             timeout=self.timeout,
         )
         try:
-            self._local.loop_id = id(asyncio.get_running_loop())
+            self._local.loop = asyncio.get_running_loop()
         except RuntimeError:
-            self._local.loop_id = None
+            self._local.loop = None
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -99,10 +99,12 @@ class EdictumServerClient:
     def _ensure_client(self) -> httpx.AsyncClient:
         client = getattr(self._local, "client", None)
         try:
-            loop_id = id(asyncio.get_running_loop())
+            current_loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop_id = None
-        if client is not None and getattr(self._local, "loop_id", None) == loop_id:
+            current_loop = None
+        # Compare loop objects directly — id() can be recycled after GC,
+        # causing a stale client to be reused on a new loop at the same address.
+        if client is not None and getattr(self._local, "loop", None) is current_loop:
             return client
         # Stale client from a dead loop — can't aclose() because the
         # underlying transport's sockets are bound to the closed loop.
@@ -115,7 +117,7 @@ class EdictumServerClient:
             timeout=self.timeout,
         )
         self._local.client = client
-        self._local.loop_id = loop_id
+        self._local.loop = current_loop
         return client
 
     async def get(self, path: str, **params: Any) -> dict:
@@ -185,4 +187,4 @@ class EdictumServerClient:
         if client is not None:
             await client.aclose()
             self._local.client = None
-            self._local.loop_id = None
+            self._local.loop = None
