@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
+import pytest
 
 from edictum import AuditAction, Edictum
 from edictum.audit import CollectingAuditSink
@@ -29,11 +28,11 @@ contracts:
 """
 
 
-def _write_yaml(content: str = MINIMAL_YAML) -> Path:
-    f = tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False)
-    f.write(content)
-    f.close()
-    return Path(f.name)
+@pytest.fixture()
+def yaml_path(tmp_path):
+    p = tmp_path / "contracts.yaml"
+    p.write_text(MINIMAL_YAML)
+    return p
 
 
 class TestLocalSinkPresence:
@@ -41,9 +40,8 @@ class TestLocalSinkPresence:
         guard = Edictum(audit_sink=NullAuditSink())
         assert isinstance(guard.local_sink, CollectingAuditSink)
 
-    def test_local_sink_always_present_from_yaml(self):
-        path = _write_yaml()
-        guard = Edictum.from_yaml(str(path), audit_sink=NullAuditSink())
+    def test_local_sink_always_present_from_yaml(self, yaml_path):
+        guard = Edictum.from_yaml(str(yaml_path), audit_sink=NullAuditSink())
         assert isinstance(guard.local_sink, CollectingAuditSink)
 
     def test_local_sink_always_present_from_template(self):
