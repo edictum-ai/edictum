@@ -16,7 +16,9 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/Contract" }
     },
-    "tools": { "$ref": "#/$defs/Tools" }
+    "tools": { "$ref": "#/$defs/Tools" },
+    "observability": { "$ref": "#/$defs/Observability" },
+    "observe_alongside": { "type": "boolean", "default": false }
   },
 
   "$defs": {
@@ -57,6 +59,35 @@
       }
     },
 
+    "Observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "otel": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "endpoint": { "type": "string" },
+            "protocol": { "type": "string", "enum": ["grpc", "http"] },
+            "service_name": { "type": "string" },
+            "insecure": { "type": "boolean", "default": true },
+            "resource_attributes": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        },
+        "stdout": { "type": "boolean", "default": true },
+        "file": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+
     "Defaults": {
       "type": "object",
       "required": ["mode"],
@@ -75,7 +106,8 @@
       "oneOf": [
         { "$ref": "#/$defs/PreContract" },
         { "$ref": "#/$defs/PostContract" },
-        { "$ref": "#/$defs/SessionContract" }
+        { "$ref": "#/$defs/SessionContract" },
+        { "$ref": "#/$defs/SandboxContract" }
       ]
     },
 
@@ -95,10 +127,12 @@
           "required": ["effect", "message"],
           "additionalProperties": false,
           "properties": {
-            "effect": { "const": "deny" },
+            "effect": { "enum": ["deny", "approve"] },
             "message": { "$ref": "#/$defs/MessageString" },
             "tags": { "$ref": "#/$defs/Tags" },
-            "metadata": { "$ref": "#/$defs/ThenMetadata" }
+            "metadata": { "$ref": "#/$defs/ThenMetadata" },
+            "timeout": { "type": "integer", "minimum": 1, "default": 300 },
+            "timeout_effect": { "enum": ["deny", "allow"], "default": "deny" }
           }
         }
       }
@@ -153,6 +187,86 @@
       }
     },
 
+    "SandboxContract": {
+      "type": "object",
+      "required": ["id", "type", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/ContractId" },
+        "type": { "const": "sandbox" },
+        "enabled": { "type": "boolean", "default": true },
+        "mode": { "$ref": "#/$defs/Mode" },
+        "tool": { "$ref": "#/$defs/ToolSelector" },
+        "tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolSelector" },
+          "minItems": 1
+        },
+        "within": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "not_within": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "allows": { "$ref": "#/$defs/SandboxAllows" },
+        "not_allows": { "$ref": "#/$defs/SandboxNotAllows" },
+        "outside": {
+          "type": "string",
+          "enum": ["deny", "approve"],
+          "default": "deny"
+        },
+        "message": { "$ref": "#/$defs/MessageString" },
+        "timeout": { "type": "integer", "minimum": 1, "default": 300 },
+        "timeout_effect": { "enum": ["deny", "allow"], "default": "deny" }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            { "required": ["tool"] },
+            { "required": ["tools"] }
+          ]
+        },
+        {
+          "anyOf": [
+            { "required": ["within"] },
+            { "required": ["allows"] }
+          ]
+        }
+      ]
+    },
+
+    "SandboxAllows": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "domains": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        }
+      }
+    },
+
+    "SandboxNotAllows": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "domains": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        }
+      }
+    },
+
     "ContractId": {
       "type": "string",
       "minLength": 1,
@@ -163,7 +277,7 @@
     "ToolSelector": {
       "type": "string",
       "minLength": 1,
-      "description": "Tool name or '*' for all tools."
+      "description": "Tool name, glob pattern (e.g. 'mcp_*'), or '*' for all tools."
     },
 
     "MessageString": {
@@ -265,7 +379,7 @@
       "type": "object",
       "minProperties": 1,
       "maxProperties": 1,
-      "additionalProperties": false,
+      "additionalProperties": {},
       "properties": {
         "exists": { "type": "boolean" },
         "equals": { "description": "Strict equality. Any scalar type." },

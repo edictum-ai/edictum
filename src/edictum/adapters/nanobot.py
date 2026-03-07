@@ -298,6 +298,9 @@ class GovernedToolRegistry:
             return self._guard._success_check(tool_name, result)
         if result is None:
             return True
+        if isinstance(result, dict):
+            if result.get("is_error"):
+                return False
         if isinstance(result, str):
             lower = result[:7].lower()
             if lower.startswith("error:") or lower.startswith("fatal:"):

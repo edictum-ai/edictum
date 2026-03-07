@@ -1511,7 +1511,7 @@ class Edictum:
                 if self._success_check:
                     tool_success = self._success_check(tool_name, result)
                 else:
-                    tool_success = True
+                    tool_success = _default_success_check(tool_name, result)
             except Exception as e:
                 result = str(e)
                 tool_success = False
@@ -1607,7 +1607,7 @@ class Edictum:
             span.set_attribute("edictum.tool.args", tool_args_str)
 
             if audit_event.principal:
-                for key in ("role", "team", "ticket_ref", "user_id", "org_id"):
+                for key in ("role", "ticket_ref", "user_id", "org_id"):
                     val = audit_event.principal.get(key)
                     if val:
                         span.set_attribute(f"edictum.principal.{key}", val)
@@ -1621,6 +1621,24 @@ class Edictum:
                 span.set_status(StatusCode.ERROR, audit_event.reason or "denied")
             else:
                 span.set_status(StatusCode.OK)
+
+
+def _default_success_check(tool_name: str, result: Any) -> bool:
+    """Default heuristic for tool success detection.
+
+    Matches the heuristic used by all framework adapters: None is success,
+    dict with is_error is failure, string starting with error:/fatal: is failure.
+    """
+    if result is None:
+        return True
+    if isinstance(result, dict):
+        if result.get("is_error"):
+            return False
+    if isinstance(result, str):
+        lower = result[:7].lower()
+        if lower.startswith("error:") or lower.startswith("fatal:"):
+            return False
+    return True
 
 
 def _validate_custom_operators(custom_operators: dict[str, Any]) -> None:
