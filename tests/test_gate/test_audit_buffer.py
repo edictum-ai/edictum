@@ -184,3 +184,92 @@ class TestBuildAuditEvent:
             assistant="ClaudeCodeFormat",
         )
         assert len(event.args_preview) <= 200
+
+
+class TestConsoleEventMapping:
+    """Verify _to_console_event maps WAL fields to core AuditEvent conventions."""
+
+    def test_allow_maps_to_call_allowed(self) -> None:
+        raw = {"verdict": "allow", "mode": "enforce", "tool_name": "Bash"}
+        result = AuditBuffer._to_console_event(raw)
+        assert result["verdict"] == "call_allowed"
+
+    def test_deny_enforce_maps_to_call_denied(self) -> None:
+        raw = {"verdict": "deny", "mode": "enforce", "tool_name": "Bash"}
+        result = AuditBuffer._to_console_event(raw)
+        assert result["verdict"] == "call_denied"
+
+    def test_deny_observe_maps_to_call_would_deny(self) -> None:
+        raw = {"verdict": "deny", "mode": "observe", "tool_name": "Bash"}
+        result = AuditBuffer._to_console_event(raw)
+        assert result["verdict"] == "call_would_deny"
+
+    def test_contract_id_maps_to_decision_name(self) -> None:
+        raw = {
+            "verdict": "deny",
+            "mode": "enforce",
+            "tool_name": "Read",
+            "contract_id": "deny-secret-file-reads",
+            "reason": "Denied: secrets",
+        }
+        result = AuditBuffer._to_console_event(raw)
+        assert result["payload"]["decision_name"] == "deny-secret-file-reads"
+        assert result["payload"]["decision_source"] == "yaml_precondition"
+        assert result["payload"]["reason"] == "Denied: secrets"
+
+    def test_scope_enforcement_maps_to_gate_scope(self) -> None:
+        raw = {
+            "verdict": "deny",
+            "mode": "enforce",
+            "tool_name": "Write",
+            "contract_id": "gate-scope-enforcement",
+        }
+        result = AuditBuffer._to_console_event(raw)
+        assert result["payload"]["decision_source"] == "gate_scope"
+
+    def test_args_preview_parsed_to_tool_args(self) -> None:
+        raw = {
+            "verdict": "allow",
+            "mode": "enforce",
+            "tool_name": "Bash",
+            "args_preview": '{"command": "ls -la"}',
+        }
+        result = AuditBuffer._to_console_event(raw)
+        assert result["payload"]["tool_args"] == {"command": "ls -la"}
+
+    def test_truncated_args_preview_wrapped(self) -> None:
+        raw = {
+            "verdict": "allow",
+            "mode": "enforce",
+            "tool_name": "Bash",
+            "args_preview": '{"command": "very long...',  # invalid JSON (truncated)
+        }
+        result = AuditBuffer._to_console_event(raw)
+        assert result["payload"]["tool_args"]["_preview"] == '{"command": "very long...'
+
+    def test_empty_agent_id_falls_back_to_user(self) -> None:
+        raw = {
+            "verdict": "allow",
+            "mode": "enforce",
+            "tool_name": "Bash",
+            "agent_id": "",
+            "user": "acartagena",
+        }
+        result = AuditBuffer._to_console_event(raw)
+        assert result["agent_id"] == "acartagena"
+
+    def test_agent_id_preserved_when_set(self) -> None:
+        raw = {
+            "verdict": "allow",
+            "mode": "enforce",
+            "tool_name": "Bash",
+            "agent_id": "my-agent-1",
+            "user": "acartagena",
+        }
+        result = AuditBuffer._to_console_event(raw)
+        assert result["agent_id"] == "my-agent-1"
+
+    def test_mode_passed_through(self) -> None:
+        raw = {"verdict": "allow", "mode": "observe", "tool_name": "Bash"}
+        result = AuditBuffer._to_console_event(raw)
+        assert result["mode"] == "observe"

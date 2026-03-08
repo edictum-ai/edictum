@@ -199,32 +199,76 @@ class AuditBuffer:
     def _to_console_event(raw: dict) -> dict:
         """Map a WAL event dict to Console EventPayload schema.
 
-        Console expects: call_id, agent_id, tool_name, verdict, mode,
-        timestamp, payload (optional dict for extra fields).
+        Console expects top-level: call_id, agent_id, tool_name, verdict, mode,
+        timestamp, payload (optional dict).
+
+        The dashboard renders payload fields using core AuditEvent conventions:
+        - decision_name (contract id), decision_source, reason, policy_version
+        - tool_args (dict of args), duration_ms
+        Gate must map its WAL field names to these.
         """
-        # Pack gate-specific fields into payload
+        # Map Gate verdict to core AuditAction values the dashboard understands
+        gate_verdict = raw.get("verdict", "allow")
+        gate_mode = raw.get("mode", "enforce")
+        if gate_verdict == "deny" and gate_mode == "observe":
+            verdict = "call_would_deny"
+        elif gate_verdict == "deny":
+            verdict = "call_denied"
+        else:
+            verdict = "call_allowed"
+
+        # Build payload using core AuditEvent field names
         payload: dict[str, object] = {}
-        for key in (
-            "assistant",
-            "user",
-            "tool_category",
-            "args_preview",
-            "contract_id",
-            "reason",
-            "cwd",
-            "duration_ms",
-            "contracts_evaluated",
-        ):
+
+        # Contract provenance — dashboard reads decision_name, decision_source
+        contract_id = raw.get("contract_id")
+        if contract_id:
+            payload["decision_name"] = contract_id
+            if contract_id == "gate-scope-enforcement":
+                payload["decision_source"] = "gate_scope"
+            else:
+                payload["decision_source"] = "yaml_precondition"
+
+        reason = raw.get("reason")
+        if reason:
+            payload["reason"] = reason
+
+        # Tool args — dashboard reads tool_args as dict for preview
+        args_preview = raw.get("args_preview", "")
+        if args_preview:
+            try:
+                payload["tool_args"] = json.loads(args_preview)
+            except (json.JSONDecodeError, ValueError):
+                payload["tool_args"] = {"_preview": args_preview}
+
+        # Performance and context
+        duration_ms = raw.get("duration_ms")
+        if duration_ms is not None:
+            payload["duration_ms"] = duration_ms
+
+        contracts_evaluated = raw.get("contracts_evaluated")
+        if contracts_evaluated is not None:
+            payload["contracts_evaluated"] = contracts_evaluated
+
+        # Gate-specific extras (not in core AuditEvent but useful)
+        for key in ("assistant", "user", "tool_category", "cwd"):
             val = raw.get(key)
-            if val is not None and val != "":
+            if val:
                 payload[key] = val
+
+        # Default agent_id from user+hostname if not set
+        agent_id = raw.get("agent_id", "")
+        if not agent_id:
+            user = raw.get("user", "")
+            if user:
+                agent_id = user
 
         return {
             "call_id": raw.get("call_id", str(uuid.uuid4())),
-            "agent_id": raw.get("agent_id", ""),
+            "agent_id": agent_id,
             "tool_name": raw.get("tool_name", ""),
-            "verdict": raw.get("verdict", "allow"),
-            "mode": raw.get("mode", "enforce"),
+            "verdict": verdict,
+            "mode": gate_mode,
             "timestamp": raw.get("timestamp", datetime.now(UTC).isoformat()),
             "payload": payload or None,
         }
