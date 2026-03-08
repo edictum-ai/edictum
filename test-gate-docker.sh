@@ -42,6 +42,9 @@ header "PHASE 4: CLI — gate init"
 edictum gate init --non-interactive
 if [ -f "$HOME/.edictum/gate.yaml" ] && [ -f "$HOME/.edictum/contracts/base.yaml" ]; then
     pass "gate init created config + contracts"
+    # Switch to enforce mode for testing (default is observe = audit only)
+    sed -i 's/mode: observe/mode: enforce/' "$HOME/.edictum/contracts/base.yaml"
+    pass "switched to enforce mode for deny tests"
 else
     fail "gate init missing files"
 fi
