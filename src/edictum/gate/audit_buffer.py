@@ -388,6 +388,23 @@ class AuditBuffer:
         # Map WAL events to Console schema
         console_events = [self._to_console_event(e) for e in raw_events]
 
+        # Read contract manifest for coverage reporting
+        payload: dict[str, object] = {"events": console_events}
+        manifest_path = self._buffer_path.parent / "manifest.json"
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text())
+                agent_id = getattr(console_config, "agent_id", "") or ""
+                if not agent_id and raw_events:
+                    agent_id = raw_events[0].get("agent_id", "")
+                payload["agent_manifest"] = {
+                    "agent_id": agent_id,
+                    "policy_version": manifest.get("policy_version", ""),
+                    "contracts": manifest.get("contracts", []),
+                }
+            except (json.JSONDecodeError, OSError):
+                pass
+
         import httpx
 
         client = httpx.Client(
@@ -398,7 +415,7 @@ class AuditBuffer:
         try:
             response = client.post(
                 "/api/v1/events",
-                json={"events": console_events},
+                json=payload,
             )
             response.raise_for_status()
         except Exception as exc:

@@ -191,6 +191,9 @@ def _run_check_inner(
             return format_handler.format_output("allow", None, None, 0)
         return format_handler.format_output("deny", None, "Denied: failed to load contracts", 0)
 
+    # Write contract manifest for Console coverage reporting
+    _write_contract_manifest(existing_paths, guard, config)
+
     # Evaluate
     result = guard.evaluate(tool_name, tool_input)
 
@@ -269,6 +272,76 @@ def _run_check_inner(
     # Observe mode: audit records would-deny, but the assistant is told allow
     output_verdict = "allow" if (verdict == "deny" and mode == "observe") else verdict
     return format_handler.format_output(output_verdict, contract_id, reason, result.contracts_evaluated)
+
+
+def _write_contract_manifest(
+    contract_paths: list[str],
+    guard: Any,
+    config: Any,
+) -> None:
+    """Write contract manifest for Console coverage reporting.
+
+    Creates a lightweight JSON file with contract IDs, tools, types, and modes.
+    flush_to_console() reads this and includes it as agent_manifest in the sync
+    payload so Console can populate the coverage dashboard.
+
+    Only rewrites when policy_version changes (cheap string comparison).
+    """
+    try:
+        audit_config = getattr(config, "audit", None)
+        if audit_config is None:
+            return
+        buffer_path = getattr(audit_config, "buffer_path", "")
+        if not buffer_path:
+            return
+
+        from pathlib import Path
+
+        manifest_path = Path(buffer_path).parent / "manifest.json"
+
+        # Skip if policy_version hasn't changed
+        policy_version = getattr(guard, "policy_version", None) or ""
+        if manifest_path.exists():
+            try:
+                existing = json.loads(manifest_path.read_text())
+                if existing.get("policy_version") == policy_version:
+                    return
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Extract contract metadata from YAML files
+        import yaml
+
+        contracts_meta: list[dict] = []
+        for path in contract_paths:
+            try:
+                with open(path) as f:
+                    bundle = yaml.safe_load(f)
+                if not isinstance(bundle, dict):
+                    continue
+                defaults_mode = bundle.get("defaults", {}).get("mode", "enforce")
+                for c in bundle.get("contracts", []):
+                    tool = c.get("tool", c.get("tools", "*"))
+                    if isinstance(tool, list):
+                        tool = ", ".join(tool)
+                    contracts_meta.append(
+                        {
+                            "id": c.get("id", ""),
+                            "type": c.get("type", ""),
+                            "tool": tool,
+                            "mode": c.get("mode", defaults_mode),
+                        }
+                    )
+            except Exception:
+                continue
+
+        manifest = {
+            "policy_version": policy_version,
+            "contracts": contracts_meta,
+        }
+        manifest_path.write_text(json.dumps(manifest))
+    except Exception:
+        pass  # Never block the gate check
 
 
 def _write_audit(
