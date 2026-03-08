@@ -454,7 +454,7 @@ def gate_audit(limit: int, tool: str | None, verdict: str | None) -> None:
 
 @gate.command("sync")
 def gate_sync() -> None:
-    """Force-sync contracts from Console."""
+    """Flush buffered audit events to Console."""
     from edictum.gate.config import load_gate_config
 
     config = load_gate_config()
