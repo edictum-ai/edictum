@@ -283,7 +283,8 @@ def _write_audit(
             agent_id=agent_id,
             redaction_config=redaction_config,
         )
-        buffer.write(event)
+        console_config = getattr(config, "console", None)
+        buffer.write(event, console_config=console_config)
     except Exception:
         pass  # Audit failure must never block the gate check
 

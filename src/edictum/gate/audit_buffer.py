@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -128,8 +129,8 @@ class AuditBuffer:
         self._max_size_mb = getattr(audit_config, "max_buffer_size_mb", 50)
         self._redaction_config = redaction_config
 
-    def write(self, event: GateAuditEvent) -> None:
-        """Append event to WAL. Sync, fast (<5ms target)."""
+    def write(self, event: GateAuditEvent, console_config: Any = None) -> None:
+        """Append event to WAL, then auto-flush to console if due. Never raises."""
         try:
             # Ensure directory exists
             self._buffer_path.parent.mkdir(parents=True, exist_ok=True)
@@ -147,6 +148,45 @@ class AuditBuffer:
         except Exception as exc:
             # Never crash the gate check
             print(f"Gate audit write error: {exc}", file=sys.stderr)
+            return
+
+        # Auto-flush to console if configured and interval has elapsed
+        if console_config and getattr(console_config, "url", ""):
+            self._maybe_flush_async(console_config)
+
+    def _maybe_flush_async(self, console_config: Any) -> None:
+        """Check if flush is due, fork a background process if so. Never raises."""
+        try:
+            marker = self._buffer_path.parent / ".last_flush"
+            now = time.time()
+
+            # Default 30s between flushes — fast enough to feel live, rare enough
+            # to avoid hammering the console on busy sessions
+            interval = 30
+
+            if marker.exists():
+                try:
+                    last = float(marker.read_text().strip())
+                    if now - last < interval:
+                        return
+                except (ValueError, OSError):
+                    pass
+
+            # Update marker BEFORE forking to prevent concurrent flushes
+            marker.write_text(str(now))
+
+            # Fork a background process so the gate check returns immediately
+            pid = os.fork()
+            if pid == 0:
+                # Child: flush and exit
+                try:
+                    self.flush_to_console(console_config)
+                except Exception:
+                    pass
+                os._exit(0)
+            # Parent: continue immediately (don't wait for child)
+        except Exception:
+            pass  # Never block the gate check
 
     def rotate_if_needed(self) -> None:
         """Rotate WAL if it exceeds max_buffer_size_mb."""
