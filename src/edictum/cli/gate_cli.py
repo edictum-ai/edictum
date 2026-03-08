@@ -69,7 +69,16 @@ def gate_init(server: str | None, api_key: str | None, custom_contracts: str | N
 
     installed_assistants = _init_assistants(non_interactive)
 
-    # --- Step 3: Write config ------------------------------------------------
+    # --- Step 3: Console (optional) ------------------------------------------
+    console_url = ""
+    console_key = ""
+    step = 3
+    if server:
+        _console.print(f"\n[bold]Step {step}:[/bold] Console connection\n")
+        console_url, console_key = _init_console(server, api_key, non_interactive)
+        step += 1
+
+    # --- Write config --------------------------------------------------------
     (gate_dir / "audit").mkdir(parents=True, exist_ok=True)
     (gate_dir / "cache").mkdir(parents=True, exist_ok=True)
 
@@ -82,12 +91,12 @@ def gate_init(server: str | None, api_key: str | None, custom_contracts: str | N
         "",
     ]
 
-    if server:
+    if console_url:
         config_lines.extend(
             [
                 "console:",
-                f"  url: {server}",
-                f"  api_key: {api_key or ''}",
+                f"  url: {console_url}",
+                f"  api_key: {console_key}",
                 '  agent_id: "${hostname}-${user}"',
                 "",
             ]
@@ -109,8 +118,8 @@ def gate_init(server: str | None, api_key: str | None, custom_contracts: str | N
     config_path.write_text("\n".join(config_lines) + "\n")
     _console.print(f"  [green]Created[/green] {config_path}")
 
-    # --- Step 3: What's next -------------------------------------------------
-    _console.print("\n[bold]Step 3:[/bold] Try it out\n")
+    # --- What's next ---------------------------------------------------------
+    _console.print(f"\n[bold]Step {step}:[/bold] Try it out\n")
     if installed_assistants:
         first = installed_assistants[0]
         _console.print(f"  1. Open [cyan]{first}[/cyan] and use it normally — tool calls are now being logged.")
@@ -123,6 +132,80 @@ def gate_init(server: str | None, api_key: str | None, custom_contracts: str | N
     )
     _console.print("\n  Write your own contracts: [dim]https://edictum.ai/docs/gate/contracts[/dim]")
     _console.print("")
+
+
+def _init_console(server: str, api_key: str | None, non_interactive: bool) -> tuple[str, str]:
+    """Verify console connection and validate API key.
+
+    Returns (url, api_key) — empty strings if verification fails and user opts out.
+    """
+    try:
+        import httpx
+    except ImportError:
+        _console.print("  [red]httpx not installed.[/red] Install with: pip install 'edictum\\[gate]'")
+        return "", ""
+
+    url = server.rstrip("/")
+
+    # Health check
+    _console.print(f"  Checking {escape(url)}...")
+    try:
+        resp = httpx.get(f"{url}/api/v1/health", timeout=10)
+        resp.raise_for_status()
+        _console.print("  [green]Connected[/green] Console is reachable")
+    except httpx.ConnectError:
+        _console.print(f"  [red]Connection refused[/red] Is edictum-console running at {escape(url)}?")
+        if non_interactive:
+            return "", ""
+        if not click.confirm("  Continue without console?"):
+            raise SystemExit(1)
+        return "", ""
+    except Exception as exc:
+        _console.print(f"  [red]Connection failed[/red] {escape(str(exc))}")
+        if non_interactive:
+            return "", ""
+        if not click.confirm("  Continue without console?"):
+            raise SystemExit(1)
+        return "", ""
+
+    # API key
+    if not api_key and not non_interactive:
+        _console.print("")
+        _console.print("  Find your API key in Console under Settings > API Keys.")
+        api_key = click.prompt("  API key")
+
+    if not api_key:
+        _console.print("  [yellow]No API key[/yellow] — events will not sync to Console.")
+        _console.print("  Add it later in ~/.edictum/gate.yaml under console.api_key")
+        return url, ""
+
+    # Validate API key
+    try:
+        resp = httpx.get(
+            f"{url}/api/v1/events",
+            params={"limit": 1},
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        _console.print("  [green]Authenticated[/green] API key is valid")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            _console.print("  [red]Unauthorized[/red] API key is invalid or expired")
+        else:
+            _console.print(f"  [red]Validation failed[/red] HTTP {exc.response.status_code}")
+        if non_interactive:
+            return url, ""
+        if not click.confirm("  Continue with this key anyway?"):
+            raise SystemExit(1)
+    except Exception as exc:
+        _console.print(f"  [yellow]Could not validate key[/yellow] {escape(str(exc))}")
+
+    _console.print("")
+    _console.print("  Events auto-sync to Console every 30 seconds.")
+    _console.print("  Manual flush: [cyan]edictum gate sync[/cyan]")
+
+    return url, api_key
 
 
 def _init_contracts(gate_dir: Path, custom_contracts: str | None, non_interactive: bool) -> Path:
