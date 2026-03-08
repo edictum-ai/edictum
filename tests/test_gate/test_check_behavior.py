@@ -564,3 +564,73 @@ class TestGateSelfProtection:
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
         assert result["verdict"] == "allow"
+
+
+class TestCursorAutoDetection:
+    """Verify that Cursor stdin is auto-detected when hook is registered as claude-code."""
+
+    def test_cursor_version_triggers_detection(self, tmp_path: Path) -> None:
+        """If stdin has cursor_version, use cursor format even when --format=claude-code."""
+        config = _make_config(tmp_path)
+        data = {
+            "tool_name": "Shell",
+            "tool_input": {"command": "rm -rf /"},
+            "cwd": str(tmp_path),
+            "cursor_version": "1.7.2",
+        }
+        stdout, code = run_check(json.dumps(data), "claude-code", config, str(tmp_path))
+        result = json.loads(stdout)
+        # Cursor format uses "decision" key, not Claude Code's "hookSpecificOutput"
+        assert result.get("decision") == "deny"
+
+    def test_workspace_roots_triggers_detection(self, tmp_path: Path) -> None:
+        """If stdin has workspace_roots list, use cursor format."""
+        config = _make_config(tmp_path)
+        data = {
+            "tool_name": "Shell",
+            "tool_input": {"command": "rm -rf /"},
+            "cwd": str(tmp_path),
+            "workspace_roots": [str(tmp_path)],
+        }
+        stdout, code = run_check(json.dumps(data), "claude-code", config, str(tmp_path))
+        result = json.loads(stdout)
+        assert result.get("decision") == "deny"
+
+    def test_claude_code_without_cursor_fields(self, tmp_path: Path) -> None:
+        """Normal Claude Code stdin stays as claude-code format."""
+        config = _make_config(tmp_path)
+        data = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm -rf /"},
+            "cwd": str(tmp_path),
+        }
+        stdout, code = run_check(json.dumps(data), "claude-code", config, str(tmp_path))
+        result = json.loads(stdout)
+        # Claude Code format uses hookSpecificOutput
+        assert "hookSpecificOutput" in result
+
+    def test_explicit_cursor_format_unaffected(self, tmp_path: Path) -> None:
+        """When --format=cursor is explicit, detection doesn't interfere."""
+        config = _make_config(tmp_path)
+        data = {
+            "tool_name": "Shell",
+            "tool_input": {"command": "ls"},
+            "cwd": str(tmp_path),
+            "cursor_version": "1.7.2",
+        }
+        stdout, code = run_check(json.dumps(data), "cursor", config, str(tmp_path))
+        result = json.loads(stdout)
+        assert result.get("decision") == "allow"
+
+    def test_cursor_allow_uses_cursor_format(self, tmp_path: Path) -> None:
+        """Allow responses also use cursor format when auto-detected."""
+        config = _make_config(tmp_path)
+        data = {
+            "tool_name": "Read",
+            "tool_input": {"file_path": str(tmp_path / "foo.txt")},
+            "cwd": str(tmp_path),
+            "cursor_version": "1.7.2",
+        }
+        stdout, code = run_check(json.dumps(data), "claude-code", config, str(tmp_path))
+        result = json.loads(stdout)
+        assert result.get("decision") == "allow"

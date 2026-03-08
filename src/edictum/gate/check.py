@@ -134,6 +134,16 @@ def _run_check_inner(
     if not isinstance(parsed, dict):
         return format_handler.format_output("deny", None, "Denied: stdin must be a JSON object", 0)
 
+    # Auto-detect Cursor when hook is registered as claude-code but stdin
+    # contains Cursor-specific fields (cursor_version, workspace_roots).
+    # This handles the case where Cursor reads Claude Code's hook config.
+    if format_name == "claude-code":
+        if parsed.get("cursor_version") or isinstance(parsed.get("workspace_roots"), list):
+            from edictum.gate.formats import get_format as _get_format
+
+            format_name = "cursor"
+            format_handler = _get_format(format_name)
+
     # Parse format-specific fields
     try:
         tool_name, tool_input, parsed_cwd = format_handler.parse_stdin(parsed)
