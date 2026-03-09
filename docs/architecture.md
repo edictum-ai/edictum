@@ -341,6 +341,16 @@ src/edictum/
     nanobot.py             Nanobot governed ToolRegistry
     google_adk.py          Google ADK plugin and agent callback adapter
 
+  gate/                    pip install edictum[gate]
+    __init__.py            Module entry point
+    __main__.py            CLI entry point (python -m edictum.gate)
+    check.py               stdin → ToolEnvelope → evaluate → stdout (core check)
+    config.py              GateConfig, ConsoleConfig, load_gate_config()
+    install.py             Hook install/uninstall for 5 assistants
+    audit_buffer.py        WAL write, redaction, batch flush to Console
+    cache.py               Contract cache (SHA256 + mtime validation)
+    formats/               Format handlers (claude_code, cursor, copilot, gemini, opencode, raw)
+
   server/                  pip install edictum[server]
     client.py              EdictumServerClient (async HTTP, auth, retries, env, bundle_name)
     approval_backend.py    ServerApprovalBackend (ApprovalBackend via HTTP)
