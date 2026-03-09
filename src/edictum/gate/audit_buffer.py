@@ -254,7 +254,11 @@ class AuditBuffer:
                 except Exception:
                     pass
                 os._exit(0)
-            # Parent: continue immediately (don't wait for child)
+            # Parent: reap child to prevent zombie processes
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                pass
         except Exception:
             pass  # Never block the gate check
 
@@ -392,22 +396,48 @@ class AuditBuffer:
         if real_path is None:
             return 0
 
+        # Atomically snapshot the WAL so concurrent writes go to a fresh file.
+        # This prevents event loss from the read-then-truncate race.
+        snapshot = self._buffer_path.with_suffix(".jsonl.flushing")
+        try:
+            os.replace(real_path, str(snapshot))
+        except OSError:
+            return 0
+
         raw_events = []
-        with open(real_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    raw_events.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+        try:
+            with open(snapshot) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        raw_events.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            # Restore snapshot back to WAL if we can't read it
+            try:
+                os.replace(str(snapshot), real_path)
+            except OSError:
+                pass
+            return 0
+
         if not raw_events:
+            try:
+                snapshot.unlink()
+            except OSError:
+                pass
             return 0
 
         url = getattr(console_config, "url", "")
         api_key = getattr(console_config, "api_key", "")
         if not url:
+            # Restore snapshot — we can't flush without a URL
+            try:
+                os.replace(str(snapshot), real_path)
+            except OSError:
+                pass
             return 0
 
         # Map WAL events to Console schema
@@ -445,14 +475,18 @@ class AuditBuffer:
             response.raise_for_status()
         except Exception as exc:
             print(f"Gate audit flush error: {exc}", file=sys.stderr)
+            # Restore snapshot so events aren't lost
+            try:
+                os.replace(str(snapshot), real_path)
+            except OSError:
+                pass
             return 0
         finally:
             client.close()
 
-        # Truncate WAL on success (use verified real_path, not potentially-symlinked path)
+        # POST succeeded — delete snapshot
         try:
-            with open(real_path, "w") as f:
-                f.truncate(0)
+            snapshot.unlink()
         except OSError:
             pass
 

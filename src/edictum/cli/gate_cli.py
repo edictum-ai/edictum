@@ -20,6 +20,12 @@ except ImportError:
     raise ImportError("The CLI requires click and rich. Install with: pip install edictum[cli]")
 
 
+def _yaml_quote(value: object) -> str:
+    """Quote a value for safe interpolation into generated YAML."""
+    s = str(value)
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 @click.group()
 def gate() -> None:
     """Coding assistant governance via hook interception."""
@@ -87,7 +93,7 @@ def gate_init(server: str | None, api_key: str | None, custom_contracts: str | N
         "# Docs: https://edictum.ai/docs/gate",
         "",
         "contracts:",
-        f"  - {contract_path}",
+        f"  - {_yaml_quote(contract_path)}",
         "",
     ]
 
@@ -95,8 +101,8 @@ def gate_init(server: str | None, api_key: str | None, custom_contracts: str | N
         config_lines.extend(
             [
                 "console:",
-                f"  url: {console_url}",
-                f"  api_key: '{console_key}'",
+                f"  url: {_yaml_quote(console_url)}",
+                f"  api_key: {_yaml_quote(console_key)}",
                 '  agent_id: "${hostname}-${user}"',
                 "",
             ]
@@ -106,7 +112,7 @@ def gate_init(server: str | None, api_key: str | None, custom_contracts: str | N
         [
             "audit:",
             "  enabled: true",
-            f"  buffer_path: {gate_dir / 'audit' / 'wal.jsonl'}",
+            f"  buffer_path: {_yaml_quote(gate_dir / 'audit' / 'wal.jsonl')}",
             "",
             "redaction:",
             "  enabled: true",
