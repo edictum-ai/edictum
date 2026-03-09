@@ -24,8 +24,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://docs.edictum.dev"
-Documentation = "https://docs.edictum.dev"
+Homepage = "https://edictum.ai"
+Documentation = "https://docs.edictum.ai"
 Repository = "https://github.com/acartag7/edictum"
 Changelog = "https://github.com/acartag7/edictum/releases"
 

@@ -95,7 +95,6 @@ MemoryBackend stores counters in a Python dict -- one process, one agent. This c
 ```bash
 pytest tests/ -v              # full test suite
 ruff check src/ tests/        # lint
-python -m mkdocs build --strict  # docs build
 edictum validate contracts.yaml  # validate YAML contracts
 ```
 
@@ -178,7 +177,6 @@ Every change MUST pass these checks before committing:
 pytest tests/ -v                    # full test suite
 ruff check src/ tests/              # lint
 pytest tests/test_docs_sync.py -v   # docs-code sync
-python -m mkdocs build --strict     # docs build
 # If touching adapters:
 pytest tests/test_adapter_parity.py -v
 ```
@@ -191,7 +189,7 @@ Before tagging a release:
 2. Verify CLI output strings match .docs-style-guide.md terminology
 3. Verify YAML examples in release notes use correct schema (`then:` block with `effect:` and `message:`, not `action:`)
 4. Verify release notes prose uses canonical terms
-5. Run: `pytest tests/ -v && ruff check src/ tests/ && python -m mkdocs build --strict`
+5. Run: `pytest tests/ -v && ruff check src/ tests/`
 
 ## YAML Schema (locked)
 

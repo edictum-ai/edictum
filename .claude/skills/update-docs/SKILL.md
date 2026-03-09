@@ -84,13 +84,11 @@ If public API, install extras, framework support, or version changed:
 2. Update affected sections
 3. Ensure README matches docs/index.md positioning
 
-## Step 5: Verify the build
+## Step 5: Verify
 
 ```bash
-python -m mkdocs build --strict 2>&1
+pytest tests/test_docs_sync.py -v
 ```
-
-Fix any broken links, missing pages, or YAML errors.
 
 ## Step 6: Report
 
