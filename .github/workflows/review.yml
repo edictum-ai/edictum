@@ -68,7 +68,6 @@ jobs:
             Route checks by file type:
             - `src/edictum/**` → code quality, tier boundary, contract correctness, API design, security, agentic engineering
             - `src/edictum/adapters/**` → also adapter parity
-            - `docs/**` → docs-code sync, terminology, page structure, YAML schema validation
             - `tests/**` → test conventions, behavior test coverage
             - `.github/**` → security (Actions injection patterns)
             - `CLAUDE.md`, `.docs-style-guide.md`, `code-reviewer.md` → governance file consistency (section 8)

@@ -64,17 +64,9 @@ Check all changed files against .docs-style-guide.md:
 ### 7. Docs-code sync
 
 If `src/edictum/**` changed:
-- Search `docs/` for references to changed functions/classes
-- Verify parameters, defaults, and return types in docs match the new signatures
-- Verify import paths in docs resolve against actual module structure
 - If something was added to `__all__`, verify it has docs coverage
 - If something was removed from `__all__`, verify docs don't still reference it
-
-If `docs/**` changed:
-- Verify every Python code block: import paths resolve, class/method names exist, parameters match
-- Verify every YAML block matches the schema in CLAUDE.md
-- Verify cross-references point to pages that exist in mkdocs.yml nav
-- Verify every docs page has a "When to use this" section (per .docs-style-guide.md page structure)
+- Verify README.md code examples match the current API surface
 
 ### 8. Governance file consistency (meta-review)
 

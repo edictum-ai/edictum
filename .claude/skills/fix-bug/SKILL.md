@@ -56,8 +56,6 @@ The behavior test from Step 3 must now pass.
 ## Step 6: Check regression scope
 
 If the fix changes behavior of a public API parameter:
-- Search docs for references to that parameter: search for `{parameter_name}` in `docs/`
-- If docs describe the old (wrong) behavior, update them
 - If the fix touches an adapter, run the adapter parity check:
   ```bash
   pytest tests/test_adapter_parity.py -v
@@ -72,7 +70,7 @@ pytest tests/test_docs_sync.py -v
 ## Step 8: Full verification
 
 ```bash
-pytest tests/ -v && ruff check src/ tests/ && python -m mkdocs build --strict
+pytest tests/ -v && ruff check src/ tests/
 ```
 
 ALL must pass before committing.

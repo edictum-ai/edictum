@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "edictum"
-version = "0.13.0"
+version = "0.15.0"
 description = "Runtime safety for AI agents. Stop agents before they break things."
 readme = "README.md"
 license = "MIT"
@@ -24,8 +24,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://docs.edictum.dev"
-Documentation = "https://docs.edictum.dev"
+Homepage = "https://edictum.ai"
+Documentation = "https://docs.edictum.ai"
 Repository = "https://github.com/acartag7/edictum"
 Changelog = "https://github.com/acartag7/edictum/releases"
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.0
 
 ### Added
 - **Edictum Gate** — pre-execution hook system for coding assistant governance. Sits between assistants and the OS, evaluating every tool call against YAML contracts with a local audit trail (`pip install edictum[gate]`)
