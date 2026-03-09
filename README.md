@@ -154,7 +154,7 @@ See [Adapter Docs](https://docs.edictum.dev/adapters/overview/) for setup, known
 
 | Domain | What Edictum enforces |
 |--------|----------------------|
-| Coding agents | Secret protection, destructive command denial, write scope |
+| Coding agents | Secret protection, destructive command denial, write scope ([Gate guide](https://docs.edictum.ai/docs/guides/gate)) |
 | Healthcare | Patient data access control, role-gated queries |
 | Finance | PII redaction in query results, transaction limits |
 | DevOps | Production deploy gates, ticket requirements, bash safety |
@@ -172,6 +172,7 @@ pip install edictum              # core (zero deps)
 pip install edictum[yaml]        # + YAML contract parsing
 pip install edictum[otel]        # + OpenTelemetry span emission
 pip install edictum[cli]         # + validate/check/diff/replay CLI
+pip install edictum[gate]        # + coding assistant governance (Claude Code, Cursor, Copilot, Gemini, OpenCode)
 pip install edictum[server]      # + server SDK (approvals, audit, sessions via HTTP)
 pip install edictum[all]         # everything
 ```

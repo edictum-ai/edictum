@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- **Edictum Gate** — pre-execution hook system for coding assistant governance. Sits between assistants and the OS, evaluating every tool call against YAML contracts with a local audit trail (`pip install edictum[gate]`)
+- **Gate: 5 assistant formats** — Claude Code, Cursor, Copilot CLI, Gemini CLI, OpenCode with format-specific stdin parsing and output
+- **Gate: `edictum gate init`** — interactive setup wizard with contract deployment, assistant hook registration, and optional Console connection verification
+- **Gate: Console sync** — auto-flush audit events to Edictum Console every 30 seconds via background fork; manual flush with `edictum gate sync`
+- **Gate: self-protection contracts** — always-enforced contracts preventing the governed assistant from reading, writing, or disabling Gate configuration
+- **Gate: scope enforcement** — programmatic check preventing Write/Edit outside the project directory, respects observe/enforce mode from contract bundle
+- **Gate: secret redaction** — secrets redacted before WAL write; API keys, SSH keys, tokens never hit disk or wire
+- **Gate: Cursor auto-detection** — when Cursor fires a Claude Code hook, Gate detects `cursor_version`/`workspace_roots` in stdin and uses the correct format handler
+- **Gate: console onboarding** — `gate init --server URL` verifies connection, validates API key, shows auto-flush guidance
 - **`CollectingAuditSink`** — in-memory audit sink with bounded ring buffer and mark-based windowed queries for programmatic inspection of governance decisions
 - **`MarkEvictedError`** exception — raised when `since_mark()` references events evicted from the buffer
 - **`Edictum.local_sink`** property — always-present `CollectingAuditSink` on every `Edictum` instance, regardless of construction method

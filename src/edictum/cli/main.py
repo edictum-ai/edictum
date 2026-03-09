@@ -849,3 +849,15 @@ def test_cmd(file: str, cases: str | None, calls: str | None, json_output: bool,
         _run_cases(file, cases, environment)
     else:
         _run_calls(file, calls, json_output, environment)
+
+
+# ---------------------------------------------------------------------------
+# gate subgroup (lazy import — requires edictum[gate])
+# ---------------------------------------------------------------------------
+
+try:
+    from edictum.cli.gate_cli import gate
+
+    cli.add_command(gate)
+except ImportError:
+    pass  # edictum[gate] not installed
