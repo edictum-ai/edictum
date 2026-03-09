@@ -35,7 +35,7 @@ otel = ["opentelemetry-api>=1.20.0", "opentelemetry-sdk>=1.20.0", "opentelemetry
 langchain = ["langchain-core>=0.3"]
 crewai = ["crewai>=0.80"]
 agno = ["agno>=1.0"]
-semantic-kernel = ["semantic-kernel>=1.0"]
+semantic-kernel = ["semantic-kernel>=1.39.4"]
 openai-agents = ["openai-agents>=0.1"]
 server = ["httpx>=0.27", "httpx-sse>=0.4"]
 cli = ["click>=8.0", "rich>=13.0", "edictum[yaml]"]
