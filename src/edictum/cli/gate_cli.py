@@ -96,7 +96,7 @@ def gate_init(server: str | None, api_key: str | None, custom_contracts: str | N
             [
                 "console:",
                 f"  url: {console_url}",
-                f"  api_key: {console_key}",
+                f"  api_key: '{console_key}'",
                 '  agent_id: "${hostname}-${user}"',
                 "",
             ]

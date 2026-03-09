@@ -207,6 +207,8 @@ class AuditBuffer:
             line = json.dumps(asdict(event), default=str) + "\n"
             with open(real_path, "a") as f:
                 f.write(line)
+
+            self.rotate_if_needed()
         except Exception as exc:
             # Never crash the gate check
             print(f"Gate audit write error: {exc}", file=sys.stderr)
@@ -234,10 +236,16 @@ class AuditBuffer:
                 except (ValueError, OSError):
                     pass
 
-            # Update marker BEFORE forking to prevent concurrent flushes
+            # Update marker BEFORE forking to prevent concurrent flushes.
+            # NOTE: This is not atomic — two concurrent gate checks can both read a
+            # stale marker and both fork. This is acceptable because console ingestion
+            # is idempotent by call_id, so duplicate flushes are harmless.
             marker.write_text(str(now))
 
-            # Fork a background process so the gate check returns immediately
+            # Fork a background process so the gate check returns immediately.
+            # NOTE: os.fork() is not available on Windows. The except Exception below
+            # catches AttributeError, so auto-flush silently degrades — users can
+            # still flush manually with `edictum gate sync`.
             pid = os.fork()
             if pid == 0:
                 # Child: flush and exit
@@ -276,9 +284,13 @@ class AuditBuffer:
         if not self._buffer_path.exists():
             return []
 
+        real_path = self._verify_wal_path()
+        if real_path is None:
+            return []
+
         events: list[dict] = []
         try:
-            with open(self._buffer_path) as f:
+            with open(real_path) as f:
                 for line in f:
                     line = line.strip()
                     if not line:

@@ -22,7 +22,7 @@ CATEGORY_MAP: dict[str, str] = {
 }
 
 # Tools subject to scope enforcement (writes/edits outside cwd)
-_SCOPE_TOOLS = frozenset({"Write", "Edit"})
+_SCOPE_TOOLS = frozenset({"Write", "Edit", "NotebookEdit"})
 
 # Max stdin size (10 MB)
 _MAX_STDIN_SIZE = 10 * 1024 * 1024
@@ -339,6 +339,9 @@ def _write_contract_manifest(
             "policy_version": policy_version,
             "contracts": contracts_meta,
         }
+        # NOTE: Not atomic — a crash mid-write leaves a partial file. This is
+        # acceptable because the read path catches JSONDecodeError and the manifest
+        # is regenerated on the next check when policy_version differs.
         manifest_path.write_text(json.dumps(manifest))
     except Exception:
         pass  # Never block the gate check
