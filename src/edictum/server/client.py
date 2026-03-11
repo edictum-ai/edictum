@@ -43,6 +43,7 @@ class EdictumServerClient:
         tags: dict[str, str] | None = None,
         timeout: float = 30.0,
         max_retries: int = 3,
+        allow_insecure: bool = False,
     ) -> None:
         for name, value in [("agent_id", agent_id), ("env", env)]:
             if not _SAFE_IDENTIFIER_RE.match(value):
@@ -64,6 +65,25 @@ class EdictumServerClient:
                     raise ValueError(f"Tag key too long ({len(k)} > 128): {k!r}")
                 if len(v) > 256:
                     raise ValueError(f"Tag value too long ({len(v)} > 256) for key {k!r}")
+        # TLS enforcement: refuse plaintext HTTP to non-loopback hosts
+        from urllib.parse import urlparse
+
+        parsed = urlparse(base_url)
+        if parsed.scheme == "http":
+            host = parsed.hostname or ""
+            is_loopback = host in ("localhost", "127.0.0.1", "::1")
+            if not is_loopback:
+                if not allow_insecure:
+                    raise ValueError(
+                        f"Refusing plaintext HTTP connection to {host}. "
+                        f"Use HTTPS or pass allow_insecure=True for non-production use."
+                    )
+                logger.warning(
+                    "Plaintext HTTP connection to %s — credentials will be transmitted unencrypted. "
+                    "Use HTTPS in production.",
+                    host,
+                )
+
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.agent_id = agent_id

@@ -44,6 +44,7 @@ async def _from_server(
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
     auto_watch: bool = True,
+    allow_insecure: bool = False,
 ) -> Edictum:
     """Create an Edictum instance wired to a remote edictum-server.
 
@@ -68,6 +69,8 @@ async def _from_server(
         principal: Static principal for all tool calls.
         principal_resolver: Per-call dynamic principal resolution.
         auto_watch: If True (default), start an SSE background task.
+        allow_insecure: If True, allow plaintext HTTP to non-loopback
+            hosts (logs a warning). Defaults to False (raises ValueError).
 
     Returns:
         Configured Edictum instance connected to the server.
@@ -100,6 +103,7 @@ async def _from_server(
         env=environment,
         bundle_name=bundle_name,
         tags=tags,
+        allow_insecure=allow_insecure,
     )
 
     effective_sink = audit_sink or ServerAuditSink(client)

@@ -99,6 +99,7 @@ class TestFromServer:
                 env="production",
                 bundle_name="default",
                 tags=None,
+                allow_insecure=False,
             )
             client.get.assert_called_once_with(
                 "/api/v1/bundles/default/current",
@@ -214,6 +215,7 @@ class TestFromServer:
                 env="production",
                 bundle_name="devops-agent",
                 tags=None,
+                allow_insecure=False,
             )
             client.get.assert_called_once_with(
                 "/api/v1/bundles/devops-agent/current",
@@ -319,6 +321,7 @@ class TestFromServer:
                 env="production",
                 bundle_name="default",
                 tags={"role": "finance"},
+                allow_insecure=False,
             )
             await guard.close()
 
