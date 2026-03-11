@@ -401,7 +401,16 @@ def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
     seen_ids: set[str] = set()
 
     for guard in guards:
-        for attr in ("_preconditions", "_postconditions", "_session_contracts", "_sandbox_contracts"):
+        for attr in (
+            "_preconditions",
+            "_postconditions",
+            "_session_contracts",
+            "_sandbox_contracts",
+            "_shadow_preconditions",
+            "_shadow_postconditions",
+            "_shadow_session_contracts",
+            "_shadow_sandbox_contracts",
+        ):
             for contract in getattr(guard, attr):
                 cid = getattr(contract, "_edictum_id", None)
                 if cid and cid in seen_ids:
