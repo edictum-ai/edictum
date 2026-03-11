@@ -55,3 +55,30 @@ class ServerBackend:
             {"amount": amount},
         )
         return response["value"]
+
+    async def batch_get(self, keys: list[str]) -> dict[str, str | None]:
+        """Retrieve multiple session values in a single HTTP call.
+
+        Falls back to individual get() calls if the server returns 404
+        (endpoint not available on older servers).
+
+        Fail-closed: non-404 errors propagate so the pipeline denies
+        rather than silently allowing with missing data.
+        """
+        if not keys:
+            return {}
+        try:
+            response = await self._client.post(
+                "/api/v1/sessions/batch",
+                {"keys": keys},
+            )
+            values = response.get("values", {})
+            return {key: values.get(key) for key in keys}
+        except EdictumServerError as exc:
+            if exc.status_code == 404:
+                # Server doesn't support batch endpoint -- fall back
+                result: dict[str, str | None] = {}
+                for key in keys:
+                    result[key] = await self.get(key)
+                return result
+            raise

@@ -54,3 +54,13 @@ class MemoryBackend:
         async with self._lock:
             self._counters[key] = self._counters.get(key, 0) + amount
             return self._counters[key]
+
+    async def batch_get(self, keys: list[str]) -> dict[str, str | None]:
+        """Retrieve multiple values in a single operation.
+
+        In-memory implementation: multiple dict lookups, no network overhead.
+        """
+        result: dict[str, str | None] = {}
+        for key in keys:
+            result[key] = await self.get(key)
+        return result

@@ -50,3 +50,39 @@ class Session:
 
     async def consecutive_failures(self) -> int:
         return int(await self._backend.get(f"s:{self._sid}:consec_fail") or 0)
+
+    async def batch_get_counters(
+        self,
+        *,
+        include_tool: str | None = None,
+    ) -> dict[str, int]:
+        """Pre-fetch multiple session counters in a single backend call.
+
+        Returns a dict with keys: "attempts", "execs", and optionally
+        "tool:{name}" if include_tool is provided.
+
+        Uses batch_get() on the backend when available (single HTTP round
+        trip for ServerBackend). Falls back to individual get() calls for
+        backends without batch_get support.
+        """
+        keys = [
+            f"s:{self._sid}:attempts",
+            f"s:{self._sid}:execs",
+        ]
+        key_labels = ["attempts", "execs"]
+
+        if include_tool is not None:
+            keys.append(f"s:{self._sid}:tool:{include_tool}")
+            key_labels.append(f"tool:{include_tool}")
+
+        if hasattr(self._backend, "batch_get"):
+            raw = await self._backend.batch_get(keys)
+        else:
+            raw = {}
+            for key in keys:
+                raw[key] = await self._backend.get(key)
+
+        result: dict[str, int] = {}
+        for key, label in zip(keys, key_labels):
+            result[label] = int(raw.get(key) or 0)
+        return result

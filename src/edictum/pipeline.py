@@ -70,8 +70,18 @@ class GovernancePipeline:
         contracts_evaluated: list[dict] = []
         has_observed_deny = False
 
+        # Pre-fetch session counters in a single batch to reduce HTTP
+        # round trips when using ServerBackend.  The tool-specific key
+        # is included only when a per-tool limit is configured.
+        tool_name_for_batch: str | None = None
+        if envelope.tool_name in self._guard.limits.max_calls_per_tool:
+            tool_name_for_batch = envelope.tool_name
+        counters = await session.batch_get_counters(
+            include_tool=tool_name_for_batch,
+        )
+
         # 1. Attempt limit
-        attempt_count = await session.attempt_count()
+        attempt_count = counters["attempts"]
         if attempt_count >= self._guard.limits.max_attempts:
             return PreDecision(
                 action="deny",
@@ -257,8 +267,8 @@ class GovernancePipeline:
                     policy_error=pe,
                 )
 
-        # 5. Execution limits
-        exec_count = await session.execution_count()
+        # 5. Execution limits (use pre-fetched counters)
+        exec_count = counters["execs"]
         if exec_count >= self._guard.limits.max_tool_calls:
             return PreDecision(
                 action="deny",
@@ -270,9 +280,10 @@ class GovernancePipeline:
                 contracts_evaluated=contracts_evaluated,
             )
 
-        # Per-tool limits
+        # Per-tool limits (use pre-fetched counter when available)
         if envelope.tool_name in self._guard.limits.max_calls_per_tool:
-            tool_count = await session.tool_execution_count(envelope.tool_name)
+            tool_key = f"tool:{envelope.tool_name}"
+            tool_count = counters.get(tool_key, 0)
             tool_limit = self._guard.limits.max_calls_per_tool[envelope.tool_name]
             if tool_count >= tool_limit:
                 return PreDecision(

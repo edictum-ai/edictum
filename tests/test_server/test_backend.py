@@ -116,3 +116,4 @@ class TestServerBackend:
         assert hasattr(backend, "set")
         assert hasattr(backend, "delete")
         assert hasattr(backend, "increment")
+        assert hasattr(backend, "batch_get")
