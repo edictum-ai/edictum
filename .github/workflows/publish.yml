@@ -9,9 +9,41 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      id-token: write
+      id-token: write      # PyPI OIDC + Sigstore keyless signing
+      contents: write       # upload release assets (SBOM, signatures)
+      attestations: write   # SLSA build provenance attestation
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
-      - run: uv build
-      - run: uv publish
+
+      - name: Build package
+        run: uv build
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          uv pip install cyclonedx-bom --system
+          cyclonedx-py environment --output dist/sbom.cdx.json --format json
+
+      - name: Publish to PyPI
+        run: uv publish
+
+      - name: Sign with Sigstore
+        uses: sigstore/gh-action-sigstore-python@a5caf349bc536fbef3668a10ed7f5cd309a4b53d # v3.2.0
+        with:
+          inputs: dist/*.tar.gz dist/*.whl
+
+      - name: Attest build provenance (SLSA)
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.whl
+
+      - name: Upload release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/*.sigstore.json \
+            dist/sbom.cdx.json \
+            --clobber
