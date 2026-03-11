@@ -13,7 +13,7 @@ import pytest
 
 from edictum import Edictum, create_envelope
 from edictum.storage import MemoryBackend
-from edictum.yaml_engine.compiler import _extract_paths
+from edictum.yaml_engine.sandbox_compiler import _extract_paths
 
 
 class NullSink:

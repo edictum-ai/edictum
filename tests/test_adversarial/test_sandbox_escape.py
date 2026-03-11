@@ -7,7 +7,7 @@ import os
 import pytest
 
 from edictum.envelope import create_envelope
-from edictum.yaml_engine.compiler import _compile_sandbox, _extract_paths
+from edictum.yaml_engine.sandbox_compiler import _compile_sandbox, _extract_paths
 
 pytestmark = pytest.mark.security
 

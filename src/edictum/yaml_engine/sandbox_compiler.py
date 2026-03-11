@@ -1,0 +1,195 @@
+"""Sandbox contract compiler -- extract/classify tool call resources and compile sandbox contracts."""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+from edictum.contracts import Verdict
+from edictum.envelope import ToolEnvelope
+
+_PATH_ARG_KEYS = frozenset(
+    {
+        "path",
+        "file_path",
+        "filePath",
+        "directory",
+        "dir",
+        "folder",
+        "target",
+        "destination",
+        "source",
+        "src",
+        "dst",
+    }
+)
+
+
+def _extract_paths(envelope: ToolEnvelope) -> list[str]:
+    """Extract file paths from an envelope for sandbox evaluation.
+
+    Strategy (priority order):
+    1. envelope.file_path (bonus for Claude Code tools)
+    2. Args values with path-like keys
+    3. Args string values starting with /
+    4. Parse command string for /-prefixed tokens
+
+    Note: paths are resolved via ``os.path.realpath()`` which handles both
+    ``..`` traversals AND symlinks.  TOCTOU caveat: a symlink created after
+    evaluation but before tool execution is not caught; full mitigation
+    requires OS-level enforcement.
+    """
+    paths: list[str] = []
+    seen: set[str] = set()
+
+    def _add(p: str) -> None:
+        if p:
+            p = os.path.realpath(p)
+            if p not in seen:
+                seen.add(p)
+                paths.append(p)
+
+    # 1. Envelope convenience field
+    if envelope.file_path:
+        _add(envelope.file_path)
+
+    # 2. Path-like arg keys
+    for key, value in envelope.args.items():
+        if isinstance(value, str) and key in _PATH_ARG_KEYS:
+            _add(value)
+
+    # 3. Any arg value starting with /
+    for key, value in envelope.args.items():
+        if isinstance(value, str) and value.startswith("/") and key not in _PATH_ARG_KEYS:
+            _add(value)
+
+    # 4. Parse command string for path tokens
+    cmd = envelope.bash_command or envelope.args.get("command", "")
+    if cmd:
+        for token in cmd.split():
+            if token.startswith("/"):
+                _add(token)
+
+    return paths
+
+
+def _extract_command(envelope: ToolEnvelope) -> str | None:
+    """Extract the first command token from an envelope."""
+    cmd = envelope.bash_command or envelope.args.get("command")
+    if not cmd or not isinstance(cmd, str):
+        return None
+    stripped = cmd.strip()
+    if not stripped:
+        return None
+    return stripped.split()[0]
+
+
+def _extract_urls(envelope: ToolEnvelope) -> list[str]:
+    """Extract URL strings from envelope args."""
+    urls: list[str] = []
+    for value in envelope.args.values():
+        if isinstance(value, str) and "://" in value:
+            urls.append(value)
+    return urls
+
+
+def _extract_hostname(url: str) -> str | None:
+    """Extract hostname from a URL string."""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+        return parsed.hostname
+    except Exception:
+        return None
+
+
+def _domain_matches(hostname: str, patterns: list[str]) -> bool:
+    """Check if hostname matches any domain pattern (supports wildcards)."""
+    from fnmatch import fnmatch
+
+    return any(fnmatch(hostname, p) for p in patterns)
+
+
+def _compile_sandbox(contract: dict, mode: str) -> Any:
+    """Compile a sandbox contract into a sandbox callable."""
+    from edictum.yaml_engine.compiler import _expand_message
+
+    contract_id = contract["id"]
+
+    # Normalize tool/tools to a list
+    if "tools" in contract:
+        tool_patterns = contract["tools"]
+    else:
+        tool_patterns = [contract["tool"]]
+
+    within = [os.path.realpath(p) for p in contract.get("within", [])]
+    not_within = [os.path.realpath(p) for p in contract.get("not_within", [])]
+    allows = contract.get("allows", {})
+    not_allows = contract.get("not_allows", {})
+    allowed_commands = allows.get("commands", [])
+    allowed_domains = allows.get("domains", [])
+    blocked_domains = not_allows.get("domains", [])
+    outside = contract.get("outside", "deny")
+    message_template = contract.get("message", "Tool call outside sandbox boundary.")
+    timeout = contract.get("timeout", 300)
+    timeout_effect = contract.get("timeout_effect", "deny")
+
+    def sandbox_fn(envelope: ToolEnvelope) -> Verdict:
+        # Path checks
+        if within or not_within:
+            paths = _extract_paths(envelope)
+            if paths:
+                # not_within: deny if any path matches an exclusion
+                for path in paths:
+                    for excluded in not_within:
+                        if path == excluded or path.startswith(excluded.rstrip("/") + "/"):
+                            msg = _expand_message(message_template, envelope)
+                            return Verdict.fail(msg)
+
+                # within: every path must be within at least one allowed prefix
+                if within:
+                    for path in paths:
+                        if not any(path == allowed or path.startswith(allowed.rstrip("/") + "/") for allowed in within):
+                            msg = _expand_message(message_template, envelope)
+                            return Verdict.fail(msg)
+
+        # Command checks
+        if allowed_commands:
+            first_token = _extract_command(envelope)
+            if first_token is not None:
+                if first_token not in allowed_commands:
+                    msg = _expand_message(message_template, envelope)
+                    return Verdict.fail(msg)
+
+        # Domain checks
+        urls = _extract_urls(envelope)
+        if urls:
+            for url in urls:
+                hostname = _extract_hostname(url)
+                if hostname:
+                    # not_allows.domains: deny if hostname matches excluded domain
+                    if blocked_domains and _domain_matches(hostname, blocked_domains):
+                        msg = _expand_message(message_template, envelope)
+                        return Verdict.fail(msg)
+                    # allows.domains: deny if hostname doesn't match any allowed domain
+                    if allowed_domains and not _domain_matches(hostname, allowed_domains):
+                        msg = _expand_message(message_template, envelope)
+                        return Verdict.fail(msg)
+
+        return Verdict.pass_()
+
+    # Stamp metadata for pipeline routing
+    sandbox_fn.__name__ = contract_id
+    sandbox_fn._edictum_type = "sandbox"
+    sandbox_fn._edictum_tools = tool_patterns
+    sandbox_fn._edictum_mode = mode
+    sandbox_fn._edictum_id = contract_id
+    sandbox_fn._edictum_source = "yaml_sandbox"
+    sandbox_fn._edictum_effect = outside
+    sandbox_fn._edictum_timeout = timeout
+    sandbox_fn._edictum_timeout_effect = timeout_effect
+    if contract.get("_shadow"):
+        sandbox_fn._edictum_shadow = True
+
+    return sandbox_fn
