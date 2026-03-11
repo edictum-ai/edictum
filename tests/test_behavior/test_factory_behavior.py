@@ -40,12 +40,12 @@ class TestFromMultipleShadowContracts:
 
         merged = Edictum.from_multiple([g1, g2])
 
-        ids = [getattr(c, "_edictum_id", None) for c in merged._shadow_preconditions]
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.shadow_preconditions]
         assert len(ids) == 2
         assert "shadow-pre-a" in ids
         assert "shadow-pre-b" in ids
         # Enforced lists should be empty
-        assert len(merged._preconditions) == 0
+        assert len(merged._state.preconditions) == 0
 
     def test_shadow_postconditions_merged(self):
         @postcondition("*")
@@ -67,7 +67,7 @@ class TestFromMultipleShadowContracts:
 
         merged = Edictum.from_multiple([g1, g2])
 
-        ids = [getattr(c, "_edictum_id", None) for c in merged._shadow_postconditions]
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.shadow_postconditions]
         assert len(ids) == 2
         assert "shadow-post-a" in ids
         assert "shadow-post-b" in ids
@@ -93,11 +93,11 @@ class TestFromMultipleShadowContracts:
 
         merged = Edictum.from_multiple([g_enforce, g_observe])
 
-        assert len(merged._preconditions) == 1
-        assert getattr(merged._preconditions[0], "_edictum_id", None) == "enforced-pre"
+        assert len(merged._state.preconditions) == 1
+        assert getattr(merged._state.preconditions[0], "_edictum_id", None) == "enforced-pre"
 
-        assert len(merged._shadow_preconditions) == 1
-        assert getattr(merged._shadow_preconditions[0], "_edictum_id", None) == "shadow-pre"
+        assert len(merged._state.shadow_preconditions) == 1
+        assert getattr(merged._state.shadow_preconditions[0], "_edictum_id", None) == "shadow-pre"
 
     def test_shadow_dedup_by_id(self):
         """Duplicate observe-mode contract IDs are deduplicated (first wins)."""
@@ -121,7 +121,7 @@ class TestFromMultipleShadowContracts:
 
         merged = Edictum.from_multiple([g1, g2])
 
-        assert len(merged._shadow_preconditions) == 1
+        assert len(merged._state.shadow_preconditions) == 1
 
     def test_shadow_session_contracts_merged(self):
         """Shadow session contracts from both guards appear in merged guard."""
@@ -147,7 +147,7 @@ class TestFromMultipleShadowContracts:
 
         merged = Edictum.from_multiple([g1, g2])
 
-        ids = [getattr(c, "_edictum_id", None) for c in merged._shadow_session_contracts]
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.shadow_session_contracts]
         assert len(ids) == 2
         assert "shadow-sess-a" in ids
         assert "shadow-sess-b" in ids
@@ -178,7 +178,7 @@ class TestFromMultipleShadowContracts:
 
         merged = Edictum.from_multiple([g1, g2])
 
-        ids = [getattr(c, "_edictum_id", None) for c in merged._shadow_sandbox_contracts]
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.shadow_sandbox_contracts]
         assert len(ids) == 2
         assert "shadow-sb-a" in ids
         assert "shadow-sb-b" in ids
@@ -204,5 +204,5 @@ class TestFromMultipleShadowContracts:
 
         merged = Edictum.from_multiple([g1, g2])
 
-        assert len(merged._preconditions) == 1
-        assert len(merged._shadow_preconditions) == 1
+        assert len(merged._state.preconditions) == 1
+        assert len(merged._state.shadow_preconditions) == 1
