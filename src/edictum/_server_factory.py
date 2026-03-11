@@ -146,6 +146,12 @@ async def _from_server(
             except BundleVerificationError as exc:
                 await client.close()
                 raise EdictumConfigError(f"Bundle signature verification failed: {exc}") from exc
+            except ImportError as exc:
+                await client.close()
+                raise EdictumConfigError(
+                    f"Bundle signature verification requires PyNaCl: {exc}. "
+                    "Install with: pip install 'edictum[verified]'"
+                ) from exc
 
         try:
             bundle_data, bundle_hash = load_bundle_string(bundle_yaml)

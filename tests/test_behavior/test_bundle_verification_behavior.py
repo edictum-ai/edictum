@@ -575,3 +575,35 @@ class TestConfigValidation:
         with patch.dict("sys.modules", {"nacl": None, "nacl.signing": None, "nacl.exceptions": None}):
             with pytest.raises(ImportError, match="edictum\\[verified\\]"):
                 verify_bundle_signature(VALID_BUNDLE_YAML, signature_b64, public_key_hex)
+
+    @pytest.mark.asyncio
+    async def test_pynacl_not_installed_from_server_raises_config_error(self, key_pair):
+        """from_server() with missing PyNaCl raises EdictumConfigError and closes client."""
+        _sk, vk = key_pair
+        public_key_hex = vk.encode().hex()
+
+        p_client, p_sink, p_approval, p_backend, p_source = _server_patches()
+        with p_client as mock_cls, p_sink, p_approval, p_backend, p_source as mock_src_cls:
+            client = _make_client_mock(signature="some-signature")
+            mock_cls.return_value = client
+            mock_src_cls.return_value = _make_source_mock()
+
+            with patch(
+                "edictum.server.verification.verify_bundle_signature",
+                side_effect=ImportError(
+                    "Bundle signature verification requires PyNaCl. Install with: pip install 'edictum[verified]'"
+                ),
+            ):
+                with pytest.raises(EdictumConfigError, match="PyNaCl"):
+                    await Edictum.from_server(
+                        "https://example.com",
+                        "key",
+                        "agent-1",
+                        bundle_name="default",
+                        auto_watch=False,
+                        verify_signatures=True,
+                        signing_public_key=public_key_hex,
+                    )
+
+            # Client must have been closed (no resource leak)
+            client.close.assert_awaited_once()
