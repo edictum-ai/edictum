@@ -131,9 +131,9 @@ class TestSetPrincipalPreservesSessionState:
         await adapter._pre_tool_use("Tool3", {}, "tc-3")
 
         count_after = await adapter._session.attempt_count()
-        assert (
-            count_after == 3
-        ), f"Expected 3 attempts after set_principal, got {count_after}. set_principal must not reset session state."
+        assert count_after == 3, (
+            f"Expected 3 attempts after set_principal, got {count_after}. set_principal must not reset session state."
+        )
 
 
 class TestEdictumSetPrincipal:

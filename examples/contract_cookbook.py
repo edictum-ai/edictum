@@ -55,7 +55,7 @@ def no_destructive_commands(envelope):
     for pattern in destructive:
         if pattern in cmd:
             return Verdict.fail(
-                f"Destructive command blocked: '{pattern}'. " "Use 'mv' to relocate files instead of deleting them."
+                f"Destructive command denied: '{pattern}'. Use 'mv' to relocate files instead of deleting them."
             )
     return Verdict.pass_()
 
@@ -99,7 +99,7 @@ def allowlist_read_only_commands(envelope):
 
     NOTE: Pipes and shell operators are universally denied, so common
     read-only pipelines like ``rg pattern | head -20`` are intentionally
-    blocked. Each command must be invoked individually.
+    denied. Each command must be invoked individually.
     """
     cmd = (envelope.args.get("command") or "").strip()
     allowed_prefixes = [
@@ -131,7 +131,7 @@ def allowlist_read_only_commands(envelope):
     # Also block shell operators regardless
     if any(op in cmd for op in [">", ">>", "|", ";", "&&", "||", "$(", "`"]):
         return Verdict.fail(
-            "Shell operators (pipes, redirects, chaining) are not allowed. " "Use individual read-only commands only."
+            "Shell operators (pipes, redirects, chaining) are not allowed. Use individual read-only commands only."
         )
 
     for prefix in allowed_prefixes:
@@ -293,7 +293,7 @@ def validate_sql_query(envelope):
     # Require LIMIT on SELECT
     if "SELECT" in query and "LIMIT" not in query:
         return Verdict.fail(
-            "SELECT queries must include a LIMIT clause. " "Add 'LIMIT 1000' to prevent unbounded result sets."
+            "SELECT queries must include a LIMIT clause. Add 'LIMIT 1000' to prevent unbounded result sets."
         )
 
     return Verdict.pass_()
@@ -517,7 +517,7 @@ def validate_api_response(envelope, tool_response):
     if isinstance(tool_response, dict):
         status = tool_response.get("status") or tool_response.get("statusCode")
         if isinstance(status, int) and status >= 400:
-            return Verdict.fail(f"API returned status {status}. " "Inspect the error message and adjust your request.")
+            return Verdict.fail(f"API returned status {status}. Inspect the error message and adjust your request.")
 
     return Verdict.pass_()
 
@@ -860,7 +860,7 @@ def make_stuck_detection(max_attempts_without_progress: int = 10):
         if attempts > max_attempts_without_progress and executions < attempts * 0.3:
             return Verdict.fail(
                 f"Progress stall detected: {executions} successes out of "
-                f"{attempts} attempts ({executions/attempts:.0%} success rate). "
+                f"{attempts} attempts ({executions / attempts:.0%} success rate). "
                 "The agent appears stuck. Change approach or ask for help."
             )
         return Verdict.pass_()
@@ -969,7 +969,7 @@ def devops_agent_contracts():
 #  ``"*"``) run on every tool call. The pattern-matching heuristic
 #  can produce false positives — benign content that happens to
 #  contain phrases like "ignore previous instructions" will be
-#  blocked. Scope global contracts narrowly or use ``when=`` guards
+#  denied. Scope global contracts narrowly or use ``when=`` guards
 #  to limit which envelopes they inspect.
 #
 #  Session Contract Limitations

@@ -432,9 +432,9 @@ class TestFix13CheckToolSuccess:
         ]
 
         for adapter in adapters:
-            assert (
-                adapter._check_tool_success("TestTool", {"is_error": True}) is False
-            ), f"{type(adapter).__name__} failed dict is_error check"
+            assert adapter._check_tool_success("TestTool", {"is_error": True}) is False, (
+                f"{type(adapter).__name__} failed dict is_error check"
+            )
 
     def test_crewai_checks_dict_is_error(self):
         sink = NullSink()

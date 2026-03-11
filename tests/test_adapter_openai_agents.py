@@ -271,12 +271,12 @@ class TestAsGuardrailsRegression:
             # Verify function signatures accept exactly 1 parameter (data)
             input_sig = inspect.signature(input_gr.guardrail_function)
             output_sig = inspect.signature(output_gr.guardrail_function)
-            assert (
-                len(input_sig.parameters) == 1
-            ), f"Input guardrail should accept 1 arg, got {len(input_sig.parameters)}"
-            assert (
-                len(output_sig.parameters) == 1
-            ), f"Output guardrail should accept 1 arg, got {len(output_sig.parameters)}"
+            assert len(input_sig.parameters) == 1, (
+                f"Input guardrail should accept 1 arg, got {len(input_sig.parameters)}"
+            )
+            assert len(output_sig.parameters) == 1, (
+                f"Output guardrail should accept 1 arg, got {len(output_sig.parameters)}"
+            )
         finally:
             if orig_agents is not None:
                 sys.modules["agents"] = orig_agents

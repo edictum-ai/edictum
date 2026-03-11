@@ -57,9 +57,9 @@ class TestCustomSuccessCheckChangesToolSuccess:
         await adapter._after_hook(after_ctx)
 
         failed_events = [e for e in sink.events if e.action == AuditAction.CALL_FAILED]
-        assert (
-            len(failed_events) == 1
-        ), f"Custom success_check should mark HTTP 500 as failure, but got {len(failed_events)} CALL_FAILED events"
+        assert len(failed_events) == 1, (
+            f"Custom success_check should mark HTTP 500 as failure, but got {len(failed_events)} CALL_FAILED events"
+        )
 
     async def test_default_heuristic_misses_http_error(self):
         """Without custom checker, HTTP 500 dict is wrongly counted as success."""

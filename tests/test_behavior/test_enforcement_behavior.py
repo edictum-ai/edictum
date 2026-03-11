@@ -40,9 +40,9 @@ class TestPreconditionDenyEnforcement:
         adapter = CrewAIAdapter(guard)
         ctx = SimpleNamespace(tool_name="TestTool", tool_input={}, agent=None, task=None)
         result = await adapter._before_hook(ctx)
-        assert (
-            isinstance(result, str) and "DENIED" in result
-        ), f"CrewAI must return 'DENIED: ...' string on deny (not {type(result).__name__})"
+        assert isinstance(result, str) and "DENIED" in result, (
+            f"CrewAI must return 'DENIED: ...' string on deny (not {type(result).__name__})"
+        )
 
     async def test_openai_deny_returns_denied_string(self):
         """OpenAI _pre must return a DENIED: string on deny."""
@@ -98,9 +98,9 @@ class TestPostconditionDenyEnforcement:
         # Post must reflect the denial
         post_result = await adapter._post("call-1", "violation data")
         assert post_result is not None
-        assert (
-            post_result.postconditions_passed is False
-        ), "Postcondition with effect=deny must report postconditions_passed=False"
+        assert post_result.postconditions_passed is False, (
+            "Postcondition with effect=deny must report postconditions_passed=False"
+        )
 
     async def test_postcondition_deny_output_guardrail_rejects(self):
         """Output guardrail must return reject (not allow) when postcondition has effect=deny."""
@@ -171,9 +171,9 @@ class TestPostconditionDenyEnforcement:
             )
             result = await output_gr.guardrail_function(mock_data)
 
-            assert (
-                result.action == "reject"
-            ), f"Output guardrail must reject when postcondition has effect=deny, but got action={result.action!r}"
+            assert result.action == "reject", (
+                f"Output guardrail must reject when postcondition has effect=deny, but got action={result.action!r}"
+            )
         finally:
             if orig_agents is not None:
                 sys.modules["agents"] = orig_agents

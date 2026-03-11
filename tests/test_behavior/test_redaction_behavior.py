@@ -35,9 +35,9 @@ class TestRedactionPolicySensitiveKeysMerge:
         """The 'authorization' key must still be redacted with custom keys."""
         policy = RedactionPolicy(sensitive_keys={"x_internal_token"})
         result = policy.redact_args({"authorization": "Bearer abc123"})
-        assert (
-            result["authorization"] == "[REDACTED]"
-        ), "'authorization' must be redacted even when custom keys are provided."
+        assert result["authorization"] == "[REDACTED]", (
+            "'authorization' must be redacted even when custom keys are provided."
+        )
 
     def test_default_api_key_preserved_with_custom(self):
         """The 'api_key' key must still be redacted with custom keys."""

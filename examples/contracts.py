@@ -41,7 +41,7 @@ def block_destructive_commands(envelope):
 )
 def block_sensitive_bash(envelope):
     """Block bash commands that touch sensitive files."""
-    return Verdict.fail("DENIED: bash command references sensitive file. " "Skip sensitive files and continue.")
+    return Verdict.fail("DENIED: bash command references sensitive file. Skip sensitive files and continue.")
 
 
 @precondition("move_file", when=lambda e: e.args.get("destination") is not None)
@@ -61,7 +61,7 @@ def make_session_limit(max_ops: int = 25):
     async def limit_operations(session):
         count = await session.execution_count()
         if count >= max_ops:
-            return Verdict.fail(f"Session limit reached: {count}/{max_ops} tool calls. " "Summarize progress and stop.")
+            return Verdict.fail(f"Session limit reached: {count}/{max_ops} tool calls. Summarize progress and stop.")
         return Verdict.pass_()
 
     return limit_operations

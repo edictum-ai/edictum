@@ -137,9 +137,9 @@ class TestParityDenyReason:
 
         deny_events = [e for e in sink.events if e.action == AuditAction.CALL_DENIED]
         assert len(deny_events) >= 1, f"{name} emitted no CALL_DENIED audit event"
-        assert "specific reason XYZ" in (
-            deny_events[0].reason or ""
-        ), f"{name} lost the denial reason. Got: {deny_events[0].reason}"
+        assert "specific reason XYZ" in (deny_events[0].reason or ""), (
+            f"{name} lost the denial reason. Got: {deny_events[0].reason}"
+        )
 
 
 class TestParityObserve:

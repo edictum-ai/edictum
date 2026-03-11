@@ -26,9 +26,9 @@ class TestMemoryBackendParameterEffects:
         """
         backend = MemoryBackend()
         sig = inspect.signature(backend.set)
-        assert (
-            "ttl" not in sig.parameters
-        ), "MemoryBackend.set() should not accept a ttl parameter. TTL support was removed as a dead parameter."
+        assert "ttl" not in sig.parameters, (
+            "MemoryBackend.set() should not accept a ttl parameter. TTL support was removed as a dead parameter."
+        )
 
     async def test_increment_amount_parameter_has_effect(self):
         """increment(amount=N) must increase by N, not by 1."""
