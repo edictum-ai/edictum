@@ -21,7 +21,7 @@ jobs:
 
       - name: Generate SBOM (CycloneDX)
         run: |
-          uv pip install cyclonedx-bom --system
+          uv pip install "cyclonedx-bom==4.6.1" --system
           cyclonedx-py environment --output dist/sbom.cdx.json --format json
 
       - name: Publish to PyPI
@@ -42,8 +42,9 @@ jobs:
       - name: Upload release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          gh release upload "$TAG_NAME" \
             dist/*.sigstore.json \
             dist/sbom.cdx.json \
             --clobber
