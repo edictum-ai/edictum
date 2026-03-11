@@ -398,26 +398,29 @@ def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
     )
     merged.tool_registry = first.tool_registry
 
-    seen_ids: set[str] = set()
+    regular_attrs = ("_preconditions", "_postconditions", "_session_contracts", "_sandbox_contracts")
+    shadow_attrs = (
+        "_shadow_preconditions",
+        "_shadow_postconditions",
+        "_shadow_session_contracts",
+        "_shadow_sandbox_contracts",
+    )
+
+    seen_regular_ids: set[str] = set()
+    seen_shadow_ids: set[str] = set()
 
     for guard in guards:
-        for attr in (
-            "_preconditions",
-            "_postconditions",
-            "_session_contracts",
-            "_sandbox_contracts",
-            "_shadow_preconditions",
-            "_shadow_postconditions",
-            "_shadow_session_contracts",
-            "_shadow_sandbox_contracts",
+        for attr, seen in (
+            *((a, seen_regular_ids) for a in regular_attrs),
+            *((a, seen_shadow_ids) for a in shadow_attrs),
         ):
             for contract in getattr(guard, attr):
                 cid = getattr(contract, "_edictum_id", None)
-                if cid and cid in seen_ids:
+                if cid and cid in seen:
                     logger.warning("Duplicate contract id '%s' in from_multiple() — first wins", cid)
                     continue
                 if cid:
-                    seen_ids.add(cid)
+                    seen.add(cid)
                 getattr(merged, attr).append(contract)
 
     return merged

@@ -122,3 +122,87 @@ class TestFromMultipleShadowContracts:
         merged = Edictum.from_multiple([g1, g2])
 
         assert len(merged._shadow_preconditions) == 1
+
+    def test_shadow_session_contracts_merged(self):
+        """Shadow session contracts from both guards appear in merged guard."""
+
+        @precondition("*")
+        def shadow_sess_a(envelope):
+            return Verdict.pass_()
+
+        shadow_sess_a._edictum_id = "shadow-sess-a"
+        shadow_sess_a._edictum_type = "session_contract"
+        _make_shadow(shadow_sess_a)
+
+        @precondition("*")
+        def shadow_sess_b(envelope):
+            return Verdict.pass_()
+
+        shadow_sess_b._edictum_id = "shadow-sess-b"
+        shadow_sess_b._edictum_type = "session_contract"
+        _make_shadow(shadow_sess_b)
+
+        g1 = Edictum(mode="enforce", contracts=[shadow_sess_a], audit_sink=_NullSink())
+        g2 = Edictum(mode="enforce", contracts=[shadow_sess_b], audit_sink=_NullSink())
+
+        merged = Edictum.from_multiple([g1, g2])
+
+        ids = [getattr(c, "_edictum_id", None) for c in merged._shadow_session_contracts]
+        assert len(ids) == 2
+        assert "shadow-sess-a" in ids
+        assert "shadow-sess-b" in ids
+
+    def test_shadow_sandbox_contracts_merged(self):
+        """Shadow sandbox contracts from both guards appear in merged guard."""
+
+        @precondition("*")
+        def shadow_sb_a(envelope):
+            return Verdict.pass_()
+
+        shadow_sb_a._edictum_id = "shadow-sb-a"
+        shadow_sb_a._edictum_type = "sandbox"
+        shadow_sb_a._edictum_tools = ["*"]
+        _make_shadow(shadow_sb_a)
+
+        @precondition("*")
+        def shadow_sb_b(envelope):
+            return Verdict.pass_()
+
+        shadow_sb_b._edictum_id = "shadow-sb-b"
+        shadow_sb_b._edictum_type = "sandbox"
+        shadow_sb_b._edictum_tools = ["*"]
+        _make_shadow(shadow_sb_b)
+
+        g1 = Edictum(mode="enforce", contracts=[shadow_sb_a], audit_sink=_NullSink())
+        g2 = Edictum(mode="enforce", contracts=[shadow_sb_b], audit_sink=_NullSink())
+
+        merged = Edictum.from_multiple([g1, g2])
+
+        ids = [getattr(c, "_edictum_id", None) for c in merged._shadow_sandbox_contracts]
+        assert len(ids) == 2
+        assert "shadow-sb-a" in ids
+        assert "shadow-sb-b" in ids
+
+    def test_cross_type_id_collision_does_not_drop_shadow(self):
+        """A shadow contract with the same ID as a regular contract must NOT be dropped."""
+
+        @precondition("Bash")
+        def enforced(envelope):
+            return Verdict.fail("Enforced")
+
+        enforced._edictum_id = "shared-id"
+
+        @precondition("Bash")
+        def shadow(envelope):
+            return Verdict.fail("Shadow")
+
+        shadow._edictum_id = "shared-id"
+        _make_shadow(shadow)
+
+        g1 = Edictum(mode="enforce", contracts=[enforced], audit_sink=_NullSink())
+        g2 = Edictum(mode="enforce", contracts=[shadow], audit_sink=_NullSink())
+
+        merged = Edictum.from_multiple([g1, g2])
+
+        assert len(merged._preconditions) == 1
+        assert len(merged._shadow_preconditions) == 1
