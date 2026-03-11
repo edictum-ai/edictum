@@ -49,11 +49,28 @@ class Principal:
     claims: dict[str, Any] = field(default_factory=dict)
 
 
+def _validate_tool_name(tool_name: str) -> None:
+    """Validate tool_name: reject empty, control chars, path separators.
+
+    Raises ValueError for:
+    - Empty string
+    - Any ASCII control character (ord < 0x20 or ord == 0x7f)
+    - Forward slash ``/``
+    - Backslash ``\\``
+    """
+    if not tool_name:
+        raise ValueError(f"Invalid tool_name: {tool_name!r}")
+    for ch in tool_name:
+        if ord(ch) < 0x20 or ord(ch) == 0x7F or ch in ("/", "\\"):
+            raise ValueError(f"Invalid tool_name: {tool_name!r}")
+
+
 @dataclass(frozen=True)
 class ToolEnvelope:
     """Immutable snapshot of a tool invocation.
 
-    ALWAYS create via create_envelope() factory, never directly.
+    Prefer create_envelope() factory for deep-copy guarantees.
+    Direct construction validates tool_name but does NOT deep-copy args.
     """
 
     # Identity
@@ -84,6 +101,9 @@ class ToolEnvelope:
 
     # Extensible
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_tool_name(self.tool_name)
 
 
 class ToolRegistry:
@@ -178,12 +198,11 @@ def create_envelope(
 ) -> ToolEnvelope:
     """Factory that enforces immutability guarantees.
 
-    Deep-copies args and metadata. This is the ONLY sanctioned
-    way to create ToolEnvelope instances.
+    Prefer this factory over direct construction — it deep-copies args
+    and metadata to ensure the envelope is a true immutable snapshot.
+    Direct construction is permitted but skips the deep-copy.
     """
-    # Validate tool_name: reject null bytes, control chars, path separators
-    if not tool_name or "\x00" in tool_name or "\n" in tool_name or "/" in tool_name:
-        raise ValueError(f"Invalid tool_name: {tool_name!r}")
+    _validate_tool_name(tool_name)
 
     # Deep-copy for immutability
     try:

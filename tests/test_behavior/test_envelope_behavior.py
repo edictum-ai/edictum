@@ -1,10 +1,10 @@
-"""Behavior tests for BashClassifier bare $VAR detection."""
+"""Behavior tests for envelope module — BashClassifier and ToolEnvelope validation."""
 
 from __future__ import annotations
 
 import pytest
 
-from edictum.envelope import BashClassifier, SideEffect
+from edictum.envelope import BashClassifier, SideEffect, ToolEnvelope, create_envelope
 
 pytestmark = pytest.mark.security
 
@@ -44,3 +44,51 @@ class TestNoFalsePositivesFromDollarOperator:
 
     def test_git_status_still_read(self):
         assert BashClassifier.classify("git status") == SideEffect.READ
+
+
+class TestToolEnvelopeDirectConstructionValidation:
+    """ToolEnvelope.__post_init__ must reject dangerous tool_name values,
+    closing the bypass where callers skip create_envelope().
+    """
+
+    def test_null_byte_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            ToolEnvelope(tool_name="\x00evil", args={})
+
+    def test_newline_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            ToolEnvelope(tool_name="evil\ntool", args={})
+
+    def test_forward_slash_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            ToolEnvelope(tool_name="evil/tool", args={})
+
+    def test_backslash_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            ToolEnvelope(tool_name="evil\\tool", args={})
+
+    def test_empty_string_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            ToolEnvelope(tool_name="", args={})
+
+    def test_carriage_return_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            ToolEnvelope(tool_name="evil\rtool", args={})
+
+    def test_tab_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            ToolEnvelope(tool_name="evil\ttool", args={})
+
+    def test_delete_char_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            ToolEnvelope(tool_name="evil\x7ftool", args={})
+
+    def test_valid_name_accepted(self):
+        envelope = ToolEnvelope(tool_name="ValidTool", args={})
+        assert envelope.tool_name == "ValidTool"
+
+    def test_create_envelope_still_works(self):
+        """create_envelope() must not regress — validation is idempotent."""
+        envelope = create_envelope("ValidTool", {"key": "value"})
+        assert envelope.tool_name == "ValidTool"
+        assert envelope.args == {"key": "value"}
