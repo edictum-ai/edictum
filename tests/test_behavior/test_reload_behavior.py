@@ -140,11 +140,11 @@ class TestReloadStateIsConsistent:
         assert len(state.sandbox_contracts) == 1
 
 
-class TestReloadPreservesShadowContracts:
-    """Shadow contracts from init survive reload."""
+class TestReloadWipesInitShadowContracts:
+    """reload() replaces _state entirely — init-time Python contracts are not preserved."""
 
     @pytest.mark.asyncio
-    async def test_reload_preserves_shadow_contracts(self):
+    async def test_reload_wipes_init_shadow_contracts(self):
         from edictum.contracts import Verdict, precondition
 
         @precondition("bash")
@@ -165,8 +165,8 @@ class TestReloadPreservesShadowContracts:
 
         await guard.reload(BUNDLE_V1)
 
-        # Shadow contracts are preserved across reload
-        assert len(guard._state.shadow_preconditions) == 1
+        # reload() replaces _state entirely — init-time Python contracts are wiped
+        assert len(guard._state.shadow_preconditions) == 0
         # Enforce contracts come from the new bundle
         assert len(guard._state.preconditions) == 1
 
