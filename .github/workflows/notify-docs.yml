@@ -1,0 +1,62 @@
+# Copy this workflow into edictum and edictum-console repositories:
+#   .github/workflows/notify-docs.yml
+#
+# Fires a repository_dispatch event to edictum-docs whenever a PR
+# is merged to main. Skips dependabot PRs and PRs labeled 'no-docs'.
+#
+# Uses the edictum-reviewer GitHub App for cross-repo authentication.
+# The app needs 'contents: write' permission for repository_dispatch.
+#
+# Required secrets/variables (org-level):
+#   APP_ID          — GitHub App ID (secret)
+#   APP_PRIVATE_KEY — GitHub App private key (secret)
+#
+# Setup:
+#   1. Ensure APP_ID, APP_PRIVATE_KEY, and ANTHROPIC_API_KEY are org secrets
+#   2. Copy this file to .github/workflows/notify-docs.yml in both:
+#      - edictum-ai/edictum
+#      - edictum-ai/edictum-console
+
+name: Notify Docs
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  notify:
+    name: Notify edictum-docs
+    if: |
+      github.event.pull_request.merged == true &&
+      !contains(github.event.pull_request.labels.*.name, 'no-docs') &&
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'renovate[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: edictum-ai
+          repositories: edictum-docs
+
+      - name: Dispatch to edictum-docs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          gh api repos/edictum-ai/edictum-docs/dispatches \
+            --method POST \
+            -f event_type=source-pr-merged \
+            -f "client_payload[repo]=${REPO}" \
+            -f "client_payload[pr_number]=${PR_NUMBER}" \
+            -f "client_payload[pr_url]=${PR_URL}" \
+            -f "client_payload[pr_author]=${PR_AUTHOR}"
