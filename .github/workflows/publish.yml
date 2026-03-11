@@ -21,7 +21,7 @@ jobs:
 
       - name: Generate SBOM (CycloneDX)
         run: |
-          uv pip install "cyclonedx-bom==4.6.1" --system
+          uv pip install "cyclonedx-bom==4.6.1" dist/edictum-*.whl --system
           cyclonedx-py environment --output dist/sbom.cdx.json --format json
 
       - name: Publish to PyPI
