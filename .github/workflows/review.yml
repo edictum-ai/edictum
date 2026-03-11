@@ -106,7 +106,29 @@ jobs:
 
             6. Fill in the template from `/tmp/governance/review-template.md` per `/tmp/governance/review-instructions.md`. Write to `/tmp/review.md`.
 
-            7. Post as a sticky PR comment:
+            7. Post inline review comments on specific lines:
+               - For each finding, note the exact file path and line number in the HEAD commit
+               - ONLY include comments for lines that appear in the diff (added or modified lines). Lines outside the diff will cause the API call to fail.
+               - Write the review payload to `/tmp/review-payload.json`:
+                 ```json
+                 {
+                   "commit_id": "${{ github.event.pull_request.head.sha }}",
+                   "event": "COMMENT",
+                   "body": "Inline comments posted. See the summary comment for the full review.",
+                   "comments": [
+                     {
+                       "path": "src/edictum/example.py",
+                       "line": 42,
+                       "body": "🔴 **Critical:** Description of the issue.\n\n**Attack path:** An attacker could...\n\n**Fix:**\n```python\ncode fix here\n```"
+                     }
+                   ]
+                 }
+                 ```
+               - Post it: `gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" --input /tmp/review-payload.json`
+               - If there are ZERO findings, skip this step entirely — do not create an empty review.
+               - If the API call fails (e.g., a line wasn't in the diff), fall back to the summary comment only.
+
+            8. Post the sticky summary comment (authoritative record of all findings):
                - Check for existing: `gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" --jq '.[] | select(.body | contains("<!-- edictum-review -->")) | .id'`
                - If found, update: `gh api "repos/${{ github.repository }}/issues/comments/COMMENT_ID" -X PATCH -f body=@/tmp/review.md`
                - If not found, create: `gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/review.md`
