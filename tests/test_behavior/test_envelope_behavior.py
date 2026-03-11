@@ -1,0 +1,46 @@
+"""Behavior tests for BashClassifier bare $VAR detection."""
+
+from __future__ import annotations
+
+import pytest
+
+from edictum.envelope import BashClassifier, SideEffect
+
+pytestmark = pytest.mark.security
+
+
+class TestBareVariableExpansionDetected:
+    """Bare $VAR expansions must classify as IRREVERSIBLE to prevent secret exfiltration."""
+
+    def test_echo_bare_var_is_irreversible(self):
+        assert BashClassifier.classify("echo $AWS_SECRET_KEY") == SideEffect.IRREVERSIBLE
+
+    def test_cat_bare_var_path_is_irreversible(self):
+        assert BashClassifier.classify("cat $HOME/.ssh/id_rsa") == SideEffect.IRREVERSIBLE
+
+    def test_braced_var_still_irreversible(self):
+        """Regression: ${VAR} must still be caught."""
+        assert BashClassifier.classify("echo ${VAR}") == SideEffect.IRREVERSIBLE
+
+    def test_command_substitution_still_irreversible(self):
+        """Regression: $(cmd) must still be caught."""
+        assert BashClassifier.classify("echo $(whoami)") == SideEffect.IRREVERSIBLE
+
+
+class TestNoFalsePositivesFromDollarOperator:
+    """Commands without $ must not be affected by the new operator."""
+
+    def test_ls_tmp_still_read(self):
+        assert BashClassifier.classify("ls /tmp") == SideEffect.READ
+
+    def test_cat_file_still_read(self):
+        assert BashClassifier.classify("cat file.txt") == SideEffect.READ
+
+    def test_echo_literal_still_read(self):
+        assert BashClassifier.classify("echo hello") == SideEffect.READ
+
+    def test_grep_still_read(self):
+        assert BashClassifier.classify("grep pattern somefile") == SideEffect.READ
+
+    def test_git_status_still_read(self):
+        assert BashClassifier.classify("git status") == SideEffect.READ

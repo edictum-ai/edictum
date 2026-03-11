@@ -149,7 +149,7 @@ class BashClassifier:
         "more",
     ]
 
-    SHELL_OPERATORS = ["\n", "\r", "<(", "<<", "${", ">", ">>", "|", ";", "&&", "||", "$(", "`", "#{"]
+    SHELL_OPERATORS = ["\n", "\r", "<(", "<<", "$", "${", ">", ">>", "|", ";", "&&", "||", "$(", "`", "#{"]
 
     @classmethod
     def classify(cls, command: str) -> SideEffect:
