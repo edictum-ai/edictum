@@ -393,11 +393,11 @@ class TestNanobotTemplate:
     def test_nanobot_template_has_expected_contracts(self):
         guard = Edictum.from_template("nanobot-agent")
         contract_ids = set()
-        for c in guard._preconditions:
+        for c in guard._state.preconditions:
             cid = getattr(c, "_edictum_id", None)
             if cid:
                 contract_ids.add(cid)
-        for c in guard._session_contracts:
+        for c in guard._state.session_contracts:
             cid = getattr(c, "_edictum_id", None)
             if cid:
                 contract_ids.add(cid)

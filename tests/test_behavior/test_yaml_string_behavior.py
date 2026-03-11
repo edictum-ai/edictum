@@ -50,13 +50,13 @@ class TestFromYamlStringCreatesGuard:
         guard = Edictum.from_yaml_string(VALID_YAML)
         assert guard is not None
         assert guard.mode == "enforce"
-        assert len(guard._preconditions) == 1
+        assert len(guard._state.preconditions) == 1
 
     def test_bytes_input_creates_guard(self):
         guard = Edictum.from_yaml_string(VALID_YAML.encode("utf-8"))
         assert guard is not None
         assert guard.mode == "enforce"
-        assert len(guard._preconditions) == 1
+        assert len(guard._state.preconditions) == 1
 
 
 class TestFromYamlStringEnforcesContracts:

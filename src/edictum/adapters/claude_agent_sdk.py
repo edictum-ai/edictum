@@ -89,7 +89,7 @@ class ClaudeAgentSDKAdapter:
         """
         self._on_postcondition_warn = on_postcondition_warn
 
-        has_effects = any(getattr(p, "_edictum_effect", "warn") != "warn" for p in self._guard._postconditions)
+        has_effects = any(getattr(p, "_edictum_effect", "warn") != "warn" for p in self._guard._state.postconditions)
         if has_effects:
             logger.warning(
                 "Postcondition effects (redact/deny) require the wrapper integration path "

@@ -174,8 +174,8 @@ class TestFromMultiple:
 
         merged = Edictum.from_multiple([guard_a, guard_b])
 
-        assert len(merged._preconditions) == 2
-        ids = [getattr(c, "_edictum_id", None) for c in merged._preconditions]
+        assert len(merged._state.preconditions) == 2
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.preconditions]
         assert "block-bash" in ids
         assert "block-write" in ids
 
@@ -186,8 +186,8 @@ class TestFromMultiple:
 
         merged = Edictum.from_multiple([guard_a, guard_b, guard_c])
 
-        assert len(merged._preconditions) == 3
-        ids = [getattr(c, "_edictum_id", None) for c in merged._preconditions]
+        assert len(merged._state.preconditions) == 3
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.preconditions]
         assert ids == ["block-bash", "block-write", "block-delete"]
 
     def test_empty_list_raises(self):
@@ -200,8 +200,8 @@ class TestFromMultiple:
         merged = Edictum.from_multiple([guard_a])
 
         assert merged is not guard_a
-        assert len(merged._preconditions) == 1
-        assert getattr(merged._preconditions[0], "_edictum_id", None) == "block-bash"
+        assert len(merged._state.preconditions) == 1
+        assert getattr(merged._state.preconditions[0], "_edictum_id", None) == "block-bash"
 
     def test_duplicate_ids_warns(self, tmp_path, caplog):
         guard_a = _make_guard_with_yaml(tmp_path, "a", GUARD_A_YAML)
@@ -210,7 +210,7 @@ class TestFromMultiple:
         with caplog.at_level(logging.WARNING, logger="edictum"):
             merged = Edictum.from_multiple([guard_a, guard_dup])
 
-        assert len(merged._preconditions) == 1
+        assert len(merged._state.preconditions) == 1
         assert "Duplicate contract id 'block-bash'" in caplog.text
         # First wins: message should be from guard A
         result = merged.evaluate("Bash", {"command": "rm -rf /"})
@@ -222,7 +222,7 @@ class TestFromMultiple:
 
         merged = Edictum.from_multiple([guard_a, guard_b])
 
-        ids = [getattr(c, "_edictum_id", None) for c in merged._preconditions]
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.preconditions]
         assert ids[0] == "block-bash"
         assert ids[1] == "block-write"
 
@@ -260,21 +260,21 @@ class TestFromMultiple:
 
         merged = Edictum.from_multiple([guard_post_a, guard_post_b])
 
-        assert len(merged._postconditions) == 2
-        ids = [getattr(c, "_edictum_id", None) for c in merged._postconditions]
+        assert len(merged._state.postconditions) == 2
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.postconditions]
         assert ids == ["post-check-a", "post-check-b"]
 
     def test_no_mutation_of_input_guards(self, tmp_path):
         guard_a = _make_guard_with_yaml(tmp_path, "a", GUARD_A_YAML)
         guard_b = _make_guard_with_yaml(tmp_path, "b", GUARD_B_YAML)
 
-        original_a_count = len(guard_a._preconditions)
-        original_b_count = len(guard_b._preconditions)
+        original_a_count = len(guard_a._state.preconditions)
+        original_b_count = len(guard_b._state.preconditions)
 
         Edictum.from_multiple([guard_a, guard_b])
 
-        assert len(guard_a._preconditions) == original_a_count
-        assert len(guard_b._preconditions) == original_b_count
+        assert len(guard_a._state.preconditions) == original_a_count
+        assert len(guard_b._state.preconditions) == original_b_count
 
     def test_uses_first_guard_config(self, tmp_path):
         guard_a = _make_guard_with_yaml(tmp_path, "a", GUARD_A_YAML)
@@ -323,8 +323,8 @@ contracts:
         guard_s2 = _make_guard_with_yaml(tmp_path, "s2", session_yaml_b)
 
         merged = Edictum.from_multiple([guard_s1, guard_s2])
-        assert len(merged._session_contracts) == 2
-        ids = [getattr(c, "_edictum_id", None) for c in merged._session_contracts]
+        assert len(merged._state.session_contracts) == 2
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.session_contracts]
         assert ids == ["session-limit", "session-limit-b"]
 
     def test_cross_type_duplicate_id_deduplicates(self, tmp_path):
@@ -369,8 +369,8 @@ contracts:
         merged = Edictum.from_multiple([guard_pre, guard_post])
 
         # Precondition kept (first), postcondition skipped (duplicate ID)
-        assert len(merged._preconditions) == 1
-        assert len(merged._postconditions) == 0
+        assert len(merged._state.preconditions) == 1
+        assert len(merged._state.postconditions) == 0
 
     def test_merge_python_decorator_contracts(self):
         """from_multiple() works with Python decorator-based contracts too."""
@@ -398,8 +398,8 @@ contracts:
         )
 
         merged = Edictum.from_multiple([g1, g2])
-        assert len(merged._preconditions) == 1
-        assert len(merged._postconditions) == 1
+        assert len(merged._state.preconditions) == 1
+        assert len(merged._state.postconditions) == 1
 
         # Verify evaluation works
         result = merged.evaluate("Bash", {"command": "ls"})

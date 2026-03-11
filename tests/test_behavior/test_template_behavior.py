@@ -48,7 +48,7 @@ class TestFromTemplateBackwardCompat:
     def test_builtin_loads_without_template_dirs(self):
         guard = Edictum.from_template("file-agent")
         assert guard is not None
-        assert len(guard._preconditions) > 0
+        assert len(guard._state.preconditions) > 0
 
     def test_missing_template_raises(self):
         with pytest.raises(EdictumConfigError, match="not found"):
@@ -61,7 +61,7 @@ class TestFromTemplateCustomDirs:
     def test_loads_from_custom_dir(self, custom_dir):
         guard = Edictum.from_template("support-agent", template_dirs=[custom_dir])
         assert guard is not None
-        assert len(guard._preconditions) == 1
+        assert len(guard._state.preconditions) == 1
 
     @pytest.mark.asyncio
     async def test_custom_template_enforces(self, custom_dir):
@@ -80,12 +80,12 @@ class TestFromTemplateSearchOrder:
     def test_user_dir_overrides_builtin(self, override_dir):
         guard = Edictum.from_template("file-agent", template_dirs=[override_dir])
         # The override template has 1 contract, the built-in has 3
-        assert len(guard._preconditions) == 1
+        assert len(guard._state.preconditions) == 1
 
     def test_builtin_used_as_fallback(self, custom_dir):
         # custom_dir only has support-agent, so file-agent falls through
         guard = Edictum.from_template("file-agent", template_dirs=[custom_dir])
-        assert len(guard._preconditions) == 3  # built-in file-agent has 3
+        assert len(guard._state.preconditions) == 3  # built-in file-agent has 3
 
     def test_first_user_dir_wins(self, tmp_path):
         dir_a = tmp_path / "a"
@@ -100,7 +100,7 @@ class TestFromTemplateSearchOrder:
 
         guard = Edictum.from_template("my-agent", template_dirs=[dir_a, dir_b])
         # Should load from dir_a (first in list)
-        contract_id = getattr(guard._preconditions[0], "_edictum_id", None)
+        contract_id = getattr(guard._state.preconditions[0], "_edictum_id", None)
         assert contract_id == "block-ticket-leak"
 
 

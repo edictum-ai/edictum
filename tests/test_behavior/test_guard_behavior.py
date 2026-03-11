@@ -6,6 +6,8 @@ leaving stale shadow contracts from the previous bundle.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from edictum import Edictum
@@ -129,8 +131,12 @@ async def test_reload_clears_stale_shadow_preconditions():
     guard = Edictum.from_yaml_string(_BUNDLE_A)
     env = _envelope()
 
-    # Inject shadow preconditions as if set by the composer/server
-    guard._shadow_preconditions.append(_make_shadow_precondition("old-shadow-pre"))
+    # Inject observe-mode preconditions as if set by the composer/server
+    shadow = _make_shadow_precondition("old-shadow-pre")
+    guard._state = replace(
+        guard._state,
+        shadow_preconditions=guard._state.shadow_preconditions + (shadow,),
+    )
     assert len(guard.get_shadow_preconditions(env)) == 1
 
     await guard.reload(_BUNDLE_B)
@@ -144,7 +150,11 @@ async def test_reload_clears_stale_shadow_postconditions():
     guard = Edictum.from_yaml_string(_BUNDLE_A)
     env = _envelope()
 
-    guard._shadow_postconditions.append(_make_shadow_postcondition("old-shadow-post"))
+    shadow = _make_shadow_postcondition("old-shadow-post")
+    guard._state = replace(
+        guard._state,
+        shadow_postconditions=guard._state.shadow_postconditions + (shadow,),
+    )
     assert len(guard.get_shadow_postconditions(env)) == 1
 
     await guard.reload(_BUNDLE_B)
@@ -157,7 +167,11 @@ async def test_reload_clears_stale_shadow_session_contracts():
     """Shadow session contracts from the previous bundle must not survive reload()."""
     guard = Edictum.from_yaml_string(_BUNDLE_A)
 
-    guard._shadow_session_contracts.append(_make_shadow_session_contract("old-shadow-session"))
+    shadow = _make_shadow_session_contract("old-shadow-session")
+    guard._state = replace(
+        guard._state,
+        shadow_session_contracts=guard._state.shadow_session_contracts + (shadow,),
+    )
     assert len(guard.get_shadow_session_contracts()) == 1
 
     await guard.reload(_BUNDLE_B)
@@ -171,7 +185,11 @@ async def test_reload_clears_stale_shadow_sandbox_contracts():
     guard = Edictum.from_yaml_string(_BUNDLE_A)
     env = _envelope()
 
-    guard._shadow_sandbox_contracts.append(_make_shadow_sandbox("old-shadow-sandbox"))
+    shadow = _make_shadow_sandbox("old-shadow-sandbox")
+    guard._state = replace(
+        guard._state,
+        shadow_sandbox_contracts=guard._state.shadow_sandbox_contracts + (shadow,),
+    )
     assert len(guard.get_shadow_sandbox_contracts(env)) == 1
 
     await guard.reload(_BUNDLE_B)
@@ -185,11 +203,14 @@ async def test_reload_clears_all_four_shadow_lists_simultaneously():
     guard = Edictum.from_yaml_string(_BUNDLE_A)
     env = _envelope()
 
-    # Populate all four shadow lists
-    guard._shadow_preconditions.append(_make_shadow_precondition("sp"))
-    guard._shadow_postconditions.append(_make_shadow_postcondition("spo"))
-    guard._shadow_session_contracts.append(_make_shadow_session_contract("ss"))
-    guard._shadow_sandbox_contracts.append(_make_shadow_sandbox("ssb"))
+    # Populate all four observe-mode lists via frozen state replacement
+    guard._state = replace(
+        guard._state,
+        shadow_preconditions=guard._state.shadow_preconditions + (_make_shadow_precondition("sp"),),
+        shadow_postconditions=guard._state.shadow_postconditions + (_make_shadow_postcondition("spo"),),
+        shadow_session_contracts=guard._state.shadow_session_contracts + (_make_shadow_session_contract("ss"),),
+        shadow_sandbox_contracts=guard._state.shadow_sandbox_contracts + (_make_shadow_sandbox("ssb"),),
+    )
 
     assert len(guard.get_shadow_preconditions(env)) == 1
     assert len(guard.get_shadow_postconditions(env)) == 1

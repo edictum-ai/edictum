@@ -90,7 +90,7 @@ class TestFromServer:
 
             assert isinstance(guard, Edictum)
             assert guard.policy_version is not None
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
 
             mock_cls.assert_called_once_with(
                 "https://console.edictum.dev",
@@ -257,7 +257,7 @@ class TestFromServer:
             )
 
             assert isinstance(guard, Edictum)
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
             # Initial fetch should NOT have been called — bundle comes from SSE
             client.get.assert_not_called()
 
@@ -341,7 +341,7 @@ class TestFromServer:
             )
 
             assert isinstance(guard, Edictum)
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
             client.get.assert_called_once_with(
                 "/api/v1/bundles/my-bundle/current",
                 env="production",

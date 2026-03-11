@@ -94,7 +94,7 @@ class OpenAIAgentsAdapter:
         """
         self._on_postcondition_warn = on_postcondition_warn
 
-        has_redact = any(getattr(p, "_edictum_effect", "warn") == "redact" for p in self._guard._postconditions)
+        has_redact = any(getattr(p, "_edictum_effect", "warn") == "redact" for p in self._guard._state.postconditions)
         if has_redact:
             logger.warning(
                 "Postcondition effect=redact requires the wrapper integration path "

@@ -379,6 +379,8 @@ def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
     Raises:
         EdictumConfigError: If the guards list is empty.
     """
+    from edictum._guard import _CompiledState
+
     if not guards:
         raise EdictumConfigError("from_multiple() requires at least one guard")
 
@@ -398,29 +400,44 @@ def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
     )
     merged.tool_registry = first.tool_registry
 
-    regular_attrs = ("_preconditions", "_postconditions", "_session_contracts", "_sandbox_contracts")
+    regular_attrs = ("preconditions", "postconditions", "session_contracts", "sandbox_contracts")
     shadow_attrs = (
-        "_shadow_preconditions",
-        "_shadow_postconditions",
-        "_shadow_session_contracts",
-        "_shadow_sandbox_contracts",
+        "shadow_preconditions",
+        "shadow_postconditions",
+        "shadow_session_contracts",
+        "shadow_sandbox_contracts",
     )
 
     seen_regular_ids: set[str] = set()
     seen_shadow_ids: set[str] = set()
+
+    collected: dict[str, list] = {a: [] for a in (*regular_attrs, *shadow_attrs)}
 
     for guard in guards:
         for attr, seen in (
             *((a, seen_regular_ids) for a in regular_attrs),
             *((a, seen_shadow_ids) for a in shadow_attrs),
         ):
-            for contract in getattr(guard, attr):
+            for contract in getattr(guard._state, attr):
                 cid = getattr(contract, "_edictum_id", None)
                 if cid and cid in seen:
                     logger.warning("Duplicate contract id '%s' in from_multiple() — first wins", cid)
                     continue
                 if cid:
                     seen.add(cid)
-                getattr(merged, attr).append(contract)
+                collected[attr].append(contract)
+
+    merged._state = _CompiledState(
+        preconditions=tuple(collected["preconditions"]),
+        postconditions=tuple(collected["postconditions"]),
+        session_contracts=tuple(collected["session_contracts"]),
+        sandbox_contracts=tuple(collected["sandbox_contracts"]),
+        shadow_preconditions=tuple(collected["shadow_preconditions"]),
+        shadow_postconditions=tuple(collected["shadow_postconditions"]),
+        shadow_session_contracts=tuple(collected["shadow_session_contracts"]),
+        shadow_sandbox_contracts=tuple(collected["shadow_sandbox_contracts"]),
+        limits=merged._state.limits,
+        policy_version=merged._state.policy_version,
+    )
 
     return merged

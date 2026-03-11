@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,28 @@ if TYPE_CHECKING:
     from edictum.yaml_engine.composer import CompositionReport
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _CompiledState:
+    """Immutable snapshot of compiled contracts.
+
+    All contract lists are tuples (immutable). The entire state is
+    replaced atomically via a single reference assignment in reload(),
+    ensuring concurrent evaluations never see a mix of old and new
+    contracts.
+    """
+
+    preconditions: tuple = ()
+    postconditions: tuple = ()
+    session_contracts: tuple = ()
+    sandbox_contracts: tuple = ()
+    shadow_preconditions: tuple = ()
+    shadow_postconditions: tuple = ()
+    shadow_session_contracts: tuple = ()
+    shadow_sandbox_contracts: tuple = ()
+    limits: OperationLimits = field(default_factory=OperationLimits)
+    policy_version: str | None = None
 
 
 class Edictum:
@@ -61,7 +84,6 @@ class Edictum:
     ):
         self.environment = environment
         self.mode = mode
-        self.limits = limits or OperationLimits()
         self.backend = backend or MemoryBackend()
         self.redaction = redaction or RedactionPolicy()
         self._local_sink = CollectingAuditSink()
@@ -73,7 +95,6 @@ class Edictum:
             self.audit_sink = self._local_sink
         self.telemetry = GovernanceTelemetry()
         self._gov_tracer = get_tracer("edictum.governance")
-        self.policy_version = policy_version
         self._on_deny = on_deny
         self._on_allow = on_allow
         self._success_check = success_check
@@ -91,25 +112,63 @@ class Edictum:
                     idempotent=config.get("idempotent", False),
                 )
 
-        # Organize contracts and hooks by type
-        self._preconditions: list = []
-        self._postconditions: list = []
-        self._session_contracts: list = []
-        self._shadow_preconditions: list = []
-        self._shadow_postconditions: list = []
-        self._shadow_session_contracts: list = []
-        self._sandbox_contracts: list = []
-        self._shadow_sandbox_contracts: list = []
+        # Classify contracts into mutable local lists during construction
+        pre: list = []
+        post: list = []
+        session: list = []
+        sandbox: list = []
+        s_pre: list = []
+        s_post: list = []
+        s_session: list = []
+        s_sandbox: list = []
+
+        for item in contracts or []:
+            contract_type = getattr(item, "_edictum_type", None)
+            is_shadow = getattr(item, "_edictum_shadow", False)
+
+            if is_shadow:
+                if contract_type == "precondition":
+                    s_pre.append(item)
+                elif contract_type == "postcondition":
+                    s_post.append(item)
+                elif contract_type == "session_contract":
+                    s_session.append(item)
+                elif contract_type == "sandbox":
+                    s_sandbox.append(item)
+            elif contract_type == "precondition":
+                pre.append(item)
+            elif contract_type == "postcondition":
+                post.append(item)
+            elif contract_type == "session_contract":
+                session.append(item)
+            elif contract_type == "sandbox":
+                sandbox.append(item)
+
+        # Freeze all contract state into a single immutable snapshot.
+        # Concurrent evaluations read self._state; reload() replaces it
+        # via a single reference assignment (atomic under CPython's GIL
+        # and safe under asyncio cooperative scheduling).
+        self._state = _CompiledState(
+            preconditions=tuple(pre),
+            postconditions=tuple(post),
+            session_contracts=tuple(session),
+            sandbox_contracts=tuple(sandbox),
+            shadow_preconditions=tuple(s_pre),
+            shadow_postconditions=tuple(s_post),
+            shadow_session_contracts=tuple(s_session),
+            shadow_sandbox_contracts=tuple(s_sandbox),
+            limits=limits or OperationLimits(),
+            policy_version=policy_version,
+        )
+
+        # Hooks are not reloaded — mutable lists are fine
         self._before_hooks: list[HookRegistration] = []
         self._after_hooks: list[HookRegistration] = []
+        for item in hooks or []:
+            self._register_hook(item)
 
         # Persistent session for accumulating limits across run() calls
         self._session_id = str(uuid.uuid4())
-
-        for item in contracts or []:
-            self._register_contract(item)
-        for item in hooks or []:
-            self._register_hook(item)
 
     @property
     def local_sink(self) -> CollectingAuditSink:
@@ -121,8 +180,30 @@ class Edictum:
         """
         return self._local_sink
 
+    @property
+    def limits(self) -> OperationLimits:
+        """Operation limits for the current contract set."""
+        return self._state.limits
+
+    @limits.setter
+    def limits(self, value: OperationLimits) -> None:
+        self._state = replace(self._state, limits=value)
+
+    @property
+    def policy_version(self) -> str | None:
+        """SHA256 hash identifying the active contract bundle."""
+        return self._state.policy_version
+
+    @policy_version.setter
+    def policy_version(self, value: str | None) -> None:
+        self._state = replace(self._state, policy_version=value)
+
     async def reload(self, contracts_yaml: bytes | str) -> None:
         """Atomically replace all contracts from a YAML bundle.
+
+        Builds a complete ``_CompiledState``, then swaps via a single
+        reference assignment. Concurrent evaluations see either
+        fully-old or fully-new contracts, never a mix.
 
         On failure, existing contracts are preserved (fail-closed).
         """
@@ -133,7 +214,8 @@ class Edictum:
         compiled = compile_contracts(bundle_data)
 
         # Sort compiled contracts into enforced vs observe-mode (shadow) lists,
-        # mirroring the classification that _register_contract() does at init time.
+        # mirroring the classification that __init__() does at construction time.
+        # Build the full state before touching self._state for atomicity.
         all_contracts = (
             compiled.preconditions + compiled.postconditions + compiled.session_contracts + compiled.sandbox_contracts
         )
@@ -166,17 +248,24 @@ class Edictum:
             elif ctype == "sandbox":
                 sandbox.append(contract)
 
-        self._preconditions = pre
-        self._postconditions = post
-        self._session_contracts = session
-        self._sandbox_contracts = sandbox
-        self._shadow_preconditions = shadow_pre
-        self._shadow_postconditions = shadow_post
-        self._shadow_session_contracts = shadow_session
-        self._shadow_sandbox_contracts = shadow_sandbox
-        self.policy_version = str(bundle_hash)
-        self.limits = compiled.limits
+        new_state = _CompiledState(
+            preconditions=tuple(pre),
+            postconditions=tuple(post),
+            session_contracts=tuple(session),
+            sandbox_contracts=tuple(sandbox),
+            shadow_preconditions=tuple(shadow_pre),
+            shadow_postconditions=tuple(shadow_post),
+            shadow_session_contracts=tuple(shadow_session),
+            shadow_sandbox_contracts=tuple(shadow_sandbox),
+            limits=compiled.limits,
+            policy_version=str(bundle_hash),
+        )
 
+        # Atomic swap — single reference assignment guarantees concurrent
+        # evaluations see a consistent contract set.
+        self._state = new_state
+
+        # Update tool registry (safe: individual dict updates)
         if compiled.tools:
             for tool_name, config in compiled.tools.items():
                 self.tool_registry.register(
@@ -185,7 +274,7 @@ class Edictum:
                     idempotent=config.get("idempotent", False),
                 )
 
-        logger.info("Contracts reloaded, policy_version=%s", self.policy_version)
+        logger.info("Contracts reloaded, policy_version=%s", self._state.policy_version)
 
     def set_principal(self, principal: Principal) -> None:
         """Update the principal used for subsequent tool calls."""
@@ -196,28 +285,6 @@ class Edictum:
         if self._principal_resolver is not None:
             return self._principal_resolver(tool_name, tool_input)
         return self._principal
-
-    def _register_contract(self, item: Any) -> None:
-        contract_type = getattr(item, "_edictum_type", None)
-        is_shadow = getattr(item, "_edictum_shadow", False)
-
-        if is_shadow:
-            if contract_type == "precondition":
-                self._shadow_preconditions.append(item)
-            elif contract_type == "postcondition":
-                self._shadow_postconditions.append(item)
-            elif contract_type == "session_contract":
-                self._shadow_session_contracts.append(item)
-            elif contract_type == "sandbox":
-                self._shadow_sandbox_contracts.append(item)
-        elif contract_type == "precondition":
-            self._preconditions.append(item)
-        elif contract_type == "postcondition":
-            self._postconditions.append(item)
-        elif contract_type == "session_contract":
-            self._session_contracts.append(item)
-        elif contract_type == "sandbox":
-            self._sandbox_contracts.append(item)
 
     def _register_hook(self, item: Any) -> None:
         if isinstance(item, HookRegistration):
@@ -253,28 +320,28 @@ class Edictum:
         return result
 
     def get_preconditions(self, envelope: ToolEnvelope) -> list:
-        return self._filter_by_tool(self._preconditions, envelope)
+        return self._filter_by_tool(self._state.preconditions, envelope)
 
     def get_postconditions(self, envelope: ToolEnvelope) -> list:
-        return self._filter_by_tool(self._postconditions, envelope)
+        return self._filter_by_tool(self._state.postconditions, envelope)
 
     def get_session_contracts(self) -> list:
-        return self._session_contracts
+        return list(self._state.session_contracts)
 
     def get_shadow_preconditions(self, envelope: ToolEnvelope) -> list:
-        return self._filter_by_tool(self._shadow_preconditions, envelope)
+        return self._filter_by_tool(self._state.shadow_preconditions, envelope)
 
     def get_shadow_postconditions(self, envelope: ToolEnvelope) -> list:
-        return self._filter_by_tool(self._shadow_postconditions, envelope)
+        return self._filter_by_tool(self._state.shadow_postconditions, envelope)
 
     def get_sandbox_contracts(self, envelope: ToolEnvelope) -> list:
-        return self._filter_sandbox(self._sandbox_contracts, envelope)
+        return self._filter_sandbox(self._state.sandbox_contracts, envelope)
 
     def get_shadow_sandbox_contracts(self, envelope: ToolEnvelope) -> list:
-        return self._filter_sandbox(self._shadow_sandbox_contracts, envelope)
+        return self._filter_sandbox(self._state.shadow_sandbox_contracts, envelope)
 
     def get_shadow_session_contracts(self) -> list:
-        return self._shadow_session_contracts
+        return list(self._state.shadow_session_contracts)
 
     # --- Delegated methods (implementation in separate modules) ---
 

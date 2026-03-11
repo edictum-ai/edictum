@@ -62,12 +62,12 @@ class TestReload:
         """reload() replaces all contracts with the new bundle."""
         guard = Edictum.from_yaml_string(BUNDLE_V1)
 
-        assert len(guard._preconditions) == 1
+        assert len(guard._state.preconditions) == 1
         old_version = guard.policy_version
 
         await guard.reload(BUNDLE_V2)
 
-        assert len(guard._preconditions) == 2
+        assert len(guard._state.preconditions) == 2
         assert guard.policy_version != old_version
 
     @pytest.mark.asyncio
@@ -77,20 +77,20 @@ class TestReload:
 
         await guard.reload(BUNDLE_V2.encode("utf-8"))
 
-        assert len(guard._preconditions) == 2
+        assert len(guard._state.preconditions) == 2
 
     @pytest.mark.asyncio
     async def test_reload_preserves_on_invalid_yaml(self):
         """reload() raises on invalid YAML but preserves existing contracts."""
         guard = Edictum.from_yaml_string(BUNDLE_V1)
-        original_contracts = guard._preconditions
+        original_contracts = guard._state.preconditions
         original_version = guard.policy_version
 
         with pytest.raises(EdictumConfigError):
             await guard.reload(INVALID_YAML)
 
         # Existing contracts preserved
-        assert guard._preconditions is original_contracts
+        assert guard._state.preconditions is original_contracts
         assert guard.policy_version == original_version
 
     @pytest.mark.asyncio
@@ -129,14 +129,14 @@ class TestReload:
         guard = Edictum.from_yaml_string(BUNDLE_V1)
 
         # Simulate an in-flight evaluation holding a reference
-        snapshot = list(guard._preconditions)
+        snapshot = list(guard._state.preconditions)
 
         await guard.reload(BUNDLE_V2)
 
         # The snapshot still holds the old contracts
         assert len(snapshot) == 1
         # The guard now has the new contracts
-        assert len(guard._preconditions) == 2
+        assert len(guard._state.preconditions) == 2
 
     @pytest.mark.asyncio
     async def test_reload_with_session_contracts(self):
@@ -158,7 +158,7 @@ contracts:
       message: "Session limit reached."
 """
         guard = Edictum.from_yaml_string(BUNDLE_V1)
-        assert len(guard._session_contracts) == 0
+        assert len(guard._state.session_contracts) == 0
 
         await guard.reload(bundle_with_session)
 

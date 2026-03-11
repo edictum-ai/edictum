@@ -123,4 +123,4 @@ contracts:
       message: "External email denied"
 """
         guard = Edictum.from_yaml_string(yaml_content)
-        assert len(guard._preconditions) >= 1
+        assert len(guard._state.preconditions) >= 1

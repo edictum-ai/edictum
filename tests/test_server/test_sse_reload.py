@@ -110,7 +110,7 @@ class TestSSEReload:
             await asyncio.wait_for(update_received.wait(), timeout=2.0)
             await asyncio.sleep(0.05)
 
-            assert len(guard._preconditions) == 2
+            assert len(guard._state.preconditions) == 2
 
             await guard.close()
 
@@ -149,13 +149,13 @@ class TestSSEReload:
                 auto_watch=True,
             )
 
-            assert len(guard._preconditions) == 1  # V1: deny-rm only
+            assert len(guard._state.preconditions) == 1  # V1: deny-rm only
 
             await asyncio.wait_for(update_received.wait(), timeout=2.0)
             await asyncio.sleep(0.05)
 
             # V2 was applied despite the bad event before it
-            assert len(guard._preconditions) == 2
+            assert len(guard._state.preconditions) == 2
 
             await guard.close()
 
@@ -191,12 +191,12 @@ class TestSSEReload:
                 auto_watch=True,
             )
 
-            original_count = len(guard._preconditions)
+            original_count = len(guard._state.preconditions)
 
             await asyncio.wait_for(update_received.wait(), timeout=2.0)
             await asyncio.sleep(0.05)
 
-            assert len(guard._preconditions) == original_count
+            assert len(guard._state.preconditions) == original_count
 
             await guard.close()
 
@@ -286,13 +286,13 @@ class TestSSEReload:
             )
 
             # Initial: V1 has 1 contract (deny-rm)
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
 
             await asyncio.wait_for(update_received.wait(), timeout=2.0)
             await asyncio.sleep(0.05)
 
             # After assignment change: V2 has 2 contracts (deny-curl, deny-wget)
-            assert len(guard._preconditions) == 2
+            assert len(guard._state.preconditions) == 2
 
             # Verify client.get was called twice
             assert client.get.call_count == 2

@@ -121,7 +121,7 @@ class TestServerAssignedModeBehavior:
             # Observable: no initial HTTP fetch — contracts came from SSE
             client.get.assert_not_called()
             # Observable: guard has contracts (from SSE push)
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
             await guard.close()
 
     @pytest.mark.asyncio
@@ -156,5 +156,5 @@ class TestServerAssignedModeBehavior:
             # Observable: HTTP fetch happened
             client.get.assert_called_once()
             assert guard.policy_version is not None
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
             await guard.close()

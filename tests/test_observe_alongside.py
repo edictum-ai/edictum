@@ -272,6 +272,6 @@ class TestNormalContractsRegression:
         enforced_path = tmp_path / "enforced.yaml"
         enforced_path.write_text(ENFORCED_BUNDLE)
         guard = Edictum.from_yaml(enforced_path)
-        assert guard._shadow_preconditions == []
-        assert guard._shadow_postconditions == []
-        assert guard._shadow_session_contracts == []
+        assert guard._state.shadow_preconditions == ()
+        assert guard._state.shadow_postconditions == ()
+        assert guard._state.shadow_session_contracts == ()
