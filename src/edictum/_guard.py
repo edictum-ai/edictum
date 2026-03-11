@@ -132,10 +132,48 @@ class Edictum:
         bundle_data, bundle_hash = load_bundle_string(contracts_yaml)
         compiled = compile_contracts(bundle_data)
 
-        self._preconditions = compiled.preconditions
-        self._postconditions = compiled.postconditions
-        self._session_contracts = compiled.session_contracts
-        self._sandbox_contracts = compiled.sandbox_contracts
+        # Sort compiled contracts into enforced vs observe-mode (shadow) lists,
+        # mirroring the classification that _register_contract() does at init time.
+        all_contracts = (
+            compiled.preconditions + compiled.postconditions + compiled.session_contracts + compiled.sandbox_contracts
+        )
+        pre: list = []
+        post: list = []
+        session: list = []
+        sandbox: list = []
+        shadow_pre: list = []
+        shadow_post: list = []
+        shadow_session: list = []
+        shadow_sandbox: list = []
+        for contract in all_contracts:
+            ctype = getattr(contract, "_edictum_type", None)
+            is_shadow = getattr(contract, "_edictum_shadow", False)
+            if is_shadow:
+                if ctype == "precondition":
+                    shadow_pre.append(contract)
+                elif ctype == "postcondition":
+                    shadow_post.append(contract)
+                elif ctype == "session_contract":
+                    shadow_session.append(contract)
+                elif ctype == "sandbox":
+                    shadow_sandbox.append(contract)
+            elif ctype == "precondition":
+                pre.append(contract)
+            elif ctype == "postcondition":
+                post.append(contract)
+            elif ctype == "session_contract":
+                session.append(contract)
+            elif ctype == "sandbox":
+                sandbox.append(contract)
+
+        self._preconditions = pre
+        self._postconditions = post
+        self._session_contracts = session
+        self._sandbox_contracts = sandbox
+        self._shadow_preconditions = shadow_pre
+        self._shadow_postconditions = shadow_post
+        self._shadow_session_contracts = shadow_session
+        self._shadow_sandbox_contracts = shadow_sandbox
         self.policy_version = str(bundle_hash)
         self.limits = compiled.limits
 
