@@ -312,9 +312,7 @@ class CollectingAuditSink:
         evicted_count = self._total_emitted - len(self._events)
         if m < evicted_count:
             raise MarkEvictedError(
-                f"Mark {m} references evicted events "
-                f"(buffer starts at {evicted_count}, "
-                f"max_events={self._max_events})"
+                f"Mark {m} references evicted events (buffer starts at {evicted_count}, max_events={self._max_events})"
             )
         buffer_offset = m - evicted_count
         return list(self._events[buffer_offset:])

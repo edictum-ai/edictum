@@ -14,6 +14,7 @@ from edictum.yaml_engine.composer import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _base_bundle(**overrides) -> dict:
     """Minimal valid bundle dict."""
     b = {

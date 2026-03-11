@@ -657,23 +657,15 @@ class TestEnvSelector:
     def test_env_matches_any(self, monkeypatch):
         monkeypatch.setenv("DEPLOY_TARGET", "us-east-1")
         env = _envelope()
-        assert evaluate_expression(
-            {"env.DEPLOY_TARGET": {"matches_any": [r"^us-", r"^eu-"]}}, env
-        ) is True
+        assert evaluate_expression({"env.DEPLOY_TARGET": {"matches_any": [r"^us-", r"^eu-"]}}, env) is True
         monkeypatch.setenv("DEPLOY_TARGET", "ap-south-1")
-        assert evaluate_expression(
-            {"env.DEPLOY_TARGET": {"matches_any": [r"^us-", r"^eu-"]}}, env
-        ) is False
+        assert evaluate_expression({"env.DEPLOY_TARGET": {"matches_any": [r"^us-", r"^eu-"]}}, env) is False
 
     def test_env_contains_any(self, monkeypatch):
         monkeypatch.setenv("FEATURES", "auth,billing,notifications")
         env = _envelope()
-        assert evaluate_expression(
-            {"env.FEATURES": {"contains_any": ["billing", "payments"]}}, env
-        ) is True
-        assert evaluate_expression(
-            {"env.FEATURES": {"contains_any": ["payments", "shipping"]}}, env
-        ) is False
+        assert evaluate_expression({"env.FEATURES": {"contains_any": ["billing", "payments"]}}, env) is True
+        assert evaluate_expression({"env.FEATURES": {"contains_any": ["payments", "shipping"]}}, env) is False
 
     def test_env_in_postcondition_with_output(self, monkeypatch):
         """env.* selector works alongside output.text in a postcondition when clause."""

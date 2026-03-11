@@ -22,7 +22,7 @@ class TestLoadGateConfig:
 
     def test_load_custom_config(self, tmp_path: Path) -> None:
         config_path = tmp_path / "gate.yaml"
-        config_path.write_text("contracts:\n" "  - /tmp/test.yaml\n" "fail_open: true\n")
+        config_path.write_text("contracts:\n  - /tmp/test.yaml\nfail_open: true\n")
         config = load_gate_config(config_path)
         assert config.contracts == ("/tmp/test.yaml",)
         assert config.fail_open is True
@@ -55,7 +55,7 @@ class TestLoadGateConfig:
     def test_console_config_present(self, tmp_path: Path) -> None:
         config_path = tmp_path / "gate.yaml"
         config_path.write_text(
-            "contracts:\n  - /tmp/test.yaml\n" "console:\n" "  url: https://example.com\n" "  api_key: test-key\n"
+            "contracts:\n  - /tmp/test.yaml\nconsole:\n  url: https://example.com\n  api_key: test-key\n"
         )
         config = load_gate_config(config_path)
         assert config.console is not None

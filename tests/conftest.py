@@ -61,7 +61,7 @@ class CapturingAuditSink:
 
     def assert_action_not_emitted(self, action):
         matches = self.get_by_action(action)
-        assert not matches, f"Expected {action.value} NOT emitted, " f"but found {len(matches)} event(s)"
+        assert not matches, f"Expected {action.value} NOT emitted, but found {len(matches)} event(s)"
 
     def reset(self):
         self.events.clear()

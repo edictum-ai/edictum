@@ -16,7 +16,7 @@ try:
     _console = Console(highlight=False)
     _err_console = Console(stderr=True, highlight=False)
 except ImportError:
-    raise ImportError("The CLI requires click and rich. " "Install them with: pip install edictum[cli]")
+    raise ImportError("The CLI requires click and rich. Install them with: pip install edictum[cli]")
 
 from edictum import EdictumConfigError
 from edictum.envelope import Principal, ToolEnvelope, create_envelope
@@ -628,7 +628,7 @@ def replay(file: str, audit_log: str, output: str | None) -> None:
         _console.print("\n[yellow]Changed verdicts:[/yellow]")
         for entry in report_lines:
             if entry["changed"]:
-                _console.print(f"  {entry['tool_name']}: " f"{entry['original_action']} -> {entry['new_verdict']}")
+                _console.print(f"  {entry['tool_name']}: {entry['original_action']} -> {entry['new_verdict']}")
                 if entry.get("denied_by"):
                     _console.print(f"    Contract: {entry['denied_by']}")
     else:
@@ -740,8 +740,7 @@ def _run_cases(file: str, cases: str, environment: str = "production") -> None:
                 )
             else:
                 _console.print(
-                    f"[red]  {escape(tc_id)}:[/red] {escape(detail)} -> "
-                    f"expected {expected_label}, got {actual_label}"
+                    f"[red]  {escape(tc_id)}:[/red] {escape(detail)} -> expected {expected_label}, got {actual_label}"
                 )
 
     # Summary

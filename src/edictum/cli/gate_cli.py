@@ -134,7 +134,7 @@ def gate_init(server: str | None, api_key: str | None, custom_contracts: str | N
     _console.print("  2. Run [cyan]edictum gate audit[/cyan] to see what's being caught.")
     _console.print(f"  3. Edit [cyan]{contract_path}[/cyan] to customize your contracts.")
     _console.print(
-        "  4. When ready, change [bold]mode: observe[/bold] to" " [bold]mode: enforce[/bold] to start blocking."
+        "  4. When ready, change [bold]mode: observe[/bold] to [bold]mode: enforce[/bold] to start blocking."
     )
     _console.print("\n  Write your own contracts: [dim]https://edictum.ai/docs/gate/contracts[/dim]")
     _console.print("")

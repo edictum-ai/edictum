@@ -171,9 +171,9 @@ class TestPostconditionDenyEnforcement:
             )
             result = await output_gr.guardrail_function(mock_data)
 
-            assert result.action == "reject", (
-                "Output guardrail must reject when postcondition has effect=deny, " f"but got action={result.action!r}"
-            )
+            assert (
+                result.action == "reject"
+            ), f"Output guardrail must reject when postcondition has effect=deny, but got action={result.action!r}"
         finally:
             if orig_agents is not None:
                 sys.modules["agents"] = orig_agents

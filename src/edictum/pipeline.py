@@ -369,7 +369,7 @@ class GovernancePipeline:
                     warnings.append(f"\u26a0\ufe0f Output suppressed by {contract_record['name']}.")
                 elif effect in ("redact", "deny") and not is_safe:
                     logger.warning(
-                        "Postcondition %s declares effect=%s but tool %s has side_effect=%s; " "falling back to warn.",
+                        "Postcondition %s declares effect=%s but tool %s has side_effect=%s; falling back to warn.",
                         contract_record["name"],
                         effect,
                         envelope.tool_name,

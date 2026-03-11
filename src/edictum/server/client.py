@@ -48,7 +48,7 @@ class EdictumServerClient:
         for name, value in [("agent_id", agent_id), ("env", env)]:
             if not _SAFE_IDENTIFIER_RE.match(value):
                 raise ValueError(
-                    f"Invalid {name}: {value!r}. " "Must be 1-128 alphanumeric chars, hyphens, underscores, or dots."
+                    f"Invalid {name}: {value!r}. Must be 1-128 alphanumeric chars, hyphens, underscores, or dots."
                 )
         if bundle_name is not None and not _SAFE_IDENTIFIER_RE.match(bundle_name):
             raise ValueError(
