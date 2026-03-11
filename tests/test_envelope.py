@@ -218,6 +218,22 @@ class TestToolNameValidation:
         with pytest.raises(ValueError, match="Invalid tool_name"):
             create_envelope("path/to/tool", {})
 
+    def test_tool_name_with_backslash_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            create_envelope("path\\to\\tool", {})
+
+    def test_tool_name_with_carriage_return_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            create_envelope("evil\rtool", {})
+
+    def test_tool_name_with_tab_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            create_envelope("evil\ttool", {})
+
+    def test_tool_name_with_delete_char_rejected(self):
+        with pytest.raises(ValueError, match="Invalid tool_name"):
+            create_envelope("evil\x7ftool", {})
+
     def test_tool_name_empty_string_rejected(self):
         with pytest.raises(ValueError, match="Invalid tool_name"):
             create_envelope("", {})
