@@ -119,7 +119,7 @@ class TestValidSignature:
                 signing_public_key=public_key_hex,
             )
 
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
             await guard.close()
 
 
@@ -251,7 +251,7 @@ class TestSSEVerification:
 
             # The initial contracts (1 precondition from from_server) should
             # remain unchanged — the unsigned SSE update was rejected.
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
             await guard.close()
 
     @pytest.mark.security
@@ -291,7 +291,7 @@ class TestSSEVerification:
             await guard._sse_task
 
             # Original contracts preserved — tampered update rejected
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
             await guard.close()
 
     @pytest.mark.asyncio
@@ -357,7 +357,7 @@ contracts:
             await guard._sse_task
 
             # New contracts loaded — 2 preconditions now
-            assert len(guard._preconditions) == 2
+            assert len(guard._state.preconditions) == 2
             await guard.close()
 
 
@@ -407,7 +407,7 @@ class TestSSEAssignmentChanged:
             await guard._sse_task
 
             # Original contracts preserved — tampered re-fetch rejected
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
             await guard.close()
 
     @pytest.mark.security
@@ -450,7 +450,7 @@ class TestSSEAssignmentChanged:
             await guard._sse_task
 
             # Original contracts preserved — unsigned re-fetch rejected
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
             await guard.close()
 
     @pytest.mark.asyncio
@@ -521,7 +521,7 @@ contracts:
             await guard._sse_task
 
             # New contracts loaded and bundle_name updated
-            assert len(guard._preconditions) == 2
+            assert len(guard._state.preconditions) == 2
             assert guard._server_client.bundle_name == "new-bundle"
             await guard.close()
 
@@ -563,7 +563,7 @@ class TestConfigValidation:
                 auto_watch=False,
             )
 
-            assert len(guard._preconditions) == 1
+            assert len(guard._state.preconditions) == 1
             await guard.close()
 
     def test_pynacl_not_installed_error(self, key_pair):
