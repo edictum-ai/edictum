@@ -190,8 +190,9 @@ class RedactionPolicy:
 class CompositeSink:
     """Fan-out sink that emits to multiple sinks sequentially.
 
-    Sinks are called in order. If a sink raises, the exception propagates
-    and subsequent sinks do not receive the event.
+    Sinks are called in order. Every sink is attempted even if earlier sinks
+    raise. If any sink fails, an ``ExceptionGroup`` is raised after all sinks
+    have been tried, containing the individual errors.
     """
 
     def __init__(self, sinks: list[AuditSink]) -> None:
@@ -205,8 +206,14 @@ class CompositeSink:
         return list(self._sinks)
 
     async def emit(self, event: Any) -> None:
+        errors: list[Exception] = []
         for sink in self._sinks:
-            await sink.emit(event)
+            try:
+                await sink.emit(event)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("CompositeSink: one or more sinks failed", errors)
 
 
 class StdoutAuditSink:

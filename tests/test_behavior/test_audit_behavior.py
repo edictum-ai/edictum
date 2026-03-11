@@ -23,6 +23,16 @@ class _CaptureSink:
         self.events.append(event)
 
 
+class _FailingSink:
+    """AuditSink that always raises on emit."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error or RuntimeError("sink failed")
+
+    async def emit(self, event: AuditEvent) -> None:
+        raise self.error
+
+
 class TestCompositeSinkBehavior:
     """CompositeSink fans out events to every wrapped sink."""
 
@@ -64,6 +74,51 @@ class TestCompositeSinkBehavior:
     async def test_conforms_to_audit_sink_protocol(self):
         composite = CompositeSink([_CaptureSink()])
         assert isinstance(composite, AuditSink)
+
+
+class TestCompositeSinkErrorHandling:
+    """CompositeSink emits to all sinks even when some fail."""
+
+    async def test_all_sinks_receive_events_even_when_one_fails(self):
+        failing = _FailingSink()
+        collector = _CaptureSink()
+        composite = CompositeSink([failing, collector])
+
+        event = AuditEvent(action=AuditAction.CALL_ALLOWED, tool_name="Read")
+        with pytest.raises(ExceptionGroup):
+            await composite.emit(event)
+
+        assert len(collector.events) == 1
+        assert collector.events[0] is event
+
+    async def test_errors_are_aggregated_in_exception_group(self):
+        err1 = RuntimeError("sink A broke")
+        err2 = ValueError("sink B broke")
+        failing_a = _FailingSink(err1)
+        failing_b = _FailingSink(err2)
+        collector = _CaptureSink()
+        composite = CompositeSink([failing_a, collector, failing_b])
+
+        event = AuditEvent(action=AuditAction.CALL_ALLOWED, tool_name="Read")
+        with pytest.raises(ExceptionGroup) as exc_info:
+            await composite.emit(event)
+
+        eg = exc_info.value
+        assert len(eg.exceptions) == 2
+        assert eg.exceptions[0] is err1
+        assert eg.exceptions[1] is err2
+        assert "one or more sinks failed" in str(eg)
+
+    async def test_no_error_when_all_sinks_succeed(self):
+        sink_a = _CaptureSink()
+        sink_b = _CaptureSink()
+        composite = CompositeSink([sink_a, sink_b])
+
+        event = AuditEvent(action=AuditAction.CALL_ALLOWED, tool_name="Read")
+        await composite.emit(event)  # should not raise
+
+        assert len(sink_a.events) == 1
+        assert len(sink_b.events) == 1
 
 
 class TestEdictumListAutoWrap:
