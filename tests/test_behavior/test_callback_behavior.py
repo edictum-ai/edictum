@@ -290,7 +290,7 @@ class TestOnAllowCallback:
 
 
 class TestOnDenyNotInObserveMode:
-    """on_deny must NOT fire in observe mode (denials are shadow-only)."""
+    """on_deny must NOT fire in observe mode (denials are observe-mode only)."""
 
     async def test_on_deny_skipped_in_observe_mode(self):
         """Observe mode logs would-deny but must not invoke on_deny."""

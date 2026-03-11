@@ -213,7 +213,7 @@ class Edictum:
         bundle_data, bundle_hash = load_bundle_string(contracts_yaml)
         compiled = compile_contracts(bundle_data)
 
-        # Sort compiled contracts into enforced vs observe-mode (shadow) lists,
+        # Sort compiled contracts into enforced vs observe-mode lists,
         # mirroring the classification that __init__() does at construction time.
         # Build the full state before touching self._state for atomicity.
         all_contracts = (

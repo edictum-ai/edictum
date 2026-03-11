@@ -136,10 +136,10 @@
 ### Added
 - `compose_bundles()` — multi-file YAML composition with deterministic left-to-right merge
 - `from_yaml()` now accepts multiple file paths with automatic composition
-- `observe_alongside: true` — dual-mode evaluation (shadow contracts run without affecting decisions)
-- `CompositionReport` with override and shadow tracking
+- `observe_alongside: true` — dual-mode evaluation (observe-mode contracts run without affecting decisions)
+- `CompositionReport` with override and observe-mode tracking
 - `edictum validate` and `edictum diff` support multi-file arguments
-- CLI composition report output for overrides and shadow contracts
+- CLI composition report output for overrides and observe-mode contracts
 
 ## 0.7.0
 

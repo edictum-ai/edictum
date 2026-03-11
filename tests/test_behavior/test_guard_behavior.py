@@ -1,7 +1,7 @@
 """Behavior tests for Edictum._guard reload() observe-mode handling.
 
-Covers bug #80: reload() did not reset observe-mode (shadow) contract lists,
-leaving stale shadow contracts from the previous bundle.
+Covers bug #80: reload() did not reset observe-mode contract lists,
+leaving stale observe-mode contracts from the previous bundle.
 """
 
 from __future__ import annotations
@@ -57,8 +57,8 @@ def _envelope(tool: str = "test_tool", **args) -> ToolEnvelope:
     return ToolEnvelope(tool_name=tool, args=args)
 
 
-def _make_shadow_precondition(contract_id: str) -> object:
-    """Create a minimal shadow precondition callable with edictum metadata."""
+def _make_observe_precondition(contract_id: str) -> object:
+    """Create a minimal observe-mode precondition callable with edictum metadata."""
 
     def fn(envelope: ToolEnvelope) -> Verdict:
         return Verdict.pass_()
@@ -75,8 +75,8 @@ def _make_shadow_precondition(contract_id: str) -> object:
     return fn
 
 
-def _make_shadow_postcondition(contract_id: str) -> object:
-    """Create a minimal shadow postcondition callable with edictum metadata."""
+def _make_observe_postcondition(contract_id: str) -> object:
+    """Create a minimal observe-mode postcondition callable with edictum metadata."""
 
     def fn(envelope: ToolEnvelope, response) -> Verdict:
         return Verdict.pass_()
@@ -93,8 +93,8 @@ def _make_shadow_postcondition(contract_id: str) -> object:
     return fn
 
 
-def _make_shadow_session_contract(contract_id: str) -> object:
-    """Create a minimal shadow session contract callable with edictum metadata."""
+def _make_observe_session_contract(contract_id: str) -> object:
+    """Create a minimal observe-mode session contract callable with edictum metadata."""
 
     async def fn(session) -> Verdict:
         return Verdict.pass_()
@@ -108,8 +108,8 @@ def _make_shadow_session_contract(contract_id: str) -> object:
     return fn
 
 
-def _make_shadow_sandbox(contract_id: str) -> object:
-    """Create a minimal shadow sandbox callable with edictum metadata."""
+def _make_observe_sandbox(contract_id: str) -> object:
+    """Create a minimal observe-mode sandbox callable with edictum metadata."""
 
     def fn(envelope: ToolEnvelope) -> Verdict:
         return Verdict.pass_()
@@ -126,16 +126,16 @@ def _make_shadow_sandbox(contract_id: str) -> object:
 
 
 @pytest.mark.asyncio
-async def test_reload_clears_stale_shadow_preconditions():
-    """Shadow preconditions from the previous bundle must not survive reload()."""
+async def test_reload_clears_stale_observe_preconditions():
+    """Observe-mode preconditions from the previous bundle must not survive reload()."""
     guard = Edictum.from_yaml_string(_BUNDLE_A)
     env = _envelope()
 
     # Inject observe-mode preconditions as if set by the composer/server
-    shadow = _make_shadow_precondition("old-shadow-pre")
+    observe = _make_observe_precondition("old-observe-pre")
     guard._state = replace(
         guard._state,
-        shadow_preconditions=guard._state.shadow_preconditions + (shadow,),
+        shadow_preconditions=guard._state.shadow_preconditions + (observe,),
     )
     assert len(guard.get_shadow_preconditions(env)) == 1
 
@@ -145,15 +145,15 @@ async def test_reload_clears_stale_shadow_preconditions():
 
 
 @pytest.mark.asyncio
-async def test_reload_clears_stale_shadow_postconditions():
-    """Shadow postconditions from the previous bundle must not survive reload()."""
+async def test_reload_clears_stale_observe_postconditions():
+    """Observe-mode postconditions from the previous bundle must not survive reload()."""
     guard = Edictum.from_yaml_string(_BUNDLE_A)
     env = _envelope()
 
-    shadow = _make_shadow_postcondition("old-shadow-post")
+    observe = _make_observe_postcondition("old-observe-post")
     guard._state = replace(
         guard._state,
-        shadow_postconditions=guard._state.shadow_postconditions + (shadow,),
+        shadow_postconditions=guard._state.shadow_postconditions + (observe,),
     )
     assert len(guard.get_shadow_postconditions(env)) == 1
 
@@ -163,14 +163,14 @@ async def test_reload_clears_stale_shadow_postconditions():
 
 
 @pytest.mark.asyncio
-async def test_reload_clears_stale_shadow_session_contracts():
-    """Shadow session contracts from the previous bundle must not survive reload()."""
+async def test_reload_clears_stale_observe_session_contracts():
+    """Observe-mode session contracts from the previous bundle must not survive reload()."""
     guard = Edictum.from_yaml_string(_BUNDLE_A)
 
-    shadow = _make_shadow_session_contract("old-shadow-session")
+    observe = _make_observe_session_contract("old-observe-session")
     guard._state = replace(
         guard._state,
-        shadow_session_contracts=guard._state.shadow_session_contracts + (shadow,),
+        shadow_session_contracts=guard._state.shadow_session_contracts + (observe,),
     )
     assert len(guard.get_shadow_session_contracts()) == 1
 
@@ -180,15 +180,15 @@ async def test_reload_clears_stale_shadow_session_contracts():
 
 
 @pytest.mark.asyncio
-async def test_reload_clears_stale_shadow_sandbox_contracts():
-    """Shadow sandbox contracts from the previous bundle must not survive reload()."""
+async def test_reload_clears_stale_observe_sandbox_contracts():
+    """Observe-mode sandbox contracts from the previous bundle must not survive reload()."""
     guard = Edictum.from_yaml_string(_BUNDLE_A)
     env = _envelope()
 
-    shadow = _make_shadow_sandbox("old-shadow-sandbox")
+    observe = _make_observe_sandbox("old-observe-sandbox")
     guard._state = replace(
         guard._state,
-        shadow_sandbox_contracts=guard._state.shadow_sandbox_contracts + (shadow,),
+        shadow_sandbox_contracts=guard._state.shadow_sandbox_contracts + (observe,),
     )
     assert len(guard.get_shadow_sandbox_contracts(env)) == 1
 
@@ -198,18 +198,18 @@ async def test_reload_clears_stale_shadow_sandbox_contracts():
 
 
 @pytest.mark.asyncio
-async def test_reload_clears_all_four_shadow_lists_simultaneously():
-    """All four shadow lists must be cleared in a single reload() call."""
+async def test_reload_clears_all_four_observe_lists_simultaneously():
+    """All four observe-mode lists must be cleared in a single reload() call."""
     guard = Edictum.from_yaml_string(_BUNDLE_A)
     env = _envelope()
 
     # Populate all four observe-mode lists via frozen state replacement
     guard._state = replace(
         guard._state,
-        shadow_preconditions=guard._state.shadow_preconditions + (_make_shadow_precondition("sp"),),
-        shadow_postconditions=guard._state.shadow_postconditions + (_make_shadow_postcondition("spo"),),
-        shadow_session_contracts=guard._state.shadow_session_contracts + (_make_shadow_session_contract("ss"),),
-        shadow_sandbox_contracts=guard._state.shadow_sandbox_contracts + (_make_shadow_sandbox("ssb"),),
+        shadow_preconditions=guard._state.shadow_preconditions + (_make_observe_precondition("sp"),),
+        shadow_postconditions=guard._state.shadow_postconditions + (_make_observe_postcondition("spo"),),
+        shadow_session_contracts=guard._state.shadow_session_contracts + (_make_observe_session_contract("ss"),),
+        shadow_sandbox_contracts=guard._state.shadow_sandbox_contracts + (_make_observe_sandbox("ssb"),),
     )
 
     assert len(guard.get_shadow_preconditions(env)) == 1

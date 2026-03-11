@@ -17,11 +17,11 @@ class CompositionOverride:
 
 @dataclass(frozen=True)
 class ShadowContract:
-    """Records a contract added as a shadow (observe_alongside)."""
+    """Records a contract added as an observe-mode copy (observe_alongside)."""
 
     contract_id: str
     enforced_source: str  # source label of the enforced version
-    observed_source: str  # source label of the shadow version
+    observed_source: str  # source label of the observe-mode version
 
 
 @dataclass(frozen=True)
@@ -173,7 +173,7 @@ def _merge_observe_alongside(
     contract_sources: dict[str, str],
     shadows: list[ShadowContract],
 ) -> None:
-    """Merge an observe_alongside layer — contracts become shadow copies."""
+    """Merge an observe_alongside layer — contracts become observe-mode copies."""
     for contract in layer.get("contracts", []):
         cid = contract["id"]
         shadow_id = f"{cid}:candidate"

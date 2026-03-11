@@ -209,35 +209,35 @@ class TestThreePaths:
 
 
 class TestObserveAlongside:
-    """Load a YAML with observe_alongside: true, verify shadow contracts."""
+    """Load a YAML with observe_alongside: true, verify observe-mode contracts."""
 
-    def test_shadow_contracts_created(self, tmp_path):
+    def test_observe_contracts_created(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
         candidate = _write_yaml(tmp_path, "candidate.yaml", OBSERVE_ALONGSIDE_BUNDLE)
         guard, report = Edictum.from_yaml(base, candidate, return_report=True)
 
-        # Shadow contract should be in the report
+        # Observe-mode contract should be in the report
         assert len(report.shadow_contracts) == 1
         assert report.shadow_contracts[0].contract_id == "block-sensitive-reads"
 
-    def test_shadow_contracts_in_observe_mode(self, tmp_path):
+    def test_observe_contracts_in_observe_mode(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
         candidate = _write_yaml(tmp_path, "candidate.yaml", OBSERVE_ALONGSIDE_BUNDLE)
         guard = Edictum.from_yaml(base, candidate)
 
-        # Original contract still works — .env denied
+        # Original contract still works -- .env denied
         result = guard.evaluate("read_file", {"path": "app.env"})
         assert result.verdict == "deny"
 
-        # Shadow contracts are routed to separate lists
+        # Observe-mode contracts are routed to separate lists
         env = create_envelope("read_file", {"path": "test.key"})
         preconditions = guard.get_preconditions(env)
-        shadow_preconditions = guard.get_shadow_preconditions(env)
+        observe_preconditions = guard.get_shadow_preconditions(env)
         # Original precondition in main list
         assert len(preconditions) == 1
-        # Shadow :candidate in shadow list
-        assert len(shadow_preconditions) == 1
-        assert getattr(shadow_preconditions[0], "_edictum_shadow", False) is True
+        # Observe-mode :candidate in observe list
+        assert len(observe_preconditions) == 1
+        assert getattr(observe_preconditions[0], "_edictum_shadow", False) is True
 
 
 class TestReturnReport:
@@ -320,15 +320,15 @@ class TestEdgeCases:
             Edictum.from_yaml(base, tmp_path / "nonexistent.yaml")
 
 
-class TestEvaluateDryRunExcludesShadow:
-    """evaluate() must NOT include shadow contracts in dry-run results."""
+class TestEvaluateDryRunExcludesObserveMode:
+    """evaluate() must NOT include observe-mode contracts in dry-run results."""
 
-    def test_evaluate_ignores_shadow_contracts(self, tmp_path):
+    def test_evaluate_ignores_observe_contracts(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
         candidate = _write_yaml(tmp_path, "candidate.yaml", OBSERVE_ALONGSIDE_BUNDLE)
         guard = Edictum.from_yaml(base, candidate)
 
-        # .key triggers shadow but not enforced. evaluate() should allow.
+        # .key triggers observe-mode but not enforced. evaluate() should allow.
         result = guard.evaluate("read_file", {"path": "app.key"})
         assert result.verdict == "allow"
 
@@ -336,13 +336,13 @@ class TestEvaluateDryRunExcludesShadow:
         result = guard.evaluate("read_file", {"path": "app.env"})
         assert result.verdict == "deny"
 
-    def test_evaluate_does_not_report_shadow_contracts(self, tmp_path):
+    def test_evaluate_does_not_report_observe_contracts(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
         candidate = _write_yaml(tmp_path, "candidate.yaml", OBSERVE_ALONGSIDE_BUNDLE)
         guard = Edictum.from_yaml(base, candidate)
 
         result = guard.evaluate("read_file", {"path": "app.key"})
-        # Shadow contracts should not appear in contracts_evaluated
+        # Observe-mode contracts should not appear in contracts_evaluated
         contract_ids = [r.contract_id for r in result.contracts]
         assert not any(":candidate" in cid for cid in contract_ids)
 

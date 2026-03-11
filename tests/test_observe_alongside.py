@@ -53,7 +53,7 @@ contracts:
     then:
       effect: deny
       message: "Denied read of .secret file"
-  - id: new-shadow-only
+  - id: new-observe-only
     type: pre
     tool: "*"
     when:
@@ -95,15 +95,15 @@ def _write_bundles(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-class TestShadowAuditEvents:
-    """Shadow evaluation produces separate audit events with mode='observe'."""
+class TestObserveModeAuditEvents:
+    """Observe-mode evaluation produces separate audit events with mode='observe'."""
 
-    async def test_shadow_produces_observe_audit_events(self, tmp_path):
+    async def test_observe_mode_produces_audit_events(self, tmp_path):
         enforced_path, candidate_path = _write_bundles(tmp_path)
         sink = _CaptureSink()
         guard = Edictum.from_yaml(enforced_path, candidate_path, audit_sink=sink)
 
-        # read_file with .secret triggers the shadow contract but not the enforced one
+        # read_file with .secret triggers the observe-mode contract but not the enforced one
         result = await guard.run(
             "read_file",
             {"path": "/home/config.secret"},
@@ -111,20 +111,20 @@ class TestShadowAuditEvents:
         )
         assert result == "contents of /home/config.secret"
 
-        # Check for shadow audit events with mode="observe"
-        shadow_events = [e for e in sink.events if e.mode == "observe"]
-        assert len(shadow_events) >= 1
+        # Check for observe-mode audit events with mode="observe"
+        observe_events = [e for e in sink.events if e.mode == "observe"]
+        assert len(observe_events) >= 1
 
-        # The shadow denial should have CALL_WOULD_DENY
-        shadow_deny = [e for e in shadow_events if e.action == AuditAction.CALL_WOULD_DENY]
-        assert len(shadow_deny) >= 1
-        assert "block-env-reads:candidate" in shadow_deny[0].decision_name
+        # The observe-mode denial should have CALL_WOULD_DENY
+        observe_deny = [e for e in observe_events if e.action == AuditAction.CALL_WOULD_DENY]
+        assert len(observe_deny) >= 1
+        assert "block-env-reads:candidate" in observe_deny[0].decision_name
 
 
-class TestShadowDoesNotBlockRealCalls:
-    """Shadow contracts don't block real calls — PreDecision still allows."""
+class TestObserveModeDoesNotBlockRealCalls:
+    """Observe-mode contracts don't block real calls -- PreDecision still allows."""
 
-    async def test_shadow_deny_does_not_block(self, tmp_path):
+    async def test_observe_deny_does_not_block(self, tmp_path):
         enforced_path, candidate_path = _write_bundles(tmp_path)
         sink = _CaptureSink()
         guard = Edictum.from_yaml(enforced_path, candidate_path, audit_sink=sink)
@@ -151,16 +151,16 @@ class TestShadowDoesNotBlockRealCalls:
             )
 
 
-class TestShadowSessionContracts:
-    """Shadow session contracts track counters independently."""
+class TestObserveModeSessionContracts:
+    """Observe-mode session contracts track counters independently."""
 
-    async def test_shadow_session_evaluates_against_real_counters(self, tmp_path):
+    async def test_observe_session_evaluates_against_real_counters(self, tmp_path):
         enforced_path, candidate_path = _write_bundles(tmp_path)
         sink = _CaptureSink()
         guard = Edictum.from_yaml(enforced_path, candidate_path, audit_sink=sink)
 
         # The candidate has max_tool_calls=5, enforced has 100
-        # After 5 calls, the shadow session contract should report would-deny
+        # After 5 calls, the observe-mode session contract should report would-deny
         # but the real session should still allow
         for _ in range(6):
             await guard.run(
@@ -170,69 +170,69 @@ class TestShadowSessionContracts:
             )
 
         # All calls should succeed (enforced limit is 100)
-        # But we should see shadow audit events after the 5th call
-        shadow_events = [e for e in sink.events if e.mode == "observe"]
-        # Shadow session contract events should appear
-        assert len(shadow_events) > 0
+        # But we should see observe-mode audit events after the 5th call
+        observe_events = [e for e in sink.events if e.mode == "observe"]
+        # Observe-mode session contract events should appear
+        assert len(observe_events) > 0
 
 
-class TestShadowWithoutEnforcedCounterpart:
-    """observe_alongside with new contract ID (no enforced counterpart) — shadow still evaluates."""
+class TestObserveModeWithoutEnforcedCounterpart:
+    """observe_alongside with new contract ID (no enforced counterpart) -- observe-mode still evaluates."""
 
-    async def test_new_shadow_only_contract(self, tmp_path):
+    async def test_new_observe_only_contract(self, tmp_path):
         enforced_path, candidate_path = _write_bundles(tmp_path)
         sink = _CaptureSink()
         guard = Edictum.from_yaml(enforced_path, candidate_path, audit_sink=sink)
 
-        # new-shadow-only:candidate should trigger for rm -rf
+        # new-observe-only:candidate should trigger for rm -rf
         result = await guard.run(
             "bash",
             {"cmd": "rm -rf /"},
             lambda cmd: "done",
         )
-        assert result == "done"  # Not denied — shadow only
+        assert result == "done"  # Not denied -- observe-mode only
 
-        shadow_events = [e for e in sink.events if e.mode == "observe"]
-        shadow_deny = [e for e in shadow_events if e.action == AuditAction.CALL_WOULD_DENY]
-        rm_events = [e for e in shadow_deny if "new-shadow-only:candidate" in (e.decision_name or "")]
+        observe_events = [e for e in sink.events if e.mode == "observe"]
+        observe_deny = [e for e in observe_events if e.action == AuditAction.CALL_WOULD_DENY]
+        rm_events = [e for e in observe_deny if "new-observe-only:candidate" in (e.decision_name or "")]
         assert len(rm_events) >= 1
 
 
-class TestShadowAuditActions:
-    """Shadow audit events use CALL_WOULD_DENY / CALL_ALLOWED actions."""
+class TestObserveModeAuditActions:
+    """Observe-mode audit events use CALL_WOULD_DENY / CALL_ALLOWED actions."""
 
-    async def test_shadow_pass_uses_call_allowed(self, tmp_path):
+    async def test_observe_pass_uses_call_allowed(self, tmp_path):
         enforced_path, candidate_path = _write_bundles(tmp_path)
         sink = _CaptureSink()
         guard = Edictum.from_yaml(enforced_path, candidate_path, audit_sink=sink)
 
-        # A call that passes both enforced and shadow
+        # A call that passes both enforced and observe-mode
         await guard.run(
             "some_tool",
             {"data": "safe"},
             lambda data: "ok",
         )
 
-        # Shadow events that pass should use CALL_ALLOWED
-        shadow_events = [e for e in sink.events if e.mode == "observe"]
-        # The new-shadow-only contract matches tool="*" but only triggers on rm -rf
-        # So it should pass and produce a CALL_ALLOWED shadow event
-        assert any(e.action == AuditAction.CALL_ALLOWED for e in shadow_events)
+        # Observe-mode events that pass should use CALL_ALLOWED
+        observe_events = [e for e in sink.events if e.mode == "observe"]
+        # The new-observe-only contract matches tool="*" but only triggers on rm -rf
+        # So it should pass and produce a CALL_ALLOWED observe-mode event
+        assert any(e.action == AuditAction.CALL_ALLOWED for e in observe_events)
 
-    async def test_shadow_fail_uses_call_would_deny(self, tmp_path):
+    async def test_observe_fail_uses_call_would_deny(self, tmp_path):
         enforced_path, candidate_path = _write_bundles(tmp_path)
         sink = _CaptureSink()
         guard = Edictum.from_yaml(enforced_path, candidate_path, audit_sink=sink)
 
-        # Trigger the shadow but not the enforced
+        # Trigger the observe-mode contract but not the enforced
         await guard.run(
             "read_file",
             {"path": "/home/app.secret"},
             lambda path: "data",
         )
 
-        shadow_events = [e for e in sink.events if e.mode == "observe"]
-        assert any(e.action == AuditAction.CALL_WOULD_DENY for e in shadow_events)
+        observe_events = [e for e in sink.events if e.mode == "observe"]
+        assert any(e.action == AuditAction.CALL_WOULD_DENY for e in observe_events)
 
 
 class TestNormalContractsRegression:
@@ -264,11 +264,11 @@ class TestNormalContractsRegression:
         )
         assert result == "contents of /home/readme.md"
 
-        # No shadow events when there's no candidate bundle
-        shadow_events = [e for e in sink.events if e.mode == "observe"]
-        assert len(shadow_events) == 0
+        # No observe-mode events when there's no candidate bundle
+        observe_events = [e for e in sink.events if e.mode == "observe"]
+        assert len(observe_events) == 0
 
-    async def test_no_shadow_lists_without_candidate(self, tmp_path):
+    async def test_no_observe_lists_without_candidate(self, tmp_path):
         enforced_path = tmp_path / "enforced.yaml"
         enforced_path.write_text(ENFORCED_BUNDLE)
         guard = Edictum.from_yaml(enforced_path)

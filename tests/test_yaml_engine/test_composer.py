@@ -14,6 +14,7 @@ from edictum.yaml_engine.composer import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _base_bundle(**overrides) -> dict:
     """Minimal valid bundle dict."""
     b = {
@@ -242,7 +243,7 @@ class TestObservabilityMerge:
 
 
 class TestObserveAlongside:
-    def test_shadow_contracts_added_with_candidate_suffix(self):
+    def test_observe_contracts_added_with_candidate_suffix(self):
         base = _base_bundle(contracts=[_contract("pharma")])
         candidate = _base_bundle(contracts=[_contract("pharma")])
         candidate["observe_alongside"] = True
@@ -253,17 +254,18 @@ class TestObserveAlongside:
         assert "pharma:candidate" in ids
         assert len(ids) == 2
 
-    def test_shadow_contract_forced_to_observe_mode(self):
+    def test_observe_contract_forced_to_observe_mode(self):
         base = _base_bundle(contracts=[_contract("pharma")])
         candidate = _base_bundle(contracts=[_contract("pharma")])
         candidate["observe_alongside"] = True
 
         result = compose_bundles((base, "base"), (candidate, "candidate"))
-        shadow = [c for c in result.bundle["contracts"] if c["id"] == "pharma:candidate"][0]
-        assert shadow["mode"] == "observe"
-        assert shadow["_shadow"] is True
+        # Internal _shadow field stays as-is (internal attribute)
+        observe = [c for c in result.bundle["contracts"] if c["id"] == "pharma:candidate"][0]
+        assert observe["mode"] == "observe"
+        assert observe["_shadow"] is True
 
-    def test_shadow_contract_report(self):
+    def test_observe_contract_report(self):
         base = _base_bundle(contracts=[_contract("pharma")])
         candidate = _base_bundle(contracts=[_contract("pharma")])
         candidate["observe_alongside"] = True
@@ -375,7 +377,7 @@ class TestComposerEdgeCases:
         assert ids == ["new-rule"]
 
     def test_observe_alongside_with_empty_contracts(self):
-        """observe_alongside bundle with no contracts — no shadows, no crash."""
+        """observe_alongside bundle with no contracts -- no observe-mode contracts, no crash."""
         base = _base_bundle(contracts=[_contract("a")])
         candidate = _base_bundle(contracts=[])
         candidate["observe_alongside"] = True

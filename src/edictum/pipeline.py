@@ -298,7 +298,7 @@ class GovernancePipeline:
         # 6. All checks passed
         pe = any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated)
 
-        # 7. Shadow contract evaluation (never affects the decision)
+        # 7. Observe-mode contract evaluation (never affects the decision)
         shadow_results = await self._evaluate_shadow_contracts(envelope, session)
 
         return PreDecision(
@@ -414,22 +414,22 @@ class GovernancePipeline:
         envelope: ToolEnvelope,
         session: Session,
     ) -> list[dict]:
-        """Evaluate shadow contracts without affecting the real decision.
+        """Evaluate observe-mode contracts without affecting the real decision.
 
-        Shadow contracts are identified by ``_edictum_shadow = True``.
+        Observe-mode contracts are identified by ``_edictum_shadow = True``.
         Results are returned as dicts for audit emission but never block calls.
         """
         results: list[dict] = []
 
-        # Shadow preconditions
+        # Observe-mode preconditions
         for contract in self._guard.get_shadow_preconditions(envelope):
             try:
                 verdict = contract(envelope)
                 if asyncio.iscoroutine(verdict):
                     verdict = await verdict
             except Exception as exc:
-                logger.exception("Shadow precondition %s raised", getattr(contract, "__name__", "anonymous"))
-                verdict = Verdict.fail(f"Shadow precondition error: {exc}", policy_error=True)
+                logger.exception("Observe-mode precondition %s raised", getattr(contract, "__name__", "anonymous"))
+                verdict = Verdict.fail(f"Observe-mode precondition error: {exc}", policy_error=True)
 
             results.append(
                 {
@@ -441,15 +441,15 @@ class GovernancePipeline:
                 }
             )
 
-        # Shadow sandbox contracts
+        # Observe-mode sandbox contracts
         for contract in self._guard.get_shadow_sandbox_contracts(envelope):
             try:
                 verdict = contract(envelope)
                 if asyncio.iscoroutine(verdict):
                     verdict = await verdict
             except Exception as exc:
-                logger.exception("Shadow sandbox %s raised", getattr(contract, "__name__", "anonymous"))
-                verdict = Verdict.fail(f"Shadow sandbox error: {exc}", policy_error=True)
+                logger.exception("Observe-mode sandbox %s raised", getattr(contract, "__name__", "anonymous"))
+                verdict = Verdict.fail(f"Observe-mode sandbox error: {exc}", policy_error=True)
 
             results.append(
                 {
@@ -461,15 +461,15 @@ class GovernancePipeline:
                 }
             )
 
-        # Shadow session contracts — evaluate against the real session
+        # Observe-mode session contracts — evaluate against the real session
         for contract in self._guard.get_shadow_session_contracts():
             try:
                 verdict = contract(session)
                 if asyncio.iscoroutine(verdict):
                     verdict = await verdict
             except Exception as exc:
-                logger.exception("Shadow session contract %s raised", getattr(contract, "__name__", "anonymous"))
-                verdict = Verdict.fail(f"Shadow session contract error: {exc}", policy_error=True)
+                logger.exception("Observe-mode session contract %s raised", getattr(contract, "__name__", "anonymous"))
+                verdict = Verdict.fail(f"Observe-mode session contract error: {exc}", policy_error=True)
 
             results.append(
                 {

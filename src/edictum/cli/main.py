@@ -40,7 +40,7 @@ def _print_composition_report(report: Any) -> None:
         )
     for s in report.shadow_contracts:
         _console.print(
-            f"  \u2295 {escape(s.contract_id)} \u2014 shadow from "
+            f"  \u2295 {escape(s.contract_id)} \u2014 observe-mode from "
             f"{escape(s.observed_source)} (enforced in {escape(s.enforced_source)})"
         )
 

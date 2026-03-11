@@ -35,6 +35,30 @@ BLOCKED_ALLOWLIST = {
     "{blocked}",
 }
 
+# "shadow" needs special handling — internal code uses shadow_* field names
+# in _CompiledState and _edictum_shadow attribute, but prose should say
+# "observe mode" / "observe-mode".
+SHADOW_PATTERN = re.compile(r"\bshadow\b", re.IGNORECASE)
+SHADOW_ALLOWLIST = {
+    # _CompiledState frozen dataclass fields
+    "shadow_preconditions",
+    "shadow_postconditions",
+    "shadow_session_contracts",
+    "shadow_sandbox_contracts",
+    # Internal attribute on contract callables
+    "_edictum_shadow",
+    # Local variable reading the attribute
+    "is_shadow",
+    # Getter methods on Edictum
+    "get_shadow_preconditions",
+    "get_shadow_postconditions",
+    "get_shadow_sandbox_contracts",
+    "get_shadow_session_contracts",
+    # Real file path in sandbox tests (with and without leading slash)
+    "/etc/shadow",
+    '"etc" / "shadow"',
+}
+
 # Files/dirs to skip
 SKIP_PATHS = {
     ".docs-style-guide.md",
@@ -90,6 +114,13 @@ def check_file(path: Path) -> list[str]:
             line_stripped = line.strip()
             if not any(allowed in line_stripped for allowed in BLOCKED_ALLOWLIST):
                 violations.append(f"  {path}:{i}: 'blocked' — use 'denied' instead")
+                violations.append(f"    {line_stripped}")
+
+        # Check "shadow" with allowlist
+        if SHADOW_PATTERN.search(line):
+            line_stripped = line.strip()
+            if not any(allowed in line_stripped for allowed in SHADOW_ALLOWLIST):
+                violations.append(f"  {path}:{i}: 'shadow' — use 'observe mode' / 'observe-mode' instead")
                 violations.append(f"    {line_stripped}")
 
     return violations
