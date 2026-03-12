@@ -75,7 +75,7 @@ class ServerBackend:
             values = response.get("values", {})
             return {key: values.get(key) for key in keys}
         except EdictumServerError as exc:
-            if exc.status_code == 404:
+            if exc.status_code in (404, 405):
                 # Server doesn't support batch endpoint -- fall back
                 result: dict[str, str | None] = {}
                 for key in keys:
