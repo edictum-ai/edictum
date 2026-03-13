@@ -12,7 +12,7 @@ Two deployment units. One library, one server.
 
 - `src/edictum/` -- MIT core. All contract types (pre, post, session, sandbox), pipeline, 8 adapters, CLI, audit to stdout/file/OTel, local approval backend, single-process session tracking.
 - `src/edictum/server/` -- Server SDK client (`pip install edictum[server]`). Implements core protocols (`ApprovalBackend`, `AuditSink`, `StorageBackend`) over HTTP to connect agents to the server.
-- `edictum-server` -- A separate deployment (coming soon, open source). Centralized approval workflows, audit dashboards, distributed sessions, hot-reload contracts, RBAC.
+- `edictum-console` -- Self-hostable operations console ([edictum-ai/edictum-console](https://github.com/edictum-ai/edictum-console), v0.1.0). Contract management, HITL approvals, audit feeds, fleet monitoring, hot-reload via SSE. Ships as a single Docker image.
 
 ## THE ONE RULE
 
@@ -34,17 +34,17 @@ Core provides protocols and interfaces. The server SDK provides HTTP-backed impl
 - OTel span instrumentation + GovernanceTelemetry
 - Finding classification (findings.py) with pii_detected, secret_detected, policy_violation types
 
-## Server (edictum-server)
+## Console (edictum-console)
 
-The server is a separate deployment, coming soon as open source. It provides:
+[Edictum Console](https://github.com/edictum-ai/edictum-console) v0.1.0 is the self-hostable operations server. `docker compose up` → dashboard at localhost:8000.
 
-- Production approval workflows (ServerApprovalBackend connects to webhooks, Slack/Teams, review dashboard)
-- Centralized audit ingestion and governance dashboard (denial rates, contract drift, sandbox violations)
-- Distributed session state for multi-agent tracking across processes
-- Hot-reload contracts via SSE push (ServerContractSource) without restarting agents
-- RBAC for contract management (who can create/modify/deploy contracts)
-- Cross-agent session tracking (correlate tool calls across agents)
-- SSO integration (Okta, Azure AD) and JWT/OIDC principal verification
+- Contract management: upload, version, compose, deploy YAML bundles with Ed25519 signing
+- Hot-reload contracts via SSE push (ServerContractSource) — zero-downtime updates
+- HITL approval workflows with 6 notification channels (Telegram, Slack, Discord, Webhook, Email)
+- Audit event feed with faceted filters and time-series histogram
+- Fleet monitoring: live agents, drift detection, coverage analysis
+- Agent assignment: explicit, pattern-matching rules, or agent-provided default
+- Local auth (email/password, Redis sessions) — OIDC planned
 
 ## Boundary Principle
 
