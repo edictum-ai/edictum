@@ -44,7 +44,6 @@ __all__ = [
     "CompositionOverride",
     "CompositionReport",
     "ObserveContract",
-    "ShadowContract",  # deprecated alias, removed in v0.16.0
     "compile_contracts",
     "compose_bundles",
     "load_bundle",

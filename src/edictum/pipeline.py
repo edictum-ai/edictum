@@ -332,24 +332,25 @@ class GovernancePipeline:
                 logger.exception("Postcondition %s raised", getattr(contract, "__name__", "anonymous"))
                 verdict = Verdict.fail(f"Postcondition error: {exc}", policy_error=True)
 
+            contract_mode = getattr(contract, "_edictum_mode", None)
             contract_record = {
                 "name": getattr(contract, "__name__", "anonymous"),
                 "type": "postcondition",
                 "passed": verdict.passed,
                 "message": verdict.message,
             }
+            if contract_mode == "observe":
+                contract_record["observed"] = True
             if verdict.metadata:
                 contract_record["metadata"] = verdict.metadata
             contracts_evaluated.append(contract_record)
 
             if not verdict.passed:
                 effect = getattr(contract, "_edictum_effect", "warn")
-                contract_mode = getattr(contract, "_edictum_mode", None)
                 is_safe = envelope.side_effect in (SideEffect.PURE, SideEffect.READ)
 
                 # Observe mode takes precedence
                 if contract_mode == "observe":
-                    contract_record["observed"] = True
                     warnings.append(f"\u26a0\ufe0f [observe] {verdict.message}")
                 elif effect == "redact" and is_safe:
                     patterns = getattr(contract, "_edictum_redact_patterns", [])
