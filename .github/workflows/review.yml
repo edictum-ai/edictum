@@ -149,6 +149,7 @@ jobs:
             - One exhaustive pass. Find ALL issues, then stop. Do NOT re-scan looking for nitpicks.
             - A clean PR with zero findings is a good outcome — don't manufacture findings to justify the review.
             - Do NOT flag style/formatting (linters handle that)
+            - For pre-existing issues (not introduced by this PR): still report them, but label as "ℹ️ Pre-existing:" in the review comment. Do NOT classify them as Critical or Warning — they do not block the PR and are not counted in ISSUE_COUNT. The PR author should file a separate issue for legitimate pre-existing findings, not fix them in the current PR.
             - ALWAYS include the attack path for security issues: "An attacker could... by..."
             - ALWAYS include file path + line number + concrete fix with code
             - Do NOT post comments directly — write to /tmp/review.md and /tmp/review-payload.json only. The workflow will post them.
