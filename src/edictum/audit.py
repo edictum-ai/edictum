@@ -106,6 +106,14 @@ class RedactionPolicy:
         "db_password",
         "ssh_key",
         "passphrase",
+        # Plural compound keys — specific entries to avoid false positives
+        # from word-part matching (e.g., "tokens" would catch "max_tokens").
+        "api_tokens",
+        "db_passwords",
+        "user_credentials",
+        "oauth_secrets",
+        "encryption_keys",
+        "jwt_tokens",
     }
 
     BASH_REDACTION_PATTERNS: list[tuple[str, str]] = [
@@ -158,15 +166,10 @@ class RedactionPolicy:
             return True
         _sensitive = {
             "token",
-            "tokens",
             "key",
-            "keys",
             "secret",
-            "secrets",
             "password",
-            "passwords",
             "credential",
-            "credentials",
         }
         parts = re.split(r"[_\-]", k)
         return any(p in _sensitive for p in parts)

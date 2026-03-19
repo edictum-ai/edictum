@@ -80,7 +80,7 @@ class TestSensitiveKeyTruePositives:
 
 
 class TestSensitiveKeyPluralForms:
-    """Plural forms of sensitive words must also be caught."""
+    """Specific plural compound keys in DEFAULT_SENSITIVE_KEYS must be caught."""
 
     def test_user_credentials_redacted(self):
         policy = RedactionPolicy()
@@ -106,3 +106,37 @@ class TestSensitiveKeyPluralForms:
         policy = RedactionPolicy()
         result = policy.redact_args({"encryption_keys": "secret"})
         assert result["encryption_keys"] == "[REDACTED]"
+
+
+class TestSensitiveKeyNoFalsePositivesOnCommonFields:
+    """Common LLM/agent fields must NOT be redacted."""
+
+    def test_max_tokens_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"max_tokens": 1024})
+        assert result["max_tokens"] == 1024
+
+    def test_num_tokens_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"num_tokens": 512})
+        assert result["num_tokens"] == 512
+
+    def test_input_tokens_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"input_tokens": 100})
+        assert result["input_tokens"] == 100
+
+    def test_output_tokens_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"output_tokens": 200})
+        assert result["output_tokens"] == 200
+
+    def test_sort_keys_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"sort_keys": True})
+        assert result["sort_keys"] is True
+
+    def test_index_keys_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"index_keys": ["id", "name"]})
+        assert result["index_keys"] == ["id", "name"]
