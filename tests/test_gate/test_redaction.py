@@ -54,7 +54,9 @@ class TestRedactionBeforeWal:
         )
         args_str = json.dumps(event.tool_args)
         assert "sk_live_" not in args_str
-        assert "<REDACTED>" in args_str
+        # Built-in bash patterns may match first (e.g., export TOKEN=...)
+        # producing [REDACTED], or custom patterns produce <REDACTED> — either is valid
+        assert "[REDACTED]" in args_str or "<REDACTED>" in args_str
 
     def test_redaction_aws_key(self) -> None:
         event = build_audit_event(

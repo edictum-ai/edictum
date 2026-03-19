@@ -155,9 +155,13 @@ class RedactionPolicy:
         elif isinstance(args, str):
             if self._detect_values and self._looks_like_secret(args):
                 return "[REDACTED]"
-            if len(args) > 1000:
-                return args[:997] + "..."
-            return args
+            # Apply bash redaction patterns to catch credentials in shell commands
+            redacted = args
+            for pattern, replacement in self._patterns:
+                redacted = re.sub(pattern, replacement, redacted)
+            if len(redacted) > 1000:
+                return redacted[:997] + "..."
+            return redacted
         return args
 
     def _is_sensitive_key(self, key: str) -> bool:
