@@ -71,7 +71,7 @@ def _make_observe_precondition(contract_id: str) -> object:
     fn._edictum_id = contract_id
     fn._edictum_source = "yaml_precondition"
     fn._edictum_effect = "deny"
-    fn._edictum_shadow = True
+    fn._edictum_observe = True
     return fn
 
 
@@ -89,7 +89,7 @@ def _make_observe_postcondition(contract_id: str) -> object:
     fn._edictum_id = contract_id
     fn._edictum_source = "yaml_postcondition"
     fn._edictum_effect = "warn"
-    fn._edictum_shadow = True
+    fn._edictum_observe = True
     return fn
 
 
@@ -104,7 +104,7 @@ def _make_observe_session_contract(contract_id: str) -> object:
     fn._edictum_mode = "observe"
     fn._edictum_id = contract_id
     fn._edictum_source = "yaml_session"
-    fn._edictum_shadow = True
+    fn._edictum_observe = True
     return fn
 
 
@@ -121,7 +121,7 @@ def _make_observe_sandbox(contract_id: str) -> object:
     fn._edictum_id = contract_id
     fn._edictum_source = "yaml_sandbox"
     fn._edictum_effect = "deny"
-    fn._edictum_shadow = True
+    fn._edictum_observe = True
     return fn
 
 
@@ -135,13 +135,13 @@ async def test_reload_clears_stale_observe_preconditions():
     observe = _make_observe_precondition("old-observe-pre")
     guard._state = replace(
         guard._state,
-        shadow_preconditions=guard._state.shadow_preconditions + (observe,),
+        observe_preconditions=guard._state.observe_preconditions + (observe,),
     )
-    assert len(guard.get_shadow_preconditions(env)) == 1
+    assert len(guard.get_observe_preconditions(env)) == 1
 
     await guard.reload(_BUNDLE_B)
 
-    assert guard.get_shadow_preconditions(env) == []
+    assert guard.get_observe_preconditions(env) == []
 
 
 @pytest.mark.asyncio
@@ -153,13 +153,13 @@ async def test_reload_clears_stale_observe_postconditions():
     observe = _make_observe_postcondition("old-observe-post")
     guard._state = replace(
         guard._state,
-        shadow_postconditions=guard._state.shadow_postconditions + (observe,),
+        observe_postconditions=guard._state.observe_postconditions + (observe,),
     )
-    assert len(guard.get_shadow_postconditions(env)) == 1
+    assert len(guard.get_observe_postconditions(env)) == 1
 
     await guard.reload(_BUNDLE_B)
 
-    assert guard.get_shadow_postconditions(env) == []
+    assert guard.get_observe_postconditions(env) == []
 
 
 @pytest.mark.asyncio
@@ -170,13 +170,13 @@ async def test_reload_clears_stale_observe_session_contracts():
     observe = _make_observe_session_contract("old-observe-session")
     guard._state = replace(
         guard._state,
-        shadow_session_contracts=guard._state.shadow_session_contracts + (observe,),
+        observe_session_contracts=guard._state.observe_session_contracts + (observe,),
     )
-    assert len(guard.get_shadow_session_contracts()) == 1
+    assert len(guard.get_observe_session_contracts()) == 1
 
     await guard.reload(_BUNDLE_B)
 
-    assert guard.get_shadow_session_contracts() == []
+    assert guard.get_observe_session_contracts() == []
 
 
 @pytest.mark.asyncio
@@ -188,13 +188,13 @@ async def test_reload_clears_stale_observe_sandbox_contracts():
     observe = _make_observe_sandbox("old-observe-sandbox")
     guard._state = replace(
         guard._state,
-        shadow_sandbox_contracts=guard._state.shadow_sandbox_contracts + (observe,),
+        observe_sandbox_contracts=guard._state.observe_sandbox_contracts + (observe,),
     )
-    assert len(guard.get_shadow_sandbox_contracts(env)) == 1
+    assert len(guard.get_observe_sandbox_contracts(env)) == 1
 
     await guard.reload(_BUNDLE_B)
 
-    assert guard.get_shadow_sandbox_contracts(env) == []
+    assert guard.get_observe_sandbox_contracts(env) == []
 
 
 @pytest.mark.asyncio
@@ -206,23 +206,23 @@ async def test_reload_clears_all_four_observe_lists_simultaneously():
     # Populate all four observe-mode lists via frozen state replacement
     guard._state = replace(
         guard._state,
-        shadow_preconditions=guard._state.shadow_preconditions + (_make_observe_precondition("sp"),),
-        shadow_postconditions=guard._state.shadow_postconditions + (_make_observe_postcondition("spo"),),
-        shadow_session_contracts=guard._state.shadow_session_contracts + (_make_observe_session_contract("ss"),),
-        shadow_sandbox_contracts=guard._state.shadow_sandbox_contracts + (_make_observe_sandbox("ssb"),),
+        observe_preconditions=guard._state.observe_preconditions + (_make_observe_precondition("sp"),),
+        observe_postconditions=guard._state.observe_postconditions + (_make_observe_postcondition("spo"),),
+        observe_session_contracts=guard._state.observe_session_contracts + (_make_observe_session_contract("ss"),),
+        observe_sandbox_contracts=guard._state.observe_sandbox_contracts + (_make_observe_sandbox("ssb"),),
     )
 
-    assert len(guard.get_shadow_preconditions(env)) == 1
-    assert len(guard.get_shadow_postconditions(env)) == 1
-    assert len(guard.get_shadow_session_contracts()) == 1
-    assert len(guard.get_shadow_sandbox_contracts(env)) == 1
+    assert len(guard.get_observe_preconditions(env)) == 1
+    assert len(guard.get_observe_postconditions(env)) == 1
+    assert len(guard.get_observe_session_contracts()) == 1
+    assert len(guard.get_observe_sandbox_contracts(env)) == 1
 
     await guard.reload(_BUNDLE_B)
 
-    assert guard.get_shadow_preconditions(env) == []
-    assert guard.get_shadow_postconditions(env) == []
-    assert guard.get_shadow_session_contracts() == []
-    assert guard.get_shadow_sandbox_contracts(env) == []
+    assert guard.get_observe_preconditions(env) == []
+    assert guard.get_observe_postconditions(env) == []
+    assert guard.get_observe_session_contracts() == []
+    assert guard.get_observe_sandbox_contracts(env) == []
 
 
 @pytest.mark.asyncio

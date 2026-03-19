@@ -401,22 +401,22 @@ def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
     merged.tool_registry = first.tool_registry
 
     regular_attrs = ("preconditions", "postconditions", "session_contracts", "sandbox_contracts")
-    shadow_attrs = (
-        "shadow_preconditions",
-        "shadow_postconditions",
-        "shadow_session_contracts",
-        "shadow_sandbox_contracts",
+    observe_attrs = (
+        "observe_preconditions",
+        "observe_postconditions",
+        "observe_session_contracts",
+        "observe_sandbox_contracts",
     )
 
     seen_regular_ids: set[str] = set()
-    seen_shadow_ids: set[str] = set()
+    seen_observe_ids: set[str] = set()
 
-    collected: dict[str, list] = {a: [] for a in (*regular_attrs, *shadow_attrs)}
+    collected: dict[str, list] = {a: [] for a in (*regular_attrs, *observe_attrs)}
 
     for guard in guards:
         for attr, seen in (
             *((a, seen_regular_ids) for a in regular_attrs),
-            *((a, seen_shadow_ids) for a in shadow_attrs),
+            *((a, seen_observe_ids) for a in observe_attrs),
         ):
             for contract in getattr(guard._state, attr):
                 cid = getattr(contract, "_edictum_id", None)
@@ -432,10 +432,10 @@ def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
         postconditions=tuple(collected["postconditions"]),
         session_contracts=tuple(collected["session_contracts"]),
         sandbox_contracts=tuple(collected["sandbox_contracts"]),
-        shadow_preconditions=tuple(collected["shadow_preconditions"]),
-        shadow_postconditions=tuple(collected["shadow_postconditions"]),
-        shadow_session_contracts=tuple(collected["shadow_session_contracts"]),
-        shadow_sandbox_contracts=tuple(collected["shadow_sandbox_contracts"]),
+        observe_preconditions=tuple(collected["observe_preconditions"]),
+        observe_postconditions=tuple(collected["observe_postconditions"]),
+        observe_session_contracts=tuple(collected["observe_session_contracts"]),
+        observe_sandbox_contracts=tuple(collected["observe_sandbox_contracts"]),
         limits=merged._state.limits,
         policy_version=merged._state.policy_version,
     )

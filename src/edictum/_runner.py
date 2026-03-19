@@ -210,10 +210,10 @@ async def _run(
             span.set_attribute("governance.action", "allowed")
 
         # Emit observe-mode audit events (never affect the real decision)
-        for sr in pre.shadow_results:
-            shadow_action = AuditAction.CALL_WOULD_DENY if not sr["passed"] else AuditAction.CALL_ALLOWED
-            shadow_event = AuditEvent(
-                action=shadow_action,
+        for sr in pre.observe_results:
+            observe_action = AuditAction.CALL_WOULD_DENY if not sr["passed"] else AuditAction.CALL_ALLOWED
+            observe_event = AuditEvent(
+                action=observe_action,
                 run_id=envelope.run_id,
                 call_id=envelope.call_id,
                 tool_name=envelope.tool_name,
@@ -227,8 +227,8 @@ async def _run(
                 mode="observe",
                 policy_version=self.policy_version,
             )
-            await self.audit_sink.emit(shadow_event)
-            _emit_otel_governance_span(self, shadow_event)
+            await self.audit_sink.emit(observe_event)
+            _emit_otel_governance_span(self, observe_event)
 
         # Execute tool
         try:

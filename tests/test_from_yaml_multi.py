@@ -217,8 +217,8 @@ class TestObserveAlongside:
         guard, report = Edictum.from_yaml(base, candidate, return_report=True)
 
         # Observe-mode contract should be in the report
-        assert len(report.shadow_contracts) == 1
-        assert report.shadow_contracts[0].contract_id == "block-sensitive-reads"
+        assert len(report.observe_contracts) == 1
+        assert report.observe_contracts[0].contract_id == "block-sensitive-reads"
 
     def test_observe_contracts_in_observe_mode(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
@@ -232,12 +232,12 @@ class TestObserveAlongside:
         # Observe-mode contracts are routed to separate lists
         env = create_envelope("read_file", {"path": "test.key"})
         preconditions = guard.get_preconditions(env)
-        observe_preconditions = guard.get_shadow_preconditions(env)
+        observe_preconditions = guard.get_observe_preconditions(env)
         # Original precondition in main list
         assert len(preconditions) == 1
         # Observe-mode :candidate in observe list
         assert len(observe_preconditions) == 1
-        assert getattr(observe_preconditions[0], "_edictum_shadow", False) is True
+        assert getattr(observe_preconditions[0], "_edictum_observe", False) is True
 
 
 class TestReturnReport:
@@ -264,7 +264,7 @@ class TestReturnReport:
         assert isinstance(guard, Edictum)
         assert isinstance(report, CompositionReport)
         assert report.overridden_contracts == []
-        assert report.shadow_contracts == []
+        assert report.observe_contracts == []
 
     def test_without_return_report(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)

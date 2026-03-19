@@ -16,7 +16,7 @@ class CompositionOverride:
 
 
 @dataclass(frozen=True)
-class ShadowContract:
+class ObserveContract:
     """Records a contract added as an observe-mode copy (observe_alongside)."""
 
     contract_id: str
@@ -29,7 +29,7 @@ class CompositionReport:
     """Report of what happened during composition."""
 
     overridden_contracts: list[CompositionOverride] = field(default_factory=list)
-    shadow_contracts: list[ShadowContract] = field(default_factory=list)
+    observe_contracts: list[ObserveContract] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ def compose_bundles(*bundles: tuple[dict[str, Any], str]) -> ComposedBundle:
         return ComposedBundle(bundle=_deep_copy_bundle(data), report=CompositionReport())
 
     overrides: list[CompositionOverride] = []
-    shadows: list[ShadowContract] = []
+    observes: list[ObserveContract] = []
 
     # Start with a copy of the first bundle
     first_data, first_label = bundles[0]
@@ -78,7 +78,7 @@ def compose_bundles(*bundles: tuple[dict[str, Any], str]) -> ComposedBundle:
         is_observe_alongside = data.get("observe_alongside", False)
 
         if is_observe_alongside:
-            _merge_observe_alongside(merged, data, label, contract_sources, shadows)
+            _merge_observe_alongside(merged, data, label, contract_sources, observes)
         else:
             _merge_standard(merged, data, label, contract_sources, overrides)
 
@@ -86,7 +86,7 @@ def compose_bundles(*bundles: tuple[dict[str, Any], str]) -> ComposedBundle:
         bundle=merged,
         report=CompositionReport(
             overridden_contracts=overrides,
-            shadow_contracts=shadows,
+            observe_contracts=observes,
         ),
     )
 
@@ -171,23 +171,23 @@ def _merge_observe_alongside(
     layer: dict[str, Any],
     label: str,
     contract_sources: dict[str, str],
-    shadows: list[ShadowContract],
+    observes: list[ObserveContract],
 ) -> None:
     """Merge an observe_alongside layer — contracts become observe-mode copies."""
     for contract in layer.get("contracts", []):
         cid = contract["id"]
-        shadow_id = f"{cid}:candidate"
+        observe_id = f"{cid}:candidate"
 
-        shadow_contract = _deep_copy_bundle(contract)
-        shadow_contract["id"] = shadow_id
-        shadow_contract["mode"] = "observe"
-        shadow_contract["_shadow"] = True
+        observe_contract = _deep_copy_bundle(contract)
+        observe_contract["id"] = observe_id
+        observe_contract["mode"] = "observe"
+        observe_contract["_observe"] = True
 
-        merged.setdefault("contracts", []).append(shadow_contract)
+        merged.setdefault("contracts", []).append(observe_contract)
 
         enforced_source = contract_sources.get(cid, "")
-        shadows.append(
-            ShadowContract(
+        observes.append(
+            ObserveContract(
                 contract_id=cid,
                 enforced_source=enforced_source,
                 observed_source=label,

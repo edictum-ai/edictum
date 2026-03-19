@@ -10,7 +10,7 @@ from edictum.yaml_engine.composer import (
     ComposedBundle,
     CompositionOverride,
     CompositionReport,
-    ShadowContract,
+    ObserveContract,
     compose_bundles,
 )
 from edictum.yaml_engine.loader import BundleHash
@@ -43,7 +43,7 @@ __all__ = [
     "ComposedBundle",
     "CompositionOverride",
     "CompositionReport",
-    "ShadowContract",
+    "ObserveContract",
     "compile_contracts",
     "compose_bundles",
     "load_bundle",

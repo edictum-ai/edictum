@@ -46,10 +46,10 @@ class _CompiledState:
     postconditions: tuple = ()
     session_contracts: tuple = ()
     sandbox_contracts: tuple = ()
-    shadow_preconditions: tuple = ()
-    shadow_postconditions: tuple = ()
-    shadow_session_contracts: tuple = ()
-    shadow_sandbox_contracts: tuple = ()
+    observe_preconditions: tuple = ()
+    observe_postconditions: tuple = ()
+    observe_session_contracts: tuple = ()
+    observe_sandbox_contracts: tuple = ()
     limits: OperationLimits = field(default_factory=OperationLimits)
     policy_version: str | None = None
 
@@ -124,9 +124,9 @@ class Edictum:
 
         for item in contracts or []:
             contract_type = getattr(item, "_edictum_type", None)
-            is_shadow = getattr(item, "_edictum_shadow", False)
+            is_observe = getattr(item, "_edictum_observe", False)
 
-            if is_shadow:
+            if is_observe:
                 if contract_type == "precondition":
                     s_pre.append(item)
                 elif contract_type == "postcondition":
@@ -153,10 +153,10 @@ class Edictum:
             postconditions=tuple(post),
             session_contracts=tuple(session),
             sandbox_contracts=tuple(sandbox),
-            shadow_preconditions=tuple(s_pre),
-            shadow_postconditions=tuple(s_post),
-            shadow_session_contracts=tuple(s_session),
-            shadow_sandbox_contracts=tuple(s_sandbox),
+            observe_preconditions=tuple(s_pre),
+            observe_postconditions=tuple(s_post),
+            observe_session_contracts=tuple(s_session),
+            observe_sandbox_contracts=tuple(s_sandbox),
             limits=limits or OperationLimits(),
             policy_version=policy_version,
         )
@@ -223,22 +223,22 @@ class Edictum:
         post: list = []
         session: list = []
         sandbox: list = []
-        shadow_pre: list = []
-        shadow_post: list = []
-        shadow_session: list = []
-        shadow_sandbox: list = []
+        observe_pre: list = []
+        observe_post: list = []
+        observe_session: list = []
+        observe_sandbox: list = []
         for contract in all_contracts:
             ctype = getattr(contract, "_edictum_type", None)
-            is_shadow = getattr(contract, "_edictum_shadow", False)
-            if is_shadow:
+            is_observe = getattr(contract, "_edictum_observe", False)
+            if is_observe:
                 if ctype == "precondition":
-                    shadow_pre.append(contract)
+                    observe_pre.append(contract)
                 elif ctype == "postcondition":
-                    shadow_post.append(contract)
+                    observe_post.append(contract)
                 elif ctype == "session_contract":
-                    shadow_session.append(contract)
+                    observe_session.append(contract)
                 elif ctype == "sandbox":
-                    shadow_sandbox.append(contract)
+                    observe_sandbox.append(contract)
             elif ctype == "precondition":
                 pre.append(contract)
             elif ctype == "postcondition":
@@ -253,10 +253,10 @@ class Edictum:
             postconditions=tuple(post),
             session_contracts=tuple(session),
             sandbox_contracts=tuple(sandbox),
-            shadow_preconditions=tuple(shadow_pre),
-            shadow_postconditions=tuple(shadow_post),
-            shadow_session_contracts=tuple(shadow_session),
-            shadow_sandbox_contracts=tuple(shadow_sandbox),
+            observe_preconditions=tuple(observe_pre),
+            observe_postconditions=tuple(observe_post),
+            observe_session_contracts=tuple(observe_session),
+            observe_sandbox_contracts=tuple(observe_sandbox),
             limits=compiled.limits,
             policy_version=str(bundle_hash),
         )
@@ -328,20 +328,20 @@ class Edictum:
     def get_session_contracts(self) -> list:
         return list(self._state.session_contracts)
 
-    def get_shadow_preconditions(self, envelope: ToolEnvelope) -> list:
-        return self._filter_by_tool(self._state.shadow_preconditions, envelope)
+    def get_observe_preconditions(self, envelope: ToolEnvelope) -> list:
+        return self._filter_by_tool(self._state.observe_preconditions, envelope)
 
-    def get_shadow_postconditions(self, envelope: ToolEnvelope) -> list:
-        return self._filter_by_tool(self._state.shadow_postconditions, envelope)
+    def get_observe_postconditions(self, envelope: ToolEnvelope) -> list:
+        return self._filter_by_tool(self._state.observe_postconditions, envelope)
 
     def get_sandbox_contracts(self, envelope: ToolEnvelope) -> list:
         return self._filter_sandbox(self._state.sandbox_contracts, envelope)
 
-    def get_shadow_sandbox_contracts(self, envelope: ToolEnvelope) -> list:
-        return self._filter_sandbox(self._state.shadow_sandbox_contracts, envelope)
+    def get_observe_sandbox_contracts(self, envelope: ToolEnvelope) -> list:
+        return self._filter_sandbox(self._state.observe_sandbox_contracts, envelope)
 
-    def get_shadow_session_contracts(self) -> list:
-        return list(self._state.shadow_session_contracts)
+    def get_observe_session_contracts(self) -> list:
+        return list(self._state.observe_session_contracts)
 
     # --- Delegated methods (implementation in separate modules) ---
 

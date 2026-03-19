@@ -115,8 +115,8 @@ def compile_contracts(
             fn = _compile_sandbox(contract, contract_mode)
             sandbox_contracts.append(fn)
         elif contract_type == "session":
-            is_shadow = contract.get("_shadow", False)
-            if not is_shadow:
+            is_observe = contract.get("_observe", False)
+            if not is_observe:
                 limits = _merge_session_limits(contract, limits)
             fn = _compile_session(contract, contract_mode, limits)
             session_contracts.append(fn)
@@ -218,8 +218,8 @@ def _compile_pre(
     precondition_fn._edictum_effect = then.get("effect", "deny")
     precondition_fn._edictum_timeout = then.get("timeout", 300)
     precondition_fn._edictum_timeout_effect = then.get("timeout_effect", "deny")
-    if contract.get("_shadow"):
-        precondition_fn._edictum_shadow = True
+    if contract.get("_observe"):
+        precondition_fn._edictum_observe = True
 
     return precondition_fn
 
@@ -323,8 +323,8 @@ def _compile_post(
     postcondition_fn._edictum_source = "yaml_postcondition"
     postcondition_fn._edictum_effect = effect
     postcondition_fn._edictum_redact_patterns = _extract_output_patterns(when_expr)
-    if contract.get("_shadow"):
-        postcondition_fn._edictum_shadow = True
+    if contract.get("_observe"):
+        postcondition_fn._edictum_observe = True
 
     return postcondition_fn
 
@@ -357,8 +357,8 @@ def _compile_session(contract: dict, mode: str, limits: OperationLimits) -> Any:
     session_contract_fn._edictum_tags = tags
     session_contract_fn._edictum_then_metadata = then_metadata
     session_contract_fn._edictum_source = "yaml_session"
-    if contract.get("_shadow"):
-        session_contract_fn._edictum_shadow = True
+    if contract.get("_observe"):
+        session_contract_fn._edictum_observe = True
 
     return session_contract_fn
 

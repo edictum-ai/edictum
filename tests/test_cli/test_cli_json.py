@@ -414,4 +414,4 @@ class TestDiffJson:
         # Composition report should be present since bundles share contract IDs
         if "composition" in parsed:
             assert "overrides" in parsed["composition"]
-            assert "shadows" in parsed["composition"]
+            assert "observe_contracts" in parsed["composition"]

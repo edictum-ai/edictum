@@ -30,7 +30,7 @@ class PreDecision:
     contracts_evaluated: list[dict] = field(default_factory=list)
     observed: bool = False
     policy_error: bool = False
-    shadow_results: list[dict] = field(default_factory=list)
+    observe_results: list[dict] = field(default_factory=list)
     approval_timeout: int = 300
     approval_timeout_effect: str = "deny"
     approval_message: str | None = None
@@ -299,7 +299,7 @@ class GovernancePipeline:
         pe = any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated)
 
         # 7. Observe-mode contract evaluation (never affects the decision)
-        shadow_results = await self._evaluate_shadow_contracts(envelope, session)
+        observe_results = await self._evaluate_observe_contracts(envelope, session)
 
         return PreDecision(
             action="allow",
@@ -307,7 +307,7 @@ class GovernancePipeline:
             contracts_evaluated=contracts_evaluated,
             observed=has_observed_deny,
             policy_error=pe,
-            shadow_results=shadow_results,
+            observe_results=observe_results,
         )
 
     async def post_execute(
@@ -386,7 +386,7 @@ class GovernancePipeline:
                     )
 
         # 2. Observe-mode postconditions (from observe_alongside bundles)
-        for contract in self._guard.get_shadow_postconditions(envelope):
+        for contract in self._guard.get_observe_postconditions(envelope):
             try:
                 verdict = contract(envelope, tool_response)
                 if asyncio.iscoroutine(verdict):
@@ -436,20 +436,20 @@ class GovernancePipeline:
             output_suppressed=output_suppressed,
         )
 
-    async def _evaluate_shadow_contracts(
+    async def _evaluate_observe_contracts(
         self,
         envelope: ToolEnvelope,
         session: Session,
     ) -> list[dict]:
         """Evaluate observe-mode contracts without affecting the real decision.
 
-        Observe-mode contracts are identified by ``_edictum_shadow = True``.
+        Observe-mode contracts are identified by ``_edictum_observe = True``.
         Results are returned as dicts for audit emission but never block calls.
         """
         results: list[dict] = []
 
         # Observe-mode preconditions
-        for contract in self._guard.get_shadow_preconditions(envelope):
+        for contract in self._guard.get_observe_preconditions(envelope):
             try:
                 verdict = contract(envelope)
                 if asyncio.iscoroutine(verdict):
@@ -469,7 +469,7 @@ class GovernancePipeline:
             )
 
         # Observe-mode sandbox contracts
-        for contract in self._guard.get_shadow_sandbox_contracts(envelope):
+        for contract in self._guard.get_observe_sandbox_contracts(envelope):
             try:
                 verdict = contract(envelope)
                 if asyncio.iscoroutine(verdict):
@@ -489,7 +489,7 @@ class GovernancePipeline:
             )
 
         # Observe-mode session contracts — evaluate against the real session
-        for contract in self._guard.get_shadow_session_contracts():
+        for contract in self._guard.get_observe_session_contracts():
             try:
                 verdict = contract(session)
                 if asyncio.iscoroutine(verdict):

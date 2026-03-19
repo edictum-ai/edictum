@@ -24,11 +24,11 @@ def _make_observe_postcondition(name: str):
         return Verdict.pass_()
 
     check.__name__ = name
-    check._edictum_shadow = True
+    check._edictum_observe = True
     return check
 
 
-def _make_guard_with_shadow_postconditions(sink):
+def _make_guard_with_observe_postconditions(sink):
     """Build a guard with observe-mode postconditions injected."""
     guard = Edictum(
         environment="test",
@@ -41,7 +41,7 @@ def _make_guard_with_shadow_postconditions(sink):
 
     guard._state = replace(
         guard._state,
-        shadow_postconditions=guard._state.shadow_postconditions + (observe_post,),
+        observe_postconditions=guard._state.observe_postconditions + (observe_post,),
     )
     return guard
 
@@ -50,10 +50,10 @@ class TestObserveModePostconditionsEvaluated:
     """observe_alongside postconditions must be evaluated in post_execute."""
 
     @pytest.mark.asyncio
-    async def test_shadow_postcondition_produces_warning(self):
+    async def test_observe_postcondition_produces_warning(self):
         """A failing observe-mode postcondition produces a warning, not a deny."""
         sink = CapturingAuditSink()
-        guard = _make_guard_with_shadow_postconditions(sink)
+        guard = _make_guard_with_observe_postconditions(sink)
 
         # The tool "succeeds" but returns sensitive data
         result = await guard.run("TestTool", {}, lambda: "sensitive data here")
@@ -61,10 +61,10 @@ class TestObserveModePostconditionsEvaluated:
         assert result == "sensitive data here"
 
     @pytest.mark.asyncio
-    async def test_shadow_postcondition_emits_audit_event(self):
+    async def test_observe_postcondition_emits_audit_event(self):
         """Observe-mode postcondition failure appears in audit contracts_evaluated."""
         sink = CapturingAuditSink()
-        guard = _make_guard_with_shadow_postconditions(sink)
+        guard = _make_guard_with_observe_postconditions(sink)
 
         await guard.run("TestTool", {}, lambda: "sensitive data here")
 
@@ -80,10 +80,10 @@ class TestObserveModePostconditionsEvaluated:
         assert observe_contracts[0]["passed"] is False
 
     @pytest.mark.asyncio
-    async def test_shadow_postcondition_passing_no_warning(self):
+    async def test_observe_postcondition_passing_no_warning(self):
         """A passing observe-mode postcondition produces no warning."""
         sink = CapturingAuditSink()
-        guard = _make_guard_with_shadow_postconditions(sink)
+        guard = _make_guard_with_observe_postconditions(sink)
 
         result = await guard.run("TestTool", {}, lambda: "clean data")
         assert result == "clean data"

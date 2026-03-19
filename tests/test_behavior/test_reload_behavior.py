@@ -152,7 +152,7 @@ class TestReloadWipesInitObserveContracts:
             return Verdict.fail("Observe-mode deny.")
 
         # Mark it as an observe-mode contract (as the composer does)
-        observe_pre._edictum_shadow = True
+        observe_pre._edictum_observe = True
 
         guard = Edictum(
             mode="enforce",
@@ -160,13 +160,13 @@ class TestReloadWipesInitObserveContracts:
             audit_sink=_NullSink(),
         )
 
-        assert len(guard._state.shadow_preconditions) == 1
+        assert len(guard._state.observe_preconditions) == 1
         assert len(guard._state.preconditions) == 0
 
         await guard.reload(BUNDLE_V1)
 
         # reload() replaces _state entirely — init-time Python contracts are wiped
-        assert len(guard._state.shadow_preconditions) == 0
+        assert len(guard._state.observe_preconditions) == 0
         # Enforce contracts come from the new bundle
         assert len(guard._state.preconditions) == 1
 

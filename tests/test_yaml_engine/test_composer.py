@@ -263,7 +263,7 @@ class TestObserveAlongside:
         # Internal _shadow field stays as-is (internal attribute)
         observe = [c for c in result.bundle["contracts"] if c["id"] == "pharma:candidate"][0]
         assert observe["mode"] == "observe"
-        assert observe["_shadow"] is True
+        assert observe["_observe"] is True
 
     def test_observe_contract_report(self):
         base = _base_bundle(contracts=[_contract("pharma")])
@@ -271,8 +271,8 @@ class TestObserveAlongside:
         candidate["observe_alongside"] = True
 
         result = compose_bundles((base, "base"), (candidate, "candidate"))
-        assert len(result.report.shadow_contracts) == 1
-        sc = result.report.shadow_contracts[0]
+        assert len(result.report.observe_contracts) == 1
+        sc = result.report.observe_contracts[0]
         assert sc.contract_id == "pharma"
         assert sc.enforced_source == "base"
         assert sc.observed_source == "candidate"
@@ -297,7 +297,7 @@ class TestObserveAlongside:
         assert "existing" in ids
         assert "brand-new:candidate" in ids
 
-        sc = result.report.shadow_contracts[0]
+        sc = result.report.observe_contracts[0]
         assert sc.contract_id == "brand-new"
         assert sc.enforced_source == ""  # no enforced counterpart
 
@@ -321,7 +321,7 @@ class TestObserveAlongside:
         ids = [c["id"] for c in result.bundle["contracts"]]
         assert ids == ["a", "b", "b:candidate"]
         assert len(result.report.overridden_contracts) == 1
-        assert len(result.report.shadow_contracts) == 1
+        assert len(result.report.observe_contracts) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +354,7 @@ class TestComposerEdgeCases:
         ids = [c["id"] for c in result.bundle["contracts"]]
         assert ids == ["x"]
         assert result.bundle["contracts"][0]["then"]["message"] == "new"
-        assert len(result.report.shadow_contracts) == 0
+        assert len(result.report.observe_contracts) == 0
         assert len(result.report.overridden_contracts) == 1
 
     def test_empty_contracts_list_in_overlay(self):
@@ -385,7 +385,7 @@ class TestComposerEdgeCases:
         result = compose_bundles((base, "base"), (candidate, "candidate"))
         ids = [c["id"] for c in result.bundle["contracts"]]
         assert ids == ["a"]
-        assert len(result.report.shadow_contracts) == 0
+        assert len(result.report.observe_contracts) == 0
 
     def test_observe_alongside_as_first_bundle(self):
         """observe_alongside as the first bundle (unusual but valid)."""

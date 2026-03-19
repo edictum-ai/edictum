@@ -13,7 +13,7 @@ class _NullSink:
 
 def _make_observe(fn):
     """Mark a contract function as observe-mode."""
-    fn._edictum_shadow = True
+    fn._edictum_observe = True
     return fn
 
 
@@ -40,7 +40,7 @@ class TestFromMultipleObserveModeContracts:
 
         merged = Edictum.from_multiple([g1, g2])
 
-        ids = [getattr(c, "_edictum_id", None) for c in merged._state.shadow_preconditions]
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.observe_preconditions]
         assert len(ids) == 2
         assert "observe-pre-a" in ids
         assert "observe-pre-b" in ids
@@ -67,7 +67,7 @@ class TestFromMultipleObserveModeContracts:
 
         merged = Edictum.from_multiple([g1, g2])
 
-        ids = [getattr(c, "_edictum_id", None) for c in merged._state.shadow_postconditions]
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.observe_postconditions]
         assert len(ids) == 2
         assert "observe-post-a" in ids
         assert "observe-post-b" in ids
@@ -96,8 +96,8 @@ class TestFromMultipleObserveModeContracts:
         assert len(merged._state.preconditions) == 1
         assert getattr(merged._state.preconditions[0], "_edictum_id", None) == "enforced-pre"
 
-        assert len(merged._state.shadow_preconditions) == 1
-        assert getattr(merged._state.shadow_preconditions[0], "_edictum_id", None) == "observe-pre"
+        assert len(merged._state.observe_preconditions) == 1
+        assert getattr(merged._state.observe_preconditions[0], "_edictum_id", None) == "observe-pre"
 
     def test_observe_dedup_by_id(self):
         """Duplicate observe-mode contract IDs are deduplicated (first wins)."""
@@ -121,7 +121,7 @@ class TestFromMultipleObserveModeContracts:
 
         merged = Edictum.from_multiple([g1, g2])
 
-        assert len(merged._state.shadow_preconditions) == 1
+        assert len(merged._state.observe_preconditions) == 1
 
     def test_observe_session_contracts_merged(self):
         """Observe-mode session contracts from both guards appear in merged guard."""
@@ -147,7 +147,7 @@ class TestFromMultipleObserveModeContracts:
 
         merged = Edictum.from_multiple([g1, g2])
 
-        ids = [getattr(c, "_edictum_id", None) for c in merged._state.shadow_session_contracts]
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.observe_session_contracts]
         assert len(ids) == 2
         assert "observe-sess-a" in ids
         assert "observe-sess-b" in ids
@@ -178,7 +178,7 @@ class TestFromMultipleObserveModeContracts:
 
         merged = Edictum.from_multiple([g1, g2])
 
-        ids = [getattr(c, "_edictum_id", None) for c in merged._state.shadow_sandbox_contracts]
+        ids = [getattr(c, "_edictum_id", None) for c in merged._state.observe_sandbox_contracts]
         assert len(ids) == 2
         assert "observe-sb-a" in ids
         assert "observe-sb-b" in ids
@@ -205,4 +205,4 @@ class TestFromMultipleObserveModeContracts:
         merged = Edictum.from_multiple([g1, g2])
 
         assert len(merged._state.preconditions) == 1
-        assert len(merged._state.shadow_preconditions) == 1
+        assert len(merged._state.observe_preconditions) == 1

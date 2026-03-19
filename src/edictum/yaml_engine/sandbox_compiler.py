@@ -256,7 +256,7 @@ def _compile_sandbox(contract: dict, mode: str) -> Any:
     sandbox_fn._edictum_effect = outside
     sandbox_fn._edictum_timeout = timeout
     sandbox_fn._edictum_timeout_effect = timeout_effect
-    if contract.get("_shadow"):
-        sandbox_fn._edictum_shadow = True
+    if contract.get("_observe"):
+        sandbox_fn._edictum_observe = True
 
     return sandbox_fn
