@@ -35,28 +35,16 @@ BLOCKED_ALLOWLIST = {
     "{blocked}",
 }
 
-# "shadow" needs special handling — internal code uses shadow_* field names
-# in _CompiledState and _edictum_observe attribute, but prose should say
-# "observe mode" / "observe-mode".
+# "shadow" needs special handling — prose should say "observe mode" / "observe-mode".
+# All shadow_* code identifiers were renamed to observe_* in v0.15.0.
+# Only real filesystem references remain in the allowlist.
 SHADOW_PATTERN = re.compile(r"\bshadow\b", re.IGNORECASE)
 SHADOW_ALLOWLIST = {
-    # _CompiledState frozen dataclass fields
-    "observe_preconditions",
-    "observe_postconditions",
-    "observe_session_contracts",
-    "observe_sandbox_contracts",
-    # Internal attribute on contract callables
-    "_edictum_observe",
-    # Local variable reading the attribute
-    "is_observe",
-    # Getter methods on Edictum
-    "get_observe_preconditions",
-    "get_observe_postconditions",
-    "get_observe_sandbox_contracts",
-    "get_observe_session_contracts",
     # Real file path in sandbox tests (with and without leading slash)
     "/etc/shadow",
     '"etc" / "shadow"',
+    # Deprecation alias (ShadowContract) — remove in v0.16.0
+    "ShadowContract",
 }
 
 # Files/dirs to skip

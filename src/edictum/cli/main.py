@@ -216,6 +216,8 @@ def _composition_report_to_dict(report: Any) -> dict:
                 "enforced_source": s.enforced_source,
             }
         )
+    # Backward compat: "shadows" alias for "observe_contracts" (removed in v0.16.0)
+    result["shadows"] = result["observe_contracts"]
     return result
 
 

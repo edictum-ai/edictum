@@ -260,7 +260,7 @@ class TestObserveAlongside:
         candidate["observe_alongside"] = True
 
         result = compose_bundles((base, "base"), (candidate, "candidate"))
-        # Internal _shadow field stays as-is (internal attribute)
+        # Internal _observe flag marks this as an observe-mode copy
         observe = [c for c in result.bundle["contracts"] if c["id"] == "pharma:candidate"][0]
         assert observe["mode"] == "observe"
         assert observe["_observe"] is True

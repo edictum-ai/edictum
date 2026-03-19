@@ -415,3 +415,6 @@ class TestDiffJson:
         if "composition" in parsed:
             assert "overrides" in parsed["composition"]
             assert "observe_contracts" in parsed["composition"]
+            # Backward compat: "shadows" alias still present
+            assert "shadows" in parsed["composition"]
+            assert parsed["composition"]["shadows"] == parsed["composition"]["observe_contracts"]

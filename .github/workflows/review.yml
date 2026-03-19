@@ -220,8 +220,8 @@ jobs:
       - name: Fail on critical findings
         run: |
           if [ ! -f /tmp/review.md ]; then
-            echo "::warning::No review file — skipping gate"
-            exit 0
+            echo "::error::No review file produced — treating as gate failure. Claude may have exhausted turns or crashed."
+            exit 1
           fi
           if grep -q '<!-- STATUS: fail -->' /tmp/review.md; then
             echo "::error::Code review found critical issues. See PR comment for details."

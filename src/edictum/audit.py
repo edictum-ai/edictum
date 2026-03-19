@@ -106,6 +106,14 @@ class RedactionPolicy:
         "db_password",
         "ssh_key",
         "passphrase",
+        # Plural compound keys — specific entries to avoid false positives
+        # from word-part matching (e.g., "tokens" would catch "max_tokens").
+        "api_tokens",
+        "db_passwords",
+        "user_credentials",
+        "oauth_secrets",
+        "encryption_keys",
+        "jwt_tokens",
     }
 
     BASH_REDACTION_PATTERNS: list[tuple[str, str]] = [
@@ -156,8 +164,15 @@ class RedactionPolicy:
         k = key.lower()
         if k in self._keys:
             return True
+        _sensitive = {
+            "token",
+            "key",
+            "secret",
+            "password",
+            "credential",
+        }
         parts = re.split(r"[_\-]", k)
-        return any(p in ("token", "key", "secret", "password", "credential") for p in parts)
+        return any(p in _sensitive for p in parts)
 
     def _looks_like_secret(self, value: str) -> bool:
         for pattern in self.SECRET_VALUE_PATTERNS:

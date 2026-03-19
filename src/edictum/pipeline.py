@@ -332,19 +332,21 @@ class GovernancePipeline:
                 logger.exception("Postcondition %s raised", getattr(contract, "__name__", "anonymous"))
                 verdict = Verdict.fail(f"Postcondition error: {exc}", policy_error=True)
 
+            contract_mode = getattr(contract, "_edictum_mode", None)
             contract_record = {
                 "name": getattr(contract, "__name__", "anonymous"),
                 "type": "postcondition",
                 "passed": verdict.passed,
                 "message": verdict.message,
             }
+            if contract_mode == "observe":
+                contract_record["observed"] = True
             if verdict.metadata:
                 contract_record["metadata"] = verdict.metadata
             contracts_evaluated.append(contract_record)
 
             if not verdict.passed:
                 effect = getattr(contract, "_edictum_effect", "warn")
-                contract_mode = getattr(contract, "_edictum_mode", None)
                 is_safe = envelope.side_effect in (SideEffect.PURE, SideEffect.READ)
 
                 # Observe mode takes precedence
@@ -423,7 +425,10 @@ class GovernancePipeline:
             except Exception:
                 logger.exception("After hook %s raised", getattr(hook_reg.callback, "__name__", "anonymous"))
 
-        postconditions_passed = all(c["passed"] for c in contracts_evaluated) if contracts_evaluated else True
+        # Exclude observe-mode contracts — they must never affect postconditions_passed,
+        # which propagates to on_postcondition_warn callbacks in all adapters.
+        enforce_contracts = [c for c in contracts_evaluated if not c.get("observed")]
+        postconditions_passed = all(c["passed"] for c in enforce_contracts) if enforce_contracts else True
         pe = any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated)
 
         return PostDecision(

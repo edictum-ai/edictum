@@ -481,15 +481,20 @@ class TestObserveModeRedact:
         # (observe mode prevents redaction action)
 
     @pytest.mark.asyncio
-    async def test_observe_redact_postconditions_not_passed(self):
-        """Observe mode still records postconditions as not passed."""
+    async def test_observe_redact_postconditions_passed_true(self):
+        """Observe mode must NOT affect postconditions_passed.
+
+        postconditions_passed propagates to on_postcondition_warn in all
+        7 adapters. If observe-mode contracts set it to False, observe mode
+        silently becomes enforcement — violating the core guarantee.
+        """
         guard = Edictum.from_yaml(_write_yaml(OBSERVE_REDACT_BUNDLE), audit_sink=_NullSink())
         envelope = _make_envelope(side_effect=SideEffect.READ)
         response = "Found key: sk-prod-abcd1234"
 
         decision = await _post_execute(guard, envelope, response)
 
-        assert not decision.postconditions_passed
+        assert decision.postconditions_passed
 
 
 # ---------------------------------------------------------------------------

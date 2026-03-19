@@ -49,3 +49,17 @@ __all__ = [
     "load_bundle",
     "load_bundle_string",
 ]
+
+
+def __getattr__(name: str):
+    if name == "ShadowContract":
+        import warnings
+
+        warnings.warn(
+            "ShadowContract was renamed to ObserveContract in v0.15.0. "
+            "Update your import to: from edictum.yaml_engine import ObserveContract",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return ObserveContract
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
