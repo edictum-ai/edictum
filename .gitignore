@@ -15,6 +15,9 @@ CLAUDE.local
 !.claude/skills/
 !.claude/agents/
 
+# Generated API docs
+docs/api/
+
 # Internal research/planning notes
 docs/ADAPTER_INSIGHTS.md
 docs/adapter-research.md
