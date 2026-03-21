@@ -169,19 +169,56 @@ class RedactionPolicy:
             return redacted
         return args
 
+    # Word parts that indicate a sensitive key when found as a standalone
+    # segment after splitting on _ or -. Includes plural forms (#139).
+    _SENSITIVE_PARTS: frozenset[str] = frozenset(
+        {
+            "token",
+            "tokens",
+            "key",
+            "keys",
+            "secret",
+            "secrets",
+            "password",
+            "passwords",
+            "credential",
+            "credentials",
+        }
+    )
+
+    # Common non-sensitive parameter names that happen to contain a sensitive
+    # word part. These are checked before the word-part scan to prevent
+    # false-positive redaction (#127, #144). Stored as normalized underscore
+    # form — lookup normalizes hyphens to underscores to cover both variants.
+    _SAFE_COMPOUND_KEYS: frozenset[str] = frozenset(
+        {
+            "max_tokens",
+            "num_tokens",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "completion_tokens",
+            "prompt_tokens",
+            "cached_tokens",
+            "reasoning_tokens",
+            "audio_tokens",
+            "cache_tokens",
+            "sort_keys",
+            "index_keys",
+        }
+    )
+
     def _is_sensitive_key(self, key: str) -> bool:
         k = key.lower()
         if k in self._keys:
             return True
-        _sensitive = {
-            "token",
-            "key",
-            "secret",
-            "password",
-            "credential",
-        }
+        # Normalize hyphens to underscores for safe-key lookup so both
+        # max_tokens and max-tokens are recognized as safe.
+        normalized = k.replace("-", "_")
+        if normalized in self._SAFE_COMPOUND_KEYS:
+            return False
         parts = re.split(r"[_\-]", k)
-        return any(p in _sensitive for p in parts)
+        return any(p in self._SENSITIVE_PARTS for p in parts)
 
     def _looks_like_secret(self, value: str) -> bool:
         for pattern in self.SECRET_VALUE_PATTERNS:
