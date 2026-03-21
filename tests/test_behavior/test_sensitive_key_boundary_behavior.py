@@ -6,9 +6,12 @@ like 'monkey' and 'hockey' while still catching 'api_key' and 'auth-token'.
 
 from __future__ import annotations
 
+import pytest
+
 from edictum.audit import RedactionPolicy
 
 
+@pytest.mark.security
 class TestSensitiveKeyFalsePositives:
     """Words containing 'key' as a substring must NOT be redacted."""
 
@@ -38,6 +41,7 @@ class TestSensitiveKeyFalsePositives:
         assert result["turkey"] == "gobble"
 
 
+@pytest.mark.security
 class TestSensitiveKeyTruePositives:
     """Real sensitive keys must still be caught."""
 
@@ -79,6 +83,7 @@ class TestSensitiveKeyTruePositives:
         assert result["key"] == "[REDACTED]"
 
 
+@pytest.mark.security
 class TestSensitiveKeyPluralForms:
     """Specific plural compound keys in DEFAULT_SENSITIVE_KEYS must be caught."""
 
@@ -108,6 +113,7 @@ class TestSensitiveKeyPluralForms:
         assert result["encryption_keys"] == "[REDACTED]"
 
 
+@pytest.mark.security
 class TestSensitiveKeyNoFalsePositivesOnCommonFields:
     """Common LLM/agent fields must NOT be redacted."""
 
@@ -176,7 +182,19 @@ class TestSensitiveKeyNoFalsePositivesOnCommonFields:
         result = policy.redact_args({"market": "US"})
         assert result["market"] == "US"
 
+    def test_max_tokens_hyphen_variant_not_redacted(self):
+        """Hyphenated safe keys (max-tokens) must also be safe (#157 review)."""
+        policy = RedactionPolicy()
+        result = policy.redact_args({"max-tokens": 1024})
+        assert result["max-tokens"] == 1024
 
+    def test_sort_keys_hyphen_variant_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"sort-keys": True})
+        assert result["sort-keys"] is True
+
+
+@pytest.mark.security
 class TestSensitiveKeyGenericPlurals:
     """Plural sensitive word parts must be caught generically (#139)."""
 
