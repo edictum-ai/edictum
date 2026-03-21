@@ -140,3 +140,67 @@ class TestSensitiveKeyNoFalsePositivesOnCommonFields:
         policy = RedactionPolicy()
         result = policy.redact_args({"index_keys": ["id", "name"]})
         assert result["index_keys"] == ["id", "name"]
+
+    def test_total_tokens_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"total_tokens": 2048})
+        assert result["total_tokens"] == 2048
+
+    def test_completion_tokens_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"completion_tokens": 300})
+        assert result["completion_tokens"] == 300
+
+    def test_prompt_tokens_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"prompt_tokens": 150})
+        assert result["prompt_tokens"] == 150
+
+    def test_webhook_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"webhook": "https://example.com"})
+        assert result["webhook"] == "https://example.com"
+
+    def test_bucket_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"bucket": "my-bucket"})
+        assert result["bucket"] == "my-bucket"
+
+    def test_socket_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"socket": "/var/run/app.sock"})
+        assert result["socket"] == "/var/run/app.sock"
+
+    def test_market_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"market": "US"})
+        assert result["market"] == "US"
+
+
+class TestSensitiveKeyGenericPlurals:
+    """Plural sensitive word parts must be caught generically (#139)."""
+
+    def test_aws_secrets_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"aws_secrets": "val"})
+        assert result["aws_secrets"] == "[REDACTED]"
+
+    def test_stored_passwords_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"stored_passwords": "val"})
+        assert result["stored_passwords"] == "[REDACTED]"
+
+    def test_service_credentials_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"service_credentials": "val"})
+        assert result["service_credentials"] == "[REDACTED]"
+
+    def test_auth_tokens_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"auth-tokens": "val"})
+        assert result["auth-tokens"] == "[REDACTED]"
+
+    def test_signing_keys_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"signing_keys": "val"})
+        assert result["signing_keys"] == "[REDACTED]"
