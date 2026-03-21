@@ -1,0 +1,77 @@
+name: Notify Parity
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  notify:
+    name: Create port tracking issues
+    if: |
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'feature-parity')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: edictum-ai
+          repositories: edictum-ts,edictum-go
+
+      # SECURITY: Write title and body to files to prevent shell injection
+      # via crafted PR titles containing quotes or shell metacharacters.
+      - name: Prepare issue content
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          printf 'Port: %s' "$PR_TITLE" > /tmp/issue-title.txt
+
+          cat > /tmp/issue-body-ts.md <<BODY_EOF
+          Python reference landed in ${PR_URL}
+
+          Port this feature to TypeScript with matching behavior.
+
+          ## Checklist
+          - [ ] Implementation matches Python API surface
+          - [ ] Shared behavioral fixtures pass
+          - [ ] TypeScript-native tests written
+          - [ ] Security tests if touching security boundary
+          BODY_EOF
+
+          cat > /tmp/issue-body-go.md <<BODY_EOF
+          Python reference landed in ${PR_URL}
+
+          Port this feature to Go with matching behavior.
+
+          ## Checklist
+          - [ ] Implementation matches Python API surface
+          - [ ] Shared behavioral fixtures pass
+          - [ ] Go-native tests written
+          - [ ] Race detector passes
+          - [ ] Security tests if touching security boundary
+          BODY_EOF
+
+      - name: Create TypeScript tracking issue
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh issue create --repo edictum-ai/edictum-ts \
+            --title "$(cat /tmp/issue-title.txt)" \
+            --label "parity:blocking,feature-parity" \
+            --body-file /tmp/issue-body-ts.md
+
+      - name: Create Go tracking issue
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh issue create --repo edictum-ai/edictum-go \
+            --title "$(cat /tmp/issue-title.txt)" \
+            --label "parity:blocking,feature-parity" \
+            --body-file /tmp/issue-body-go.md
