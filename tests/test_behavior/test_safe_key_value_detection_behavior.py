@@ -52,3 +52,20 @@ class TestSafeListedKeysValueDetection:
         policy = RedactionPolicy()
         result = policy.redact_args({"sort_keys": "name,date"})
         assert result["sort_keys"] == "name,date"
+
+
+@pytest.mark.security
+class TestCustomSensitiveKeysOverrideSafeList:
+    """User-supplied sensitive_keys must take precedence over _SAFE_COMPOUND_KEYS."""
+
+    def test_custom_sensitive_key_overrides_safe_list(self):
+        """sensitive_keys={"max_tokens"} must redact even though max_tokens is safe-listed."""
+        policy = RedactionPolicy(sensitive_keys={"max_tokens"})
+        result = policy.redact_args({"max_tokens": 1024})
+        assert result["max_tokens"] == "[REDACTED]"
+
+    def test_other_safe_keys_unaffected_by_custom_override(self):
+        """Overriding one safe key must not affect other safe-listed keys."""
+        policy = RedactionPolicy(sensitive_keys={"max_tokens"})
+        result = policy.redact_args({"sort_keys": True})
+        assert result["sort_keys"] is True
