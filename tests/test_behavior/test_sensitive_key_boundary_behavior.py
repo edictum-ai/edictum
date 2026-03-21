@@ -222,3 +222,50 @@ class TestSensitiveKeyGenericPlurals:
         policy = RedactionPolicy()
         result = policy.redact_args({"signing_keys": "val"})
         assert result["signing_keys"] == "[REDACTED]"
+
+
+@pytest.mark.security
+class TestSafeListedKeysValueDetection:
+    """Safe-listed keys bypass key-name detection but value-level detection still applies.
+
+    Defense-in-depth: even when a key like max_tokens is safe-listed to prevent
+    false-positive redaction of numeric values, string values that match
+    SECRET_VALUE_PATTERNS are still caught through redact_args recursion.
+    """
+
+    def test_safe_key_with_openai_key_still_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"max_tokens": "sk-reallyLongSecretKeyForTesting123"})
+        assert result["max_tokens"] == "[REDACTED]"
+
+    def test_safe_key_with_aws_key_still_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"num_tokens": "AKIAIOSFODNN7EXAMPLE"})
+        assert result["num_tokens"] == "[REDACTED]"
+
+    def test_safe_key_with_jwt_still_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"output_tokens": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload"})
+        assert result["output_tokens"] == "[REDACTED]"
+
+    def test_safe_key_with_github_token_still_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"sort_keys": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"})
+        assert result["sort_keys"] == "[REDACTED]"
+
+    def test_safe_key_with_slack_token_still_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"index_keys": "xoxb-1234567890-abcdefghij"})
+        assert result["index_keys"] == "[REDACTED]"
+
+    def test_safe_key_with_numeric_value_not_redacted(self):
+        """Normal numeric values on safe-listed keys are not redacted."""
+        policy = RedactionPolicy()
+        result = policy.redact_args({"max_tokens": 1024})
+        assert result["max_tokens"] == 1024
+
+    def test_safe_key_with_normal_string_not_redacted(self):
+        """Normal string values on safe-listed keys are not redacted."""
+        policy = RedactionPolicy()
+        result = policy.redact_args({"sort_keys": "name,date"})
+        assert result["sort_keys"] == "name,date"
