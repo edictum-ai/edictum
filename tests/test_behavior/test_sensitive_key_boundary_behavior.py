@@ -174,3 +174,23 @@ class TestSensitiveKeyNoFalsePositivesOnCommonFields:
         policy = RedactionPolicy()
         result = policy.redact_args({"sort-keys": True})
         assert result["sort-keys"] is True
+
+    def test_cached_tokens_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"cached_tokens": 1850})
+        assert result["cached_tokens"] == 1850
+
+    def test_reasoning_tokens_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"reasoning_tokens": 500})
+        assert result["reasoning_tokens"] == 500
+
+    def test_audio_tokens_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"audio_tokens": 320})
+        assert result["audio_tokens"] == 320
+
+    def test_cache_tokens_not_redacted(self):
+        policy = RedactionPolicy()
+        result = policy.redact_args({"cache_tokens": 900})
+        assert result["cache_tokens"] == 900

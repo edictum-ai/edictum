@@ -199,6 +199,10 @@ class RedactionPolicy:
             "total_tokens",
             "completion_tokens",
             "prompt_tokens",
+            "cached_tokens",
+            "reasoning_tokens",
+            "audio_tokens",
+            "cache_tokens",
             "sort_keys",
             "index_keys",
         }
