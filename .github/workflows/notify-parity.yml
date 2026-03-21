@@ -24,17 +24,17 @@ jobs:
           owner: edictum-ai
           repositories: edictum-ts,edictum-go
 
-      - name: Create TypeScript tracking issue
+      # SECURITY: Write title and body to files to prevent shell injection
+      # via crafted PR titles containing quotes or shell metacharacters.
+      - name: Prepare issue content
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          gh issue create --repo edictum-ai/edictum-ts \
-            --title "Port: ${PR_TITLE}" \
-            --label "parity:blocking,feature-parity" \
-            --body "Python reference landed in ${PR_URL}
+          printf 'Port: %s' "$PR_TITLE" > /tmp/issue-title.txt
+
+          cat > /tmp/issue-body-ts.md <<BODY_EOF
+          Python reference landed in ${PR_URL}
 
           Port this feature to TypeScript with matching behavior.
 
@@ -42,19 +42,11 @@ jobs:
           - [ ] Implementation matches Python API surface
           - [ ] Shared behavioral fixtures pass
           - [ ] TypeScript-native tests written
-          - [ ] Security tests if touching security boundary"
+          - [ ] Security tests if touching security boundary
+          BODY_EOF
 
-      - name: Create Go tracking issue
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          gh issue create --repo edictum-ai/edictum-go \
-            --title "Port: ${PR_TITLE}" \
-            --label "parity:blocking,feature-parity" \
-            --body "Python reference landed in ${PR_URL}
+          cat > /tmp/issue-body-go.md <<BODY_EOF
+          Python reference landed in ${PR_URL}
 
           Port this feature to Go with matching behavior.
 
@@ -63,4 +55,23 @@ jobs:
           - [ ] Shared behavioral fixtures pass
           - [ ] Go-native tests written
           - [ ] Race detector passes
-          - [ ] Security tests if touching security boundary"
+          - [ ] Security tests if touching security boundary
+          BODY_EOF
+
+      - name: Create TypeScript tracking issue
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh issue create --repo edictum-ai/edictum-ts \
+            --title "$(cat /tmp/issue-title.txt)" \
+            --label "parity:blocking,feature-parity" \
+            --body-file /tmp/issue-body-ts.md
+
+      - name: Create Go tracking issue
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh issue create --repo edictum-ai/edictum-go \
+            --title "$(cat /tmp/issue-title.txt)" \
+            --label "parity:blocking,feature-parity" \
+            --body-file /tmp/issue-body-go.md
