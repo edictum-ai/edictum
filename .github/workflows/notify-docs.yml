@@ -34,7 +34,7 @@ jobs:
       !contains(github.event.pull_request.labels.*.name, 'no-docs') &&
       github.actor != 'dependabot[bot]' &&
       github.actor != 'renovate[bot]'
-    runs-on: self-hosted
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     steps:
       - name: Generate app token
         id: app-token

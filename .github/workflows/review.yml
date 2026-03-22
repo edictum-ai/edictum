@@ -14,7 +14,7 @@ concurrency:
 jobs:
   review:
     if: github.event.pull_request.draft == false
-    runs-on: self-hosted
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     timeout-minutes: 15
     permissions:
       contents: read
