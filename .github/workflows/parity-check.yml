@@ -1,0 +1,52 @@
+name: Parity Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 4 * * 1'  # Weekly Monday 4am UTC
+
+permissions:
+  contents: read
+
+jobs:
+  behavioral-fixtures:
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: edictum-ai/edictum-schemas
+          path: edictum-schemas
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -e ".[dev,yaml,sinks,cli]"
+
+      # PLACEHOLDER: Fixture runners are not yet implemented.
+      # These steps verify the fixtures directory exists but do NOT validate
+      # parity. Do NOT promote this workflow to a required status check until
+      # the actual fixture runner is implemented.
+      - name: Run behavioral fixtures
+        run: |
+          echo "::notice::Fixture runner not yet implemented — this check is a placeholder"
+          if [ ! -d edictum-schemas/fixtures/behavioral ]; then
+            echo "::warning::edictum-schemas/fixtures/behavioral/ not found — checkout may have failed"
+          else
+            echo "Fixtures available:"
+            ls edictum-schemas/fixtures/behavioral/
+          fi
+
+      - name: Run adversarial fixtures
+        run: |
+          echo "::notice::Adversarial fixture runner not yet implemented — this check is a placeholder"
+          if [ ! -d edictum-schemas/fixtures/adversarial ]; then
+            echo "::warning::edictum-schemas/fixtures/adversarial/ not found — checkout may have failed"
+          else
+            echo "Adversarial fixtures available:"
+            ls edictum-schemas/fixtures/adversarial/
+          fi
