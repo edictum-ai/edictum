@@ -1,0 +1,100 @@
+name: Notify Parity
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  notify:
+    name: Create port tracking issues
+    if: |
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'feature-parity')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: edictum-ai
+          repositories: edictum-ts,edictum-go
+
+      # SECURITY: Write title and body to files to prevent shell injection
+      # via crafted PR titles containing quotes or shell metacharacters.
+      # Heredocs use quoted delimiters (<<'EOF') to disable shell expansion.
+      # PR_URL is injected via Python to avoid sed delimiter injection.
+      # Temp files are namespaced by run ID for self-hosted runner safety.
+      - name: Prepare issue content
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          TMPDIR="/tmp/notify-parity-${RUN_ID}"
+          mkdir -p "$TMPDIR"
+          printf 'Port: %s' "$PR_TITLE" > "${TMPDIR}/issue-title.txt"
+
+          cat > "${TMPDIR}/issue-body-ts.md" <<'BODY_EOF'
+          Python reference landed in __PR_URL__
+
+          Port this feature to TypeScript with matching behavior.
+
+          ## Checklist
+          - [ ] Implementation matches Python API surface
+          - [ ] Shared behavioral fixtures pass
+          - [ ] TypeScript-native tests written
+          - [ ] Security tests if touching security boundary
+          BODY_EOF
+
+          cat > "${TMPDIR}/issue-body-go.md" <<'BODY_EOF'
+          Python reference landed in __PR_URL__
+
+          Port this feature to Go with matching behavior.
+
+          ## Checklist
+          - [ ] Implementation matches Python API surface
+          - [ ] Shared behavioral fixtures pass
+          - [ ] Go-native tests written
+          - [ ] Race detector passes
+          - [ ] Security tests if touching security boundary
+          BODY_EOF
+
+          # Use Python for URL substitution to avoid sed delimiter injection.
+          # Derive tmpdir from RUN_ID (exported via env:) — shell TMPDIR is not
+          # exported and would cause KeyError in the subprocess.
+          python3 -c "
+          import os, pathlib
+          url = os.environ['PR_URL']
+          run_id = os.environ['RUN_ID']
+          tmpdir = pathlib.Path('/tmp') / f'notify-parity-{run_id}'
+          for f in ['issue-body-ts.md', 'issue-body-go.md']:
+              p = tmpdir / f
+              p.write_text(p.read_text().replace('__PR_URL__', url))
+          "
+
+      - name: Create TypeScript tracking issue
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          TMPDIR="/tmp/notify-parity-${RUN_ID}"
+          gh issue create --repo edictum-ai/edictum-ts \
+            --title "$(cat "${TMPDIR}/issue-title.txt")" \
+            --label "parity:blocking,feature-parity" \
+            --body-file "${TMPDIR}/issue-body-ts.md"
+
+      - name: Create Go tracking issue
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          TMPDIR="/tmp/notify-parity-${RUN_ID}"
+          gh issue create --repo edictum-ai/edictum-go \
+            --title "$(cat "${TMPDIR}/issue-title.txt")" \
+            --label "parity:blocking,feature-parity" \
+            --body-file "${TMPDIR}/issue-body-go.md"
