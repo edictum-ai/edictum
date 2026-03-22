@@ -64,12 +64,16 @@ jobs:
           - [ ] Security tests if touching security boundary
           BODY_EOF
 
-          # Use Python for URL substitution to avoid sed delimiter injection
+          # Use Python for URL substitution to avoid sed delimiter injection.
+          # Derive tmpdir from RUN_ID (exported via env:) — shell TMPDIR is not
+          # exported and would cause KeyError in the subprocess.
           python3 -c "
           import os, pathlib
           url = os.environ['PR_URL']
+          run_id = os.environ['RUN_ID']
+          tmpdir = pathlib.Path('/tmp') / f'notify-parity-{run_id}'
           for f in ['issue-body-ts.md', 'issue-body-go.md']:
-              p = pathlib.Path(os.environ['TMPDIR']) / f
+              p = tmpdir / f
               p.write_text(p.read_text().replace('__PR_URL__', url))
           "
 
