@@ -7,18 +7,20 @@ on:
 
 concurrency:
   group: review-${{ github.event.pull_request.number }}
-  # Fixes #130: don't kill mid-flight reviews on re-push.
-  # The last run to complete wins the sticky comment.
+  # Do NOT cancel in-progress: killing a review mid-flight and restarting
+  # on the latest push loses findings from the full diff analysis.
   cancel-in-progress: false
 
 jobs:
   review:
-    if: github.event.pull_request.draft == false
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.actor != 'dependabot[bot]'
     runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     timeout-minutes: 15
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: read
       issues: read
 
     steps:
@@ -56,18 +58,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install review tools (NOT the project)
+      - name: Install review tools
         run: pip install ruff
 
-      - name: Run Code Review
+      - name: Run code review
         id: review
         uses: anthropics/claude-code-action@9469d113c6afd29550c402740f22d1a97dd1209b # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app-token.outputs.token }}
-          model: claude-sonnet-4-6
-          # SECURITY: Claude writes /tmp/review.md only — no direct comment posting (#128).
-          claude_args: '--max-turns 30 --allowedTools "Bash(git diff:*),Bash(git log:*),Bash(cat:*),Bash(ruff:*),Read,Glob,Grep,Write"'
+          # SECURITY: Claude writes /tmp/review.md only — no direct comment posting.
+          claude_args: '--model claude-sonnet-4-6 --max-turns 30 --allowedTools "Bash(git diff:*),Bash(git log:*),Bash(cat:*),Bash(ruff:*),Read,Glob,Grep,Write"'
           prompt: |
             You are an adversarial code reviewer for Edictum — a **security product** (runtime contract enforcement for AI agent tool calls). A single vulnerability destroys the credibility of a startup that sells trust. Think like an attacker first, reviewer second.
 
@@ -107,9 +108,9 @@ jobs:
 
             6. **Severity classification** — assign carefully, the CI gate depends on this:
                - **Critical** (STATUS: fail, blocks merge): injection, fail-open, data corruption, secrets leaking, deny bypass, tier boundary violation — concrete exploitable attack path
-               - **Warning** (STATUS: warn, does NOT block merge): defense-in-depth gaps, missing tests, terminology violations, docs-code drift, adapter parity gaps — real findings without an immediate exploitable path
-               - **Suggestion**: naming, file size, minor improvements
-               Use `fail` ONLY for issues with a concrete, exploitable attack path. Warnings stay in the PR comment for the author to review.
+               - **Warning** (STATUS: warn, blocks merge): defense-in-depth gaps, missing tests, terminology violations, docs-code drift, adapter parity gaps — real findings without an immediate exploitable path
+               - **Suggestion**: naming, file size, minor improvements — does NOT block merge
+               Use `fail` ONLY for issues with a concrete, exploitable attack path. Use `warn` for real findings that should be addressed before merge. Suggestions are informational only.
 
             7. **Be exhaustive in ONE pass.** Find ALL issues in this single review — 5, 10, 20, however many exist. Do NOT stop at 2-3 and wait for another round. There will be no second pass. Use this checklist to ensure completeness:
                - [ ] Input validation on every trust boundary (user input, external data, storage keys)
@@ -151,8 +152,6 @@ jobs:
             - ALWAYS include file path + line number + concrete fix with code
             - Do NOT post comments directly — write to /tmp/review.md and /tmp/review-payload.json only. The workflow will post them.
 
-      # SECURITY: Validate review file before posting (#128).
-      # Prevents corrupt/garbage output from overwriting a good review.
       - name: Validate review output
         id: validate
         run: |
@@ -168,10 +167,67 @@ jobs:
           fi
           echo "valid=true" >> "$GITHUB_OUTPUT"
 
-      # Post review from validated file — Claude cannot post directly (#128).
-      # Reads local file, immune to comment injection race condition.
-      - name: Post review comment
+      - name: Upload review artifacts
         if: steps.validate.outputs.valid == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: review-comment
+          path: |
+            /tmp/review.md
+            /tmp/review-payload.json
+          retention-days: 1
+          if-no-files-found: ignore
+
+      # CI gate: fail on critical OR warning findings.
+      # Runs in the review job so the gate fires even if post is skipped.
+      # Reads local /tmp/review.md — immune to comment injection.
+      - name: Fail on findings
+        if: steps.validate.outputs.valid == 'true'
+        run: |
+          if grep -q '<!-- STATUS: fail -->' /tmp/review.md; then
+            echo "::error::Code review found critical issues. See PR comment for details."
+            exit 1
+          fi
+          if grep -q '<!-- STATUS: warn -->' /tmp/review.md; then
+            echo "::error::Code review found warnings that must be addressed. See PR comment for details."
+            exit 1
+          fi
+          echo "Code review passed."
+
+  # Separate job for posting the comment. Uses its own concurrency group
+  # with cancel-in-progress: true to serialize the check-then-act sequence
+  # and prevent duplicate sticky comments when multiple pushes arrive.
+  post:
+    needs: review
+    if: needs.review.result == 'success'
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+      issues: read
+
+    concurrency:
+      group: review-post-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+
+    steps:
+      # No checkout needed — post job only downloads an artifact and calls gh API.
+      # Avoids landing untrusted PR code on a runner with pull-requests: write.
+
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Download review artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: review-comment
+          path: /tmp
+
+      - name: Post or update sticky comment
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -180,33 +236,30 @@ jobs:
             --jq '[.[] | select(.body | contains("<!-- edictum-review -->"))] | last | .id // empty')
           if [ -n "$EXISTING_ID" ]; then
             gh api "repos/${{ github.repository }}/issues/comments/${EXISTING_ID}" \
-              -X PATCH -f body=@/tmp/review.md
+              -X PATCH -F body=@/tmp/review.md
+            echo "Updated existing review comment ${EXISTING_ID}"
           else
-            gh pr comment "${PR_NUMBER}" --body-file /tmp/review.md
+            gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+              -F body=@/tmp/review.md
+            echo "Created new review comment"
           fi
 
-      # Post inline comments if Claude produced them.
+      # SECURITY: Validate the event field before posting. A malicious diff
+      # could trick Claude into writing "event": "APPROVE" instead of "COMMENT",
+      # which would auto-approve the PR via the app token.
       - name: Post inline comments
-        if: steps.validate.outputs.valid == 'true'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           if [ -f /tmp/review-payload.json ]; then
+            EVENT=$(jq -r '.event // empty' /tmp/review-payload.json)
+            if [ "$EVENT" != "COMMENT" ]; then
+              echo "::error::review-payload.json event field is '${EVENT}', expected 'COMMENT' — rejecting (possible prompt injection)"
+              exit 1
+            fi
             gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
-              --input /tmp/review-payload.json || echo "::warning::Inline comments failed — some lines may not be in the diff"
+              --input /tmp/review-payload.json \
+              && echo "Posted inline review comments" \
+              || echo "::warning::Inline comments failed (line not in diff?). Summary comment still posted."
           fi
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
-      # CI gate: fail on critical findings (#125).
-      # Reads local /tmp/review.md, NOT the API — immune to comment injection (#128).
-      # Only STATUS: fail blocks; warn/pass do not (#135).
-      - name: Fail on critical findings
-        run: |
-          if [ ! -f /tmp/review.md ]; then
-            echo "::error::No review file produced — treating as gate failure. Claude may have exhausted turns or crashed."
-            exit 1
-          fi
-          if grep -q '<!-- STATUS: fail -->' /tmp/review.md; then
-            echo "::error::Code review found critical issues. See PR comment for details."
-            exit 1
-          fi
-          echo "Code review passed."
