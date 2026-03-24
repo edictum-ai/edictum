@@ -117,7 +117,12 @@ def __getattr__(name: str) -> object:
         module_path, attr = _YAML_ENGINE_ATTRS[name]
         import importlib
 
-        mod = importlib.import_module(module_path)
+        try:
+            mod = importlib.import_module(module_path)
+        except ImportError as exc:
+            raise AttributeError(
+                f"module 'edictum' has no attribute {name!r} — install yaml extras with: pip install 'edictum[yaml]'"
+            ) from exc
         value = getattr(mod, attr)
         # Cache on module to avoid repeated importlib calls
         globals()[name] = value
