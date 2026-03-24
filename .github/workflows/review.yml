@@ -197,9 +197,12 @@ jobs:
   # Separate job for posting the comment. Uses its own concurrency group
   # with cancel-in-progress: true to serialize the check-then-act sequence
   # and prevent duplicate sticky comments when multiple pushes arrive.
+  # Post job always runs (even when review gate fails) so the author
+  # can see what the reviewer found. The gate in the review job blocks
+  # the PR; this job just posts the comment.
   post:
     needs: review
-    if: needs.review.result == 'success'
+    if: always() && !cancelled()
     runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     timeout-minutes: 5
     permissions:
@@ -222,12 +225,15 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Download review artifacts
+        id: download
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: review-comment
           path: /tmp
+        continue-on-error: true
 
       - name: Post or update sticky comment
+        if: steps.download.outcome == 'success'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -248,6 +254,7 @@ jobs:
       # could trick Claude into writing "event": "APPROVE" instead of "COMMENT",
       # which would auto-approve the PR via the app token.
       - name: Post inline comments
+        if: steps.download.outcome == 'success'
         run: |
           if [ -f /tmp/review-payload.json ]; then
             EVENT=$(jq -r '.event // empty' /tmp/review-payload.json)
