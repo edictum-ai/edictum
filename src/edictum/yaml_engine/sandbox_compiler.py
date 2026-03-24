@@ -14,6 +14,12 @@ from edictum.envelope import ToolEnvelope
 # Matches: >>, >, <<, <, or fd-prefixed variants like 2>, 2>>.
 _REDIRECT_PREFIX_RE = re.compile(r"^(?:\d*>>|>>|\d*>|>|<<|<)")
 
+# Shell command separators that allow chaining multiple commands.
+# If ANY of these appear anywhere in the raw command string, _extract_command()
+# returns a sentinel value that never matches any allowlist — failing closed.
+# Covers: ;  |  &  &&  ||  \n  \r  `  $()  ${}  <()
+_SHELL_SEPARATOR_RE = re.compile(r"[;|&\n\r`]|\$\(|\$\{|\<\(")
+
 
 def _tokenize_command(cmd: str) -> list[str]:
     """Shell-aware tokenization of a command string.
@@ -108,10 +114,13 @@ def _extract_paths(envelope: ToolEnvelope) -> list[str]:
 def _extract_command(envelope: ToolEnvelope) -> str | None:
     """Extract the first command token from an envelope (shell-aware).
 
-    If the command string begins with a shell redirect operator
-    (e.g. ``> echo bad_cmd``), the actual command cannot be reliably
-    determined without full shell parsing.  Returns a sentinel that
-    never matches any allowed-command list so the sandbox denies.
+    Returns the sentinel ``\\x00`` (which never matches any allowlist) if:
+    - The command contains shell separators/metacharacters that could chain
+      multiple commands (;  |  &&  ||  \\n  \\r  ``  $()  ${}  <())
+    - The command begins with a shell redirect operator (> >> < <<)
+
+    This ensures command allowlists fail closed on any form of command
+    chaining, even if the first token is allowlisted.
     """
     cmd = envelope.bash_command or envelope.args.get("command")
     if not cmd or not isinstance(cmd, str):
@@ -119,6 +128,11 @@ def _extract_command(envelope: ToolEnvelope) -> str | None:
     stripped = cmd.strip()
     if not stripped:
         return None
+    # Check for shell command separators/metacharacters BEFORE extracting.
+    # If any are present, the shell would execute multiple commands — return
+    # sentinel value that never matches any allowlist.
+    if _SHELL_SEPARATOR_RE.search(stripped):
+        return "\x00"
     # If the raw first whitespace-token starts with a redirect operator,
     # the "command" is actually a redirect target (filename).  We cannot
     # recover the real command, so fail closed with a sentinel value that
