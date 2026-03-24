@@ -107,10 +107,19 @@ jobs:
                b. If pre-existing (not introduced by this PR): label as "ℹ️ Pre-existing:" per the Rules section — no severity classification, no fix required.
 
             6. **Severity classification** — assign carefully, the CI gate depends on this:
-               - **Critical** (STATUS: fail, blocks merge): injection, fail-open, data corruption, secrets leaking, deny bypass, tier boundary violation — concrete exploitable attack path
-               - **Warning** (STATUS: warn, blocks merge): defense-in-depth gaps, missing tests, terminology violations, docs-code drift, adapter parity gaps — real findings without an immediate exploitable path
-               - **Suggestion**: naming, file size, minor improvements — does NOT block merge
-               Use `fail` ONLY for issues with a concrete, exploitable attack path. Use `warn` for real findings that should be addressed before merge. Suggestions are informational only.
+               - **Critical** (STATUS: fail, blocks merge): concrete exploitable vulnerability with a demonstrable attack path — injection, fail-open on error, data corruption, secrets leaking, deny bypass, tier boundary violation. You must be able to describe the exact steps an attacker would take.
+               - **Warning** (STATUS: warn, blocks merge): a correctness bug that will produce wrong behavior in a real scenario TODAY — not hypothetically, not "if someone changes X in the future." Examples: missing input validation on a public API parameter that accepts untrusted data NOW, a deny decision that doesn't propagate to an adapter that exists NOW, an audit event that logs the wrong action NOW.
+               - **Suggestion** (STATUS: pass, does NOT block merge): everything else — style, naming, file size, test structure, theoretical future fragility, missing tests for non-security paths, documentation gaps, performance improvements, defensive hardening without a concrete current vulnerability.
+
+               **Do NOT use warn for:**
+               - File size exceeding guidelines (suggestion)
+               - Test ordering or timing assumptions (suggestion unless it causes false passes)
+               - Missing tests for non-security code paths (suggestion)
+               - Theoretical "if someone changes X in the future" scenarios (suggestion)
+               - Style or naming inconsistencies (suggestion)
+               - Pre-existing issues not introduced by this PR (not counted at all)
+
+               When in doubt, use suggestion. A warning that blocks merge costs the team a full CI cycle (~15 min + reviewer minutes). Only block merge when the code is demonstrably wrong TODAY.
 
             7. **Be exhaustive in ONE pass.** Find ALL issues in this single review — 5, 10, 20, however many exist. Do NOT stop at 2-3 and wait for another round. There will be no second pass. Use this checklist to ensure completeness:
                - [ ] Input validation on every trust boundary (user input, external data, storage keys)

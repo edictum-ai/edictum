@@ -119,5 +119,7 @@ Only list checks that were actually applied (based on file types changed).
 - Keep the summary table compact — details go in expandable sections
 - Link "Violates" references to the actual file in the repo
 - If zero issues: status is `pass`, include `{clean_section}`, omit issue sections
-- If only warnings/suggestions: status is `warn`
+- If only suggestions: status is `pass` (suggestions do NOT elevate to warn)
+- If any warnings: status is `warn`
 - If any critical: status is `fail`
+- A PR with only suggestions is a PASSING review — do not set status to warn
