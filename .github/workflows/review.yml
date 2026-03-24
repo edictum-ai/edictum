@@ -250,16 +250,26 @@ jobs:
             echo "Created new review comment"
           fi
 
-      # SECURITY: Validate the event field before posting. A malicious diff
-      # could trick Claude into writing "event": "APPROVE" instead of "COMMENT",
-      # which would auto-approve the PR via the app token.
+      # SECURITY: Validate and normalize the review payload before posting.
+      # Claude may write the full wrapper {"event":"COMMENT","comments":[...]}
+      # or just the comments array [...]. Normalize to the safe wrapper.
+      # Reject if event field is anything other than COMMENT (anti-prompt-injection).
       - name: Post inline comments
         if: steps.download.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           if [ -f /tmp/review-payload.json ]; then
+            TYPE=$(jq -r 'type' /tmp/review-payload.json)
+            if [ "$TYPE" = "array" ]; then
+              echo "Payload is a bare comments array — wrapping in COMMENT event object"
+              jq --arg sha "$PR_SHA" '{"commit_id": $sha, "event": "COMMENT", "body": "See summary comment for full review.", "comments": .}' /tmp/review-payload.json > /tmp/review-payload-wrapped.json
+              mv /tmp/review-payload-wrapped.json /tmp/review-payload.json
+            fi
             EVENT=$(jq -r '.event // empty' /tmp/review-payload.json)
             if [ "$EVENT" != "COMMENT" ]; then
-              echo "::error::review-payload.json event field is '${EVENT}', expected 'COMMENT' — rejecting (possible prompt injection)"
+              echo "::error::review-payload.json event='${EVENT}', expected 'COMMENT' — rejecting (possible prompt injection)"
               exit 1
             fi
             gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
@@ -267,6 +277,4 @@ jobs:
               && echo "Posted inline review comments" \
               || echo "::warning::Inline comments failed (line not in diff?). Summary comment still posted."
           fi
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
