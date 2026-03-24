@@ -50,7 +50,6 @@ from edictum.session import Session
 from edictum.storage import MemoryBackend, StorageBackend
 from edictum.telemetry import GovernanceTelemetry
 from edictum.types import HookRegistration
-from edictum.yaml_engine.composer import CompositionReport
 
 __all__ = [
     "__version__",
@@ -103,3 +102,29 @@ __all__ = [
     "CompositionReport",
     "TemplateInfo",
 ]
+
+# CompositionReport is lazy-loaded so that `import edictum` works without
+# pyyaml/jsonschema installed.  `from edictum import CompositionReport` still
+# works when yaml extras ARE installed — the actual import is deferred until
+# first access.
+_YAML_ENGINE_ATTRS: dict[str, tuple[str, str]] = {
+    "CompositionReport": ("edictum.yaml_engine.composer", "CompositionReport"),
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _YAML_ENGINE_ATTRS:
+        module_path, attr = _YAML_ENGINE_ATTRS[name]
+        import importlib
+
+        try:
+            mod = importlib.import_module(module_path)
+        except ImportError as exc:
+            raise AttributeError(
+                f"module 'edictum' has no attribute {name!r} — install yaml extras with: pip install 'edictum[yaml]'"
+            ) from exc
+        value = getattr(mod, attr)
+        # Cache on module to avoid repeated importlib calls
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module 'edictum' has no attribute {name!r}")
