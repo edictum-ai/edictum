@@ -864,5 +864,11 @@ try:
     from edictum.cli.gate_cli import gate
 
     cli.add_command(gate)
-except ImportError:
-    pass  # edictum[gate] not installed
+except ImportError as exc:
+    # If the import failed because gate_cli itself is missing, the gate
+    # extra is simply not installed — silently skip.  Any other
+    # ImportError (e.g. a transitive dependency like jsonschema missing)
+    # should surface so the user knows why `edictum gate` disappeared.
+    missing_module = getattr(exc, "name", None)
+    if missing_module != "edictum.cli.gate_cli":
+        _err_console.print(f"[yellow]Warning: edictum gate failed to load: {escape(str(exc))}[/yellow]")
