@@ -43,8 +43,6 @@ SHADOW_ALLOWLIST = {
     # Real file path in sandbox tests (with and without leading slash)
     "/etc/shadow",
     '"etc" / "shadow"',
-    # Deprecation alias (ShadowContract) — remove in v0.16.0
-    "ShadowContract",
 }
 
 # Files/dirs to skip

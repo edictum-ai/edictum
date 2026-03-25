@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.16.0
+
+### Added
+- **`edictum skill scan`** — deterministic security analysis for AI agent skill files (SKILL.md). Pattern matching for dangerous commands, credential access, exfiltration domains, obfuscation signals, and base64 payloads. Risk tiering: CRITICAL/HIGH/MEDIUM/CLEAN. JSON output, `--threshold` filtering, `--structural-only` mode, optional `--server` upload (#169)
+- **Ed25519 bundle signature verification** — `verify_signatures` and `signing_public_key` parameters on `from_server()`, `verify_bundle_signature()` and `BundleVerificationError` in `edictum.server`, `edictum[verified]` extra installs PyNaCl (#116)
+- **Server HTTPS enforcement** — `EdictumServerClient` enforces HTTPS by default; plaintext HTTP requires explicit `allow_http=True` (#114)
+- **Batch session counter reads** — `ServerSessionBackend.batch_get()` reduces HTTP round trips for session counter checks, with 405 fallback to sequential reads (#115, #120)
+- **Cross-SDK conformance runner** — shared rejection fixtures from `edictum-schemas` validate evaluation parity across Python, Go, and TypeScript SDKs (#168)
+- **Parity check workflow** — CI workflow validates cross-SDK fixture conformance on PRs and pushes to main (#156, #170)
+- **pdoc API reference generation** — auto-generated API docs from source docstrings (#153)
+
+### Fixed
+- **7 verified security bugs** — session injection via crafted session IDs, approval redaction leaking secrets in audit, sensitive key matching bypassed by substrings, observe-mode postconditions silently dropped, audit auth action misclassified, SSE reconnect timeout drift, Ed25519 key length validation (#138)
+- **Shell separators in command allowlist** — sandbox command allowlist checks now reject shell separators (`;`, `&&`, `||`, `|`) preventing command chaining bypasses (#167)
+- **Bash redaction on string values** — `redact_args` now applies bash-pattern redaction (API keys, tokens) to string values, not just command strings (#151)
+- **Word-boundary matching in `_is_sensitive_key`** — prevents false positives on substrings like "password_reset_url" matching "password" (#157)
+- **Shell-aware tokenization** — sandbox path and URL extraction uses proper shell tokenization instead of naive splitting (#112)
+- **`ToolEnvelope.__post_init__` validation** — prevents bypass via direct construction with invalid fields (#106)
+- **`CompositeSink` fault isolation** — emits to all sinks even when one fails, preventing audit loss (#108)
+- **Bare `$VAR` detection in `BashClassifier`** — catches unquoted variable expansions as potential injection vectors (#107)
+- **`reload()` atomicity** — contract replacement uses frozen state to prevent partial updates during in-flight evaluations (#117)
+- **`reload()` observe-mode reset** — reloading contracts now correctly resets observe-mode contract lists (#109)
+- **`from_multiple()` observe-mode merge** — guard merging now includes observe-mode contracts from all bundles (#110)
+- **Gate CLI resilience** — transitive import failures surface a warning instead of silently hiding the `gate` subcommand (#164)
+- **5 review findings** from PRs #136, #138, #140 — additional edge cases in security boundaries (#143)
+
+### Changed
+- **Terminology rename: `shadow_*` → `observe_*`** — all code identifiers, comments, docstrings, and CLI output now use "observe" terminology consistently (#118, #140)
+
+### Removed
+- **`ShadowContract` deprecation alias** — import `ObserveContract` from `edictum.yaml_engine` instead (deprecated since v0.15.0)
+- **`"shadows"` key in `edictum diff --json`** — use `"observe_contracts"` instead (deprecated since v0.15.0)
+
+### Security
+- **GitHub Actions supply chain hardening** — SHA-pinned actions, restricted permissions, injection-resistant review workflow (#94, #97)
+- **semantic-kernel bumped ≥1.39.4** — addresses CVE-2026-26030 and CVE-2026-25592 (#95)
+- **PyJWT bumped to 2.12.0** (#122)
+- **PyOpenSSL bumped to 26.0.0** (#131)
+
+### Infrastructure
+- Migrated to Blacksmith ARM runners (#158, #159)
+- Standardized CI workflows across all repos (#161)
+- Added Sigstore signing and SBOM generation to release workflow (#111)
+- Added format and typecheck steps to CI (#111)
+- Migrated GitHub URLs from `acartag7` to `edictum-ai` org (#96)
+- Updated development status to Beta
+
 ## 0.15.0
 
 ### Added
