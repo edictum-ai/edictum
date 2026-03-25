@@ -201,3 +201,21 @@ Before tagging a release:
 - Missing fields evaluate to `false`. Type mismatches yield deny/warn + `policy_error: true`
 - Regex: Python `re` module, single-quoted in YAML docs (`'\b'` not `"\b"`)
 - Bundle hash: SHA256 of raw YAML bytes -> `policy_version` on every audit event
+
+## Cross-SDK Conformance Workflow
+
+When a change affects shared semantics, YAML validation, fixture behavior, audit/envelope wire format, or policy evaluation behavior, you MUST follow this workflow before merging:
+
+1. **Update shared fixtures** in `edictum-schemas` — add or modify `fixtures/rejection/*.rejection.yaml` files as needed
+2. **Update canonical Python behavior** in this repo if the change originates here
+3. **Ensure all three SDKs pass** — Python, Go (`edictum-go`), and TypeScript (`edictum-ts`) shared-fixture runners must all pass with `EDICTUM_CONFORMANCE_REQUIRED=1`
+4. **Do not merge** parity-affecting behavior without the Parity Check workflow passing in all affected repos
+
+The conformance runner in this repo lives at `tests/test_conformance/test_rejection.py` and is executed in CI by:
+
+```bash
+EDICTUM_SCHEMAS_DIR=edictum-schemas EDICTUM_CONFORMANCE_REQUIRED=1 \
+  pytest tests/test_conformance/ -v
+```
+
+The `Parity Check` workflow (`.github/workflows/parity-check.yml`) runs on PRs to main, pushes to main, and weekly. It is intended to be a required status check.
