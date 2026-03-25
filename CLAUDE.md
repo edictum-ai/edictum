@@ -4,7 +4,7 @@
 
 Runtime contract enforcement for AI agent tool calls. Deterministic pipeline: preconditions, postconditions, session contracts, principal-aware enforcement. Eight framework adapters (LangChain, CrewAI, Agno, Semantic Kernel, OpenAI Agents SDK, Claude Agent SDK, Nanobot, Google ADK). Zero runtime deps in core.
 
-Current version: 0.15.0 (PyPI: `edictum`)
+Current version: 0.16.0 (PyPI: `edictum`)
 
 ## Architecture: Core + Server
 
@@ -85,7 +85,8 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - v0.11.2: Security hardening — ServerBackend fail-closed, BashClassifier operator coverage, symlink resolution in sandbox, approval timeout audit accuracy, tool_name validation, MemoryBackend atomicity
 - v0.11.3: Adversarial test suite, CI hardening (bandit + security test step), code-reviewer security criteria, architecture.md refresh
 - v0.14.0: Google ADK adapter — plugin and agent callback integration for Google Agent Development Kit (8th framework adapter)
-- v0.15.0 (unreleased): Ed25519 bundle signature verification — `verify_signatures` + `signing_public_key` params on `from_server()`, `verify_bundle_signature()` and `BundleVerificationError` in `edictum.server`, `edictum[verified]` extra (PyNaCl). Terminology rename `shadow_*` → `observe_*` across all code identifiers. Deprecation alias `ShadowContract` in `edictum.yaml_engine` (removed in v0.16.0). Backward-compat `"shadows"` key in `edictum diff --json` output (removed in v0.16.0). Lazy-load `CompositionReport` via PEP 562 `__getattr__` so `import edictum` succeeds without yaml extras installed; `edictum[yaml]` still required to use it. Gate CLI import error discrimination — transitive dep failures surface a warning instead of silently hiding the `gate` subcommand. `edictum skill scan` subcommand — deterministic security analysis for AI agent skill files (SKILL.md). Pattern matching for dangerous commands, credential access, exfiltration domains, obfuscation signals, and base64 payloads. Risk tiering: CRITICAL/HIGH/MEDIUM/CLEAN. JSON output, --threshold filtering, --structural-only mode, optional --server upload
+- v0.15.0: Edictum Gate (coding assistant governance), `CollectingAuditSink`, `Edictum.from_server()`, `Edictum.reload()`, `Edictum.close()`, SSE watcher, server contract source revision tracking, `ServerAuditSink` multi-bundle support. Default audit sink changed from `StdoutAuditSink` to `CollectingAuditSink` only.
+- v0.16.0: `edictum skill scan` CLI for skill security analysis. Ed25519 bundle signature verification (`edictum[verified]`). Server HTTPS enforcement. Batch session counter reads. Cross-SDK conformance runner. Terminology rename `shadow_*` → `observe_*` completed. Removed `ShadowContract` deprecation alias and `"shadows"` backward-compat JSON key. 14 security fixes including session injection, shell separator bypass, and redaction gaps.
 
 ## Session Model
 
