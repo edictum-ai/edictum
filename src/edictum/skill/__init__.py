@@ -6,6 +6,7 @@ Public API: scan_skill, scan_directory, discover_skills, result_to_dict.
 from __future__ import annotations
 
 import signal
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -89,8 +90,10 @@ def _scan_skill_with_timeout(skill_dir: Path) -> SkillScanResult | None:
     try:
         return scan_skill(skill_dir)
     except TimeoutError:
+        print(f"Warning: timeout scanning {skill_dir}", file=sys.stderr, flush=True)
         return None
-    except Exception:
+    except Exception as exc:
+        print(f"Warning: error scanning {skill_dir}: {type(exc).__name__}", file=sys.stderr, flush=True)
         return None
     finally:
         if alarm_supported:

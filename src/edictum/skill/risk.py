@@ -266,57 +266,34 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
             seen.add(key)
             unique_findings.append(f)
 
-    # --- TIER CLASSIFICATION ---
+    # --- TIER CLASSIFICATION (highest match wins) ---
+    fzn = tuple(unique_findings)
 
-    # CRITICAL: never legitimate, immediate action required
-    if has_dangerous_b64_shell:
-        # base64 blob decodes to shell command with dangerous pattern
-        return RiskClassification(RiskLevel.CRITICAL, tuple(unique_findings), result)
+    is_critical = (
+        has_dangerous_b64_shell
+        or (has_pipe_to_shell and has_public_ip)
+        or has_reverse_shell
+        or (has_credential_access and has_exfil_domain)
+    )
+    if is_critical:
+        return RiskClassification(RiskLevel.CRITICAL, fzn, result)
 
-    if has_pipe_to_shell and has_public_ip:
-        # pipe-to-shell + raw IP address (non-RFC1918)
-        return RiskClassification(RiskLevel.CRITICAL, tuple(unique_findings), result)
+    is_high = (
+        has_exfil_domain
+        or has_credential_access
+        or has_eval_exec
+        or has_sudo
+        or has_chmod_dangerous
+        or has_dd_device
+        or has_dangerous_command
+        or has_b64_shell
+        or has_obfuscation
+    )
+    if is_high:
+        return RiskClassification(RiskLevel.HIGH, fzn, result)
 
-    if has_reverse_shell:
-        # reverse shell patterns
-        return RiskClassification(RiskLevel.CRITICAL, tuple(unique_findings), result)
+    is_medium = has_pipe_to_shell or has_high_entropy or has_password_archive or high_external_domains or has_truncation
+    if is_medium:
+        return RiskClassification(RiskLevel.MEDIUM, fzn, result)
 
-    if has_credential_access and has_exfil_domain:
-        # credential path access + exfil domain in same skill
-        return RiskClassification(RiskLevel.CRITICAL, tuple(unique_findings), result)
-
-    # HIGH: likely dangerous, review required
-    if has_exfil_domain:
-        return RiskClassification(RiskLevel.HIGH, tuple(unique_findings), result)
-
-    if has_credential_access:
-        return RiskClassification(RiskLevel.HIGH, tuple(unique_findings), result)
-
-    if has_eval_exec or has_sudo or has_chmod_dangerous or has_dd_device or has_dangerous_command:
-        return RiskClassification(RiskLevel.HIGH, tuple(unique_findings), result)
-
-    if has_b64_shell:
-        # base64 decodes to shell command (without dangerous pattern)
-        return RiskClassification(RiskLevel.HIGH, tuple(unique_findings), result)
-
-    if has_obfuscation:
-        return RiskClassification(RiskLevel.HIGH, tuple(unique_findings), result)
-
-    # MEDIUM: suspicious, worth reviewing
-    if has_pipe_to_shell:
-        return RiskClassification(RiskLevel.MEDIUM, tuple(unique_findings), result)
-
-    if has_high_entropy:
-        return RiskClassification(RiskLevel.MEDIUM, tuple(unique_findings), result)
-
-    if has_password_archive:
-        return RiskClassification(RiskLevel.MEDIUM, tuple(unique_findings), result)
-
-    if high_external_domains:
-        return RiskClassification(RiskLevel.MEDIUM, tuple(unique_findings), result)
-
-    if has_truncation:
-        return RiskClassification(RiskLevel.MEDIUM, tuple(unique_findings), result)
-
-    # CLEAN: no actionable findings (may still have "no contracts.yaml" informational)
-    return RiskClassification(RiskLevel.CLEAN, tuple(unique_findings), result)
+    return RiskClassification(RiskLevel.CLEAN, fzn, result)
