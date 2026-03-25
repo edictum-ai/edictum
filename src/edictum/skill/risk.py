@@ -51,7 +51,7 @@ _RISK_ORDER: dict[RiskLevel, int] = {
 
 
 @dataclass(frozen=True)
-class Finding:
+class ScanFinding:
     """A single security finding within a skill."""
 
     message: str
@@ -63,7 +63,7 @@ class RiskClassification:
     """Risk classification for a scanned skill."""
 
     level: RiskLevel
-    findings: tuple[Finding, ...]
+    findings: tuple[ScanFinding, ...]
     result: SkillScanResult
 
 
@@ -73,7 +73,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
     Tier precedence: CRITICAL > HIGH > MEDIUM > CLEAN.
     A skill is classified at its highest-severity finding.
     """
-    findings: list[Finding] = []
+    findings: list[ScanFinding] = []
 
     # Gather all features for cross-block analysis
     has_pipe_to_shell = False
@@ -100,7 +100,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         if cb.pipe_to_shell:
             has_pipe_to_shell = True
             findings.append(
-                Finding(
+                ScanFinding(
                     message="pipe to shell detected",
                     line=line,
                 )
@@ -112,7 +112,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
                 has_public_ip = True
                 public_ips.append(ip)
                 findings.append(
-                    Finding(
+                    ScanFinding(
                         message=f"public IP address: {ip}",
                         line=line,
                     )
@@ -123,7 +123,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
             if cmd in REVERSE_SHELL_LABELS:
                 has_reverse_shell = True
                 findings.append(
-                    Finding(
+                    ScanFinding(
                         message=f"reverse shell pattern: {cmd}",
                         line=line,
                     )
@@ -133,7 +133,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         for domain in cb.exfil_domains:
             has_exfil_domain = True
             findings.append(
-                Finding(
+                ScanFinding(
                     message=f"exfiltration domain: {domain}",
                     line=line,
                 )
@@ -143,7 +143,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         for cred in cb.credential_paths:
             has_credential_access = True
             findings.append(
-                Finding(
+                ScanFinding(
                     message=f"credential path access: {cred}",
                     line=line,
                 )
@@ -155,7 +155,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
                 if blob.dangerous_pattern:
                     has_dangerous_b64_shell = True
                     findings.append(
-                        Finding(
+                        ScanFinding(
                             message=f"base64 payload decodes to shell command ({blob.dangerous_pattern})",
                             line=line,
                         )
@@ -163,7 +163,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
                 else:
                     has_b64_shell = True
                     findings.append(
-                        Finding(
+                        ScanFinding(
                             message="base64 payload decodes to shell command",
                             line=line,
                         )
@@ -175,28 +175,28 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
                 continue  # already handled above
             if cmd in ("eval_exec", "python_shell_exec"):
                 has_eval_exec = True
-                findings.append(Finding(message=f"dangerous command: {cmd}", line=line))
+                findings.append(ScanFinding(message=f"dangerous command: {cmd}", line=line))
             elif cmd == "sudo_usage":
                 has_sudo = True
-                findings.append(Finding(message="sudo usage", line=line))
+                findings.append(ScanFinding(message="sudo usage", line=line))
             elif cmd == "chmod_dangerous":
                 has_chmod_dangerous = True
-                findings.append(Finding(message="chmod 777 or setuid", line=line))
+                findings.append(ScanFinding(message="chmod 777 or setuid", line=line))
             elif cmd == "dd_device_write":
                 has_dd_device = True
-                findings.append(Finding(message="dd write to device", line=line))
+                findings.append(ScanFinding(message="dd write to device", line=line))
             elif cmd in ("hex_shellcode", "js_char_construction", "base64_decode_runtime"):
                 has_obfuscation = True
-                findings.append(Finding(message=f"obfuscation: {cmd}", line=line))
+                findings.append(ScanFinding(message=f"obfuscation: {cmd}", line=line))
             elif cmd not in ("ssh_key_access", "passwd_access", "shadow_access", "exfiltration_keyword"):
                 # Generic dangerous command
-                findings.append(Finding(message=f"dangerous command: {cmd}", line=line))
+                findings.append(ScanFinding(message=f"dangerous command: {cmd}", line=line))
 
         # Obfuscation signals
         for sig in cb.obfuscation_signals:
             has_obfuscation = True
             findings.append(
-                Finding(
+                ScanFinding(
                     message=f"obfuscation signal: {sig}",
                     line=line,
                 )
@@ -206,7 +206,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         if cb.entropy_score >= 5.5:
             has_high_entropy = True
             findings.append(
-                Finding(
+                ScanFinding(
                     message=f"high entropy code block ({cb.entropy_score:.1f} bits/char)",
                     line=line,
                 )
@@ -216,7 +216,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         if cb.password_protected_archives:
             has_password_archive = True
             findings.append(
-                Finding(
+                ScanFinding(
                     message="password-protected archive reference",
                     line=line,
                 )
@@ -226,18 +226,18 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
     if result.risk_signals.external_domain_count > 5:
         high_external_domains = True
         findings.append(
-            Finding(
+            ScanFinding(
                 message=f"unusual number of external domains ({result.risk_signals.external_domain_count})",
             )
         )
 
     # No contracts (always reported as informational)
     if result.risk_signals.no_contracts:
-        findings.append(Finding(message="no contracts.yaml"))
+        findings.append(ScanFinding(message="no contracts.yaml"))
 
     # Deduplicate findings by message
     seen: set[str] = set()
-    unique_findings: list[Finding] = []
+    unique_findings: list[ScanFinding] = []
     for f in findings:
         key = f"{f.message}:{f.line}"
         if key not in seen:

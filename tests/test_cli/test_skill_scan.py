@@ -30,7 +30,8 @@ class TestSkillScanCLI:
     def test_scan_directory_finds_all(self) -> None:
         result = self.runner.invoke(cli, ["skill", "scan", str(FIXTURES)])
         assert result.exit_code == 1  # CRITICAL findings exist
-        assert "skills found" in result.output
+        # Check for key content (avoid matching exact line-wrapped text from Rich)
+        assert "8 skills" in result.output.replace("\n", " ")
 
     def test_json_output_is_valid(self) -> None:
         result = self.runner.invoke(cli, ["skill", "scan", str(FIXTURES), "--json"])

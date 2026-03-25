@@ -10,7 +10,7 @@ import datetime
 import json
 from typing import Any
 
-from edictum.skill.risk import Finding, RiskClassification, RiskLevel
+from edictum.skill.risk import RiskClassification, RiskLevel, ScanFinding
 from edictum.skill.scanner import result_to_dict
 
 # ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ def _skill_label(classification: RiskClassification) -> str:
     return r.skill_name
 
 
-def _finding_lines(findings: tuple[Finding, ...]) -> list[str]:
+def _finding_lines(findings: tuple[ScanFinding, ...]) -> list[str]:
     """Format findings as indented tree lines for Rich output."""
     lines: list[str] = []
     for i, f in enumerate(findings):

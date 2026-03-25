@@ -194,7 +194,7 @@ def _send_to_server(classifications: list, server_url: str, skills_dir: str) -> 
             timeout=30.0,
         )
         if resp.status_code < 300:
-            _console.print(f"[green]Results sent to {server_url}[/green]")
+            _console.print(f"[green]Results sent to {escape(server_url)}[/green]")
         else:
             _err_console.print(f"[yellow]Warning: server returned {resp.status_code}[/yellow]")
     except httpx.HTTPError as e:
