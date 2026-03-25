@@ -43,7 +43,15 @@ def discover_skills(root: Path) -> list[Path]:
     """Find all SKILL.md files under root directory.
 
     Returns paths to skill directories (parents of SKILL.md files).
+
+    Fail-open by design: an OSError mid-enumeration (e.g., permission
+    denied on one subdirectory) returns partial results with a stderr
+    warning rather than failing the entire scan.  Fail-closed would mean
+    a single unreadable directory prevents scanning all other skills —
+    unacceptable for a CLI tool scanning 34k+ skill directories.
     """
+    import sys
+
     results: list[Path] = []
     try:
         for skill_md in sorted(root.rglob("SKILL.md")):
@@ -51,8 +59,8 @@ def discover_skills(root: Path) -> list[Path]:
                 continue  # reject symlinked SKILL.md — prevents arbitrary file read
             if skill_md.is_file():
                 results.append(skill_md.parent)
-    except OSError:
-        pass
+    except OSError as exc:
+        print(f"Warning: skill discovery interrupted: {exc}", file=sys.stderr, flush=True)
     return results
 
 
