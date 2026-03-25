@@ -9,7 +9,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
-from edictum.skill.patterns import REVERSE_SHELL_LABELS, is_private_ip
+from edictum.skill.patterns import HIGH_ENTROPY_THRESHOLD, REVERSE_SHELL_LABELS, is_private_ip
 from edictum.skill.scanner import SkillScanResult
 
 
@@ -188,7 +188,15 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
             elif cmd in ("hex_shellcode", "js_char_construction", "base64_decode_runtime"):
                 has_obfuscation = True
                 findings.append(ScanFinding(message=f"obfuscation: {cmd}", line=line))
-            elif cmd not in ("ssh_key_access", "passwd_access", "shadow_access", "exfiltration_keyword"):
+            elif cmd in ("ssh_key_access", "shadow_access"):
+                has_credential_access = True
+                findings.append(ScanFinding(message=f"credential-adjacent access: {cmd}", line=line))
+            elif cmd == "passwd_access":
+                findings.append(ScanFinding(message="passwd command usage", line=line))
+            elif cmd == "exfiltration_keyword":
+                has_exfil_domain = True
+                findings.append(ScanFinding(message="exfiltration keyword detected", line=line))
+            else:
                 # Generic dangerous command
                 findings.append(ScanFinding(message=f"dangerous command: {cmd}", line=line))
 
@@ -203,7 +211,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
             )
 
         # High entropy
-        if cb.entropy_score >= 5.5:
+        if cb.entropy_score >= HIGH_ENTROPY_THRESHOLD:
             has_high_entropy = True
             findings.append(
                 ScanFinding(
