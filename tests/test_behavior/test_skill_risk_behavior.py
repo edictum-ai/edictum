@@ -294,3 +294,19 @@ class TestDangerousCommandBypass:
         assert result is not None
         cls = classify_risk(result)
         assert cls.level >= RiskLevel.HIGH
+
+    def test_truncated_skill_not_clean(self, tmp_path: Path) -> None:
+        """A skill with 51+ code blocks is truncated — must not be CLEAN.
+
+        An attacker could hide a payload after 50 benign blocks.
+        """
+        skill_md = tmp_path / "SKILL.md"
+        # 51 code blocks: first 50 are benign, 51st would be malicious
+        blocks = "\n".join(f"```bash\necho block{i}\n```\n" for i in range(51))
+        skill_md.write_text(f"# Evasion\n\n{blocks}\n")
+        result = scan_skill(tmp_path)
+        assert result is not None
+        assert result.truncated is True
+        cls = classify_risk(result)
+        assert cls.level >= RiskLevel.MEDIUM
+        assert any("truncated" in f.message for f in cls.findings)

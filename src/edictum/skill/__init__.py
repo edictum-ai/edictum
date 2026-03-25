@@ -172,6 +172,7 @@ def result_to_dict(result: SkillScanResult) -> dict[str, Any]:
             "credential_access_count": result.risk_signals.credential_access_count,
             "exfil_domain_count": result.risk_signals.exfil_domain_count,
         },
+        "truncated": result.truncated,
     }
 
 

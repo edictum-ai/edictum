@@ -85,4 +85,5 @@ class SkillScanResult:
     frontmatter: FrontmatterFeatures
     structural: StructuralFeatures
     risk_signals: RiskSignals
-    skill_dir: Path
+    truncated: bool = False  # True if code blocks exceeded MAX_CODE_BLOCKS
+    skill_dir: Path = Path(".")

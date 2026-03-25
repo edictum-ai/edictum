@@ -240,6 +240,12 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
             )
         )
 
+    # Truncation warning — analysis was incomplete, could hide payloads
+    has_truncation = False
+    if result.truncated:
+        has_truncation = True
+        findings.append(ScanFinding(message="analysis truncated: code blocks exceeded limit (potential evasion)"))
+
     # No contracts (always reported as informational)
     if result.risk_signals.no_contracts:
         findings.append(ScanFinding(message="no contracts.yaml"))
@@ -300,6 +306,9 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         return RiskClassification(RiskLevel.MEDIUM, tuple(unique_findings), result)
 
     if high_external_domains:
+        return RiskClassification(RiskLevel.MEDIUM, tuple(unique_findings), result)
+
+    if has_truncation:
         return RiskClassification(RiskLevel.MEDIUM, tuple(unique_findings), result)
 
     # CLEAN: no actionable findings (may still have "no contracts.yaml" informational)

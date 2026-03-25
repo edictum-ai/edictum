@@ -246,9 +246,11 @@ def scan_skill(skill_path: Path) -> SkillScanResult | None:
 
     code_blocks: list[CodeBlockFeatures] = []
     block_count = 0
+    truncated = False
     for match in CODE_BLOCK_RE.finditer(content):
         block_count += 1
         if block_count > MAX_CODE_BLOCKS:
+            truncated = True
             break
         language = match.group(1) or ""
         code = match.group(2)
@@ -268,5 +270,6 @@ def scan_skill(skill_path: Path) -> SkillScanResult | None:
         frontmatter=fm_features,
         structural=structural,
         risk_signals=risk,
+        truncated=truncated,
         skill_dir=skill_dir,
     )
