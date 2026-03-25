@@ -168,6 +168,14 @@ def scan_skill(skill_path: Path) -> SkillScanResult | None:
     else:
         return None
 
+    # Reject symlinked SKILL.md — prevents arbitrary file read via
+    # attacker-controlled skill directories (e.g., SKILL.md -> ~/.aws/credentials)
+    if skill_md.is_symlink():
+        return None
+
+    if not skill_md.exists():
+        return None
+
     if not skill_md.exists():
         return None
 

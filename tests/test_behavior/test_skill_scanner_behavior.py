@@ -299,6 +299,39 @@ class TestDiscoverSkills:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.security
+class TestSymlinkProtection:
+    """Symlinked SKILL.md must not be followed — prevents arbitrary file read."""
+
+    def test_symlink_skill_md_skipped_by_discover(self, tmp_path: Path) -> None:
+        """discover_skills must not return directories with symlinked SKILL.md."""
+        target = tmp_path / "secret.txt"
+        target.write_text("AWS_SECRET_ACCESS_KEY=hunter2")
+        skill_dir = tmp_path / "evil-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").symlink_to(target)
+        dirs = discover_skills(tmp_path)
+        assert len(dirs) == 0
+
+    def test_symlink_skill_md_skipped_by_scan(self, tmp_path: Path) -> None:
+        """scan_skill must return None for symlinked SKILL.md."""
+        target = tmp_path / "secret.txt"
+        target.write_text("AWS_SECRET_ACCESS_KEY=hunter2")
+        skill_dir = tmp_path / "evil-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").symlink_to(target)
+        result = scan_skill(skill_dir)
+        assert result is None
+
+    def test_real_skill_md_still_works(self, tmp_path: Path) -> None:
+        """Non-symlinked SKILL.md is scanned normally."""
+        skill_dir = tmp_path / "good-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("# Good Skill\n\nNormal content.\n")
+        result = scan_skill(skill_dir)
+        assert result is not None
+
+
 class TestImmutability:
     def test_scan_result_is_frozen(self) -> None:
         result = scan_skill(FIXTURES / "clean-weather")

@@ -47,6 +47,8 @@ def discover_skills(root: Path) -> list[Path]:
     results: list[Path] = []
     try:
         for skill_md in sorted(root.rglob("SKILL.md")):
+            if skill_md.is_symlink():
+                continue  # reject symlinked SKILL.md — prevents arbitrary file read
             if skill_md.is_file():
                 results.append(skill_md.parent)
     except OSError:
