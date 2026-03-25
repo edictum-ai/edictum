@@ -94,6 +94,54 @@ class TestSkillScanCLI:
         assert "scan" in result.output
 
 
+class TestServerFlag:
+    """Tests for --server and --allow-http flags."""
+
+    def setup_method(self) -> None:
+        self.runner = CliRunner()
+
+    def test_http_server_blocked_by_default(self) -> None:
+        result = self.runner.invoke(
+            cli, ["skill", "scan", str(FIXTURES / "clean-weather"), "--server", "http://example.com"]
+        )
+        assert result.exit_code == 2
+        assert "HTTPS" in result.output
+
+    def test_https_server_accepted(self) -> None:
+        # Server won't exist — but it should get past URL validation and attempt scan
+        result = self.runner.invoke(
+            cli, ["skill", "scan", str(FIXTURES / "clean-weather"), "--server", "https://example.com"]
+        )
+        # exit 0 (clean skill, server POST will fail but is non-blocking)
+        assert result.exit_code == 0
+
+    def test_allow_http_overrides_block(self) -> None:
+        result = self.runner.invoke(
+            cli,
+            ["skill", "scan", str(FIXTURES / "clean-weather"), "--server", "http://example.com", "--allow-http"],
+        )
+        # Should NOT exit 2 — allow-http overrides the block
+        assert result.exit_code != 2
+
+    def test_invalid_scheme_rejected(self) -> None:
+        result = self.runner.invoke(
+            cli, ["skill", "scan", str(FIXTURES / "clean-weather"), "--server", "ftp://example.com"]
+        )
+        assert result.exit_code == 2
+
+
+class TestMultiWorker:
+    """Tests for --workers > 1 path."""
+
+    def setup_method(self) -> None:
+        self.runner = CliRunner()
+
+    def test_workers_2_produces_results(self) -> None:
+        result = self.runner.invoke(cli, ["skill", "scan", str(FIXTURES), "--workers", "2", "--json"])
+        data = json.loads(result.output)
+        assert data["total_scanned"] == 8
+
+
 class TestSkillScanExitCodes:
     """Verify exit code semantics per spec."""
 

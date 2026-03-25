@@ -115,7 +115,11 @@ def _analyze_structural(skill_dir: Path) -> StructuralFeatures:
                 contracts_valid = None  # can't validate without PyYAML
         except Exception as e:
             contracts_valid = False
-            contracts_error = str(e)
+            # Sanitize error message — YAML exceptions can include file content
+            err_str = type(e).__name__
+            if hasattr(e, "problem"):
+                err_str = f"{err_str}: {e.problem}"
+            contracts_error = err_str
 
     script_extensions: set[str] = set()
     total_size = 0
