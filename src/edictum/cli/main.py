@@ -879,3 +879,20 @@ try:
 except ImportError as exc:
     if _should_warn_gate_import(exc):
         _err_console.print(f"[yellow]Warning: edictum gate failed to load: {escape(str(exc))}[/yellow]")
+
+
+# ---------------------------------------------------------------------------
+# skill subgroup (lazy import — uses edictum[cli] deps only)
+# ---------------------------------------------------------------------------
+
+
+try:
+    from edictum.cli.skill_cli import skill
+
+    cli.add_command(skill)
+except ImportError as exc:
+    # skill_cli only needs click/rich (already available in CLI context),
+    # but warn if a transitive dep is missing.
+    missing_module = getattr(exc, "name", None)
+    if missing_module != "edictum.cli.skill_cli":
+        _err_console.print(f"[yellow]Warning: edictum skill failed to load: {escape(str(exc))}[/yellow]")
