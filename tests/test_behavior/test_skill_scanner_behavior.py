@@ -10,12 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from edictum.skill import discover_skills, scan_directory, scan_skill
 from edictum.skill.scanner import (
     analyze_code_block,
     classify_base64_blob,
-    discover_skills,
-    scan_directory,
-    scan_skill,
     shannon_entropy,
 )
 

@@ -10,8 +10,8 @@ import datetime
 import json
 from typing import Any
 
+from edictum.skill import result_to_dict
 from edictum.skill.risk import RiskClassification, RiskLevel, ScanFinding
-from edictum.skill.scanner import result_to_dict
 
 # ---------------------------------------------------------------------------
 # Rich output helpers (lazy import — only needed for human-readable mode)

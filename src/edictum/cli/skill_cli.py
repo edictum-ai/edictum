@@ -57,8 +57,8 @@ def scan(
       1  Findings found above threshold.
       2  Scan error.
     """
+    from edictum.skill import scan_directory
     from edictum.skill.risk import RiskLevel, classify_risk
-    from edictum.skill.scanner import scan_directory
 
     if workers < 1:
         _err_console.print("[red]--workers must be >= 1[/red]")
