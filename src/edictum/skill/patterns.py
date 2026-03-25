@@ -25,29 +25,29 @@ HIGH_ENTROPY_THRESHOLD: float = 5.5
 # Dangerous command patterns
 # ---------------------------------------------------------------------------
 
-# Each tuple: (regex_string, label).  Compiled lazily via _compile_dangerous().
+# Each tuple: (compiled_pattern, label).
 # Non-greedy .*? used to mitigate ReDoS on long lines from untrusted input.
-DANGEROUS_COMMAND_PATTERNS: list[tuple[str, str]] = [
-    (r"\bcurl\b.*?\|\s*(?:ba)?sh\b", "curl_pipe_shell"),
-    (r"\bwget\b.*?\|\s*(?:ba)?sh\b", "wget_pipe_shell"),
-    (r"\bnc\s+-[^|]*-e\b", "netcat_reverse_shell"),
-    (r"\bncat\b.*?-e\b", "ncat_reverse_shell"),
-    (r"\bpython[23]?\s+-c\s+['\"].*?socket", "python_reverse_shell"),
-    (r"/dev/tcp/", "dev_tcp_reverse_shell"),
-    (r"\brm\s+-rf\s+/(?:\s|$)", "destructive_rm_root"),
-    (r"\bchmod\s+(?:777|[+]s)\b", "chmod_dangerous"),
-    (r"\bdd\s+.*?of=/dev/", "dd_device_write"),
-    (r"\bmkfs\b", "mkfs_format"),
-    (r"\b(?:eval|exec)\s*\(", "eval_exec"),
-    (r"(?:subprocess|os\.system|os\.popen)\s*\(", "python_shell_exec"),
-    (r"\bBase64\.decode", "base64_decode_runtime"),
-    (r"\\x[0-9a-fA-F]{2}(?:\\x[0-9a-fA-F]{2}){3,}", "hex_shellcode"),
-    (r"String\.fromCharCode\s*\(", "js_char_construction"),
-    (r"\bsudo\s+", "sudo_usage"),
-    (r"\bpasswd\b", "passwd_access"),
-    (r"\b/etc/shadow\b", "shadow_access"),
-    (r"~/.ssh/", "ssh_key_access"),
-    (r"\bDNS_EXFIL\b|\bexfiltrat", "exfiltration_keyword"),
+DANGEROUS_COMMAND_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bcurl\b.*?\|\s*(?:ba)?sh\b"), "curl_pipe_shell"),
+    (re.compile(r"\bwget\b.*?\|\s*(?:ba)?sh\b"), "wget_pipe_shell"),
+    (re.compile(r"\bnc\s+-[^|]*-e\b"), "netcat_reverse_shell"),
+    (re.compile(r"\bncat\b.*?-e\b"), "ncat_reverse_shell"),
+    (re.compile(r"\bpython[23]?\s+-c\s+['\"].*?socket"), "python_reverse_shell"),
+    (re.compile(r"/dev/tcp/"), "dev_tcp_reverse_shell"),
+    (re.compile(r"\brm\s+-rf\s+/(?:\s|$)"), "destructive_rm_root"),
+    (re.compile(r"\bchmod\s+(?:777|[+]s)\b"), "chmod_dangerous"),
+    (re.compile(r"\bdd\s+.*?of=/dev/"), "dd_device_write"),
+    (re.compile(r"\bmkfs\b"), "mkfs_format"),
+    (re.compile(r"\b(?:eval|exec)\s*\("), "eval_exec"),
+    (re.compile(r"(?:subprocess|os\.system|os\.popen)\s*\("), "python_shell_exec"),
+    (re.compile(r"\bBase64\.decode"), "base64_decode_runtime"),
+    (re.compile(r"\\x[0-9a-fA-F]{2}(?:\\x[0-9a-fA-F]{2}){3,}"), "hex_shellcode"),
+    (re.compile(r"String\.fromCharCode\s*\("), "js_char_construction"),
+    (re.compile(r"\bsudo\s+"), "sudo_usage"),
+    (re.compile(r"\bpasswd\b"), "passwd_access"),
+    (re.compile(r"\b/etc/shadow\b"), "shadow_access"),
+    (re.compile(r"~/.ssh/"), "ssh_key_access"),
+    (re.compile(r"\bDNS_EXFIL\b|\bexfiltrat"), "exfiltration_keyword"),
 ]
 
 # Reverse-shell specific labels (subset of dangerous commands).

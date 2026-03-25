@@ -104,8 +104,8 @@ def classify_base64_blob(raw: str) -> Base64BlobInfo | None:
     danger: str | None = None
     classification = "text"
 
-    for pattern_str, label in DANGEROUS_COMMAND_PATTERNS:
-        if re.search(pattern_str, decoded_text):
+    for pat, label in DANGEROUS_COMMAND_PATTERNS:
+        if pat.search(decoded_text):
             danger = label
             classification = "shell_command"
             break
@@ -212,8 +212,8 @@ def analyze_code_block(language: str, code: str, start_line: int, end_line: int)
     pipe_to_shell = bool(PIPE_TO_SHELL_RE.search(code))
 
     dangerous: set[str] = set()
-    for pattern_str, label in DANGEROUS_COMMAND_PATTERNS:
-        if re.search(pattern_str, code):
+    for pat, label in DANGEROUS_COMMAND_PATTERNS:
+        if pat.search(code):
             dangerous.add(label)
 
     commands: tuple[str, ...] = ()

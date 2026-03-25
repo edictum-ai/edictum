@@ -66,7 +66,8 @@ def _analyze_structural(skill_dir: Path) -> StructuralFeatures:
     contracts_path = skill_dir / "contracts.yaml"
     if not contracts_path.exists():
         contracts_path = skill_dir / "contracts.yml"
-    has_contracts = contracts_path.exists()
+    # Reject symlinked contracts files — same rationale as SKILL.md
+    has_contracts = contracts_path.exists() and not contracts_path.is_symlink()
 
     contracts_valid: bool | None = None
     contracts_error: str | None = None
@@ -171,9 +172,6 @@ def scan_skill(skill_path: Path) -> SkillScanResult | None:
     # Reject symlinked SKILL.md — prevents arbitrary file read via
     # attacker-controlled skill directories (e.g., SKILL.md -> ~/.aws/credentials)
     if skill_md.is_symlink():
-        return None
-
-    if not skill_md.exists():
         return None
 
     if not skill_md.exists():

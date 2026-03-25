@@ -323,6 +323,20 @@ class TestSymlinkProtection:
         result = scan_skill(skill_dir)
         assert result is None
 
+    def test_symlink_contracts_yaml_skipped(self, tmp_path: Path) -> None:
+        """Symlinked contracts.yaml must not be followed."""
+        target = tmp_path / "secret.txt"
+        target.write_text("secret content")
+        skill_dir = tmp_path / "evil-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("# Evil\n")
+        (skill_dir / "contracts.yaml").symlink_to(target)
+        result = scan_skill(skill_dir)
+        assert result is not None
+        # contracts.yaml is a symlink — should be treated as absent
+        assert result.structural.has_contracts_yaml is False
+        assert result.risk_signals.no_contracts is True
+
     def test_real_skill_md_still_works(self, tmp_path: Path) -> None:
         """Non-symlinked SKILL.md is scanned normally."""
         skill_dir = tmp_path / "good-skill"
