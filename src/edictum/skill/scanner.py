@@ -7,6 +7,7 @@ analysis lives in ``_analysis.py``; data classes in ``_types.py``.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from pathlib import Path
 
@@ -48,6 +49,26 @@ __all__ = [
     "shannon_entropy",
 ]
 
+# O_NOFOLLOW: atomically reject symlinks at open time (0 on platforms without it).
+_O_NOFOLLOW: int = getattr(os, "O_NOFOLLOW", 0)
+
+
+def _read_no_follow(path: Path, max_size: int) -> bytes | None:
+    """Read a file without following symlinks. Returns None on error.
+
+    Uses O_NOFOLLOW to atomically reject symlinks at open time,
+    eliminating the TOCTOU window between is_symlink() and read_bytes().
+    """
+    try:
+        fd = os.open(str(path), os.O_RDONLY | _O_NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        return os.read(fd, max_size)
+    finally:
+        os.close(fd)
+
+
 # Maximum files to enumerate in structural analysis.
 # Prevents symlink-tree DoS from attacker-controlled skill directories.
 _MAX_STRUCTURAL_FILES: int = 10_000
@@ -64,10 +85,12 @@ def _analyze_structural(skill_dir: Path) -> StructuralFeatures:
         return StructuralFeatures()
 
     contracts_path = skill_dir / "contracts.yaml"
-    if not contracts_path.exists():
+    if not contracts_path.exists() or contracts_path.is_symlink():
         contracts_path = skill_dir / "contracts.yml"
-    # Reject symlinked contracts files — same rationale as SKILL.md
-    has_contracts = contracts_path.exists() and not contracts_path.is_symlink()
+
+    # Read with O_NOFOLLOW to atomically reject symlinks (no TOCTOU)
+    contracts_bytes = _read_no_follow(contracts_path, MAX_FILE_SIZE)
+    has_contracts = contracts_bytes is not None
 
     contracts_valid: bool | None = None
     contracts_error: str | None = None
@@ -169,25 +192,13 @@ def scan_skill(skill_path: Path) -> SkillScanResult | None:
     else:
         return None
 
-    # Reject symlinked SKILL.md — prevents arbitrary file read via
-    # attacker-controlled skill directories (e.g., SKILL.md -> ~/.aws/credentials)
-    if skill_md.is_symlink():
+    # Atomic symlink-safe read using O_NOFOLLOW — no TOCTOU window.
+    # Rejects symlinked SKILL.md that could point to sensitive files.
+    raw_bytes = _read_no_follow(skill_md, MAX_FILE_SIZE + 1)
+    if raw_bytes is None:
         return None
 
-    if not skill_md.exists():
-        return None
-
-    try:
-        file_size = skill_md.stat().st_size
-    except OSError:
-        return None
-
-    if file_size > MAX_FILE_SIZE:
-        return None
-
-    try:
-        raw_bytes = skill_md.read_bytes()
-    except OSError:
+    if len(raw_bytes) > MAX_FILE_SIZE:
         return None
 
     try:

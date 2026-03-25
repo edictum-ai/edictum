@@ -34,12 +34,14 @@ def _skill_label(classification: RiskClassification) -> str:
 
 
 def _finding_lines(findings: tuple[ScanFinding, ...]) -> list[str]:
-    """Format findings as indented tree lines for Rich output."""
+    """Format findings as indented tree lines (pre-escaped for Rich output)."""
+    from rich.markup import escape
+
     lines: list[str] = []
     for i, f in enumerate(findings):
         connector = "\u2514\u2500" if i == len(findings) - 1 else "\u251c\u2500"
         line_info = f" (line {f.line})" if f.line else ""
-        lines.append(f"   {connector} {f.message}{line_info}")
+        lines.append(f"   {connector} {escape(f.message)}{line_info}")
     return lines
 
 
@@ -96,7 +98,7 @@ def format_human(
             display_findings = tuple(f for f in cls.findings if f.message == "no contracts.yaml")
 
         for finding_line in _finding_lines(display_findings):
-            lines.append(escape(finding_line))
+            lines.append(finding_line)  # already escaped by _finding_lines
 
         lines.append("")
 
