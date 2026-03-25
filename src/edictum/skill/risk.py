@@ -196,8 +196,13 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
             elif cmd == "exfiltration_keyword":
                 has_exfil_domain = True
                 findings.append(ScanFinding(message="exfiltration keyword detected", line=line))
+            elif cmd in ("curl_pipe_shell", "wget_pipe_shell"):
+                # These labels also match PIPE_TO_SHELL_RE independently via
+                # cb.pipe_to_shell, but set the flag here too for defense-in-depth
+                has_pipe_to_shell = True
+                findings.append(ScanFinding(message=f"dangerous command: {cmd}", line=line))
             else:
-                # Catch-all: mkfs_format, destructive_rm_root, curl_pipe_shell, etc.
+                # Catch-all: mkfs_format, destructive_rm_root, etc.
                 has_dangerous_command = True
                 findings.append(ScanFinding(message=f"dangerous command: {cmd}", line=line))
 

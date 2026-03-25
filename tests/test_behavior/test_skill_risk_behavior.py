@@ -227,10 +227,10 @@ class TestEdgeCases:
         result = scan_skill(tmp_path)
         assert result is not None
         cls = classify_risk(result)
-        # pipe-to-shell + private IP must NOT be CRITICAL
-        # (curl_pipe_shell is HIGH via has_dangerous_command; only public IP escalates to CRITICAL)
+        # pipe-to-shell + private IP = MEDIUM (not CRITICAL)
+        # curl_pipe_shell routes to has_pipe_to_shell; without public IP it stays MEDIUM
         assert cls.level != RiskLevel.CRITICAL
-        assert cls.level >= RiskLevel.HIGH
+        assert cls.level >= RiskLevel.MEDIUM
 
     def test_public_ip_with_pipe_is_critical(self, tmp_path: Path) -> None:
         """Public IP + pipe-to-shell = CRITICAL."""

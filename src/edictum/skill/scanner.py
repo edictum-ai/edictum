@@ -67,7 +67,16 @@ def _read_no_follow(path: Path, max_size: int) -> bytes | None:
     except OSError:
         return None
     try:
-        return os.read(fd, max_size)
+        # Read loop — os.read() may return fewer bytes than requested
+        chunks: list[bytes] = []
+        remaining = max_size
+        while remaining > 0:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
     finally:
         os.close(fd)
 
