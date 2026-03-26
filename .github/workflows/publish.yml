@@ -6,7 +6,8 @@ on:
 
 jobs:
   publish:
-    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    # MUST be GitHub-hosted — PyPI OIDC trusted publishing rejects self-hosted runners
+    runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write      # PyPI OIDC + Sigstore keyless signing
