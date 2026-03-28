@@ -120,9 +120,9 @@
 ## 0.11.0
 
 ### Added
-- **Sandbox rules** (`type: sandbox`) — allowlist-based governance that defines what agents CAN do, replacing open-ended deny-lists. Sandbox rules check file paths (`within`/`not_within`), command allowlists (`allows.commands`), and domain allowlists (`allows.domains`/`not_allows.domains`). The `outside` field controls the effect when a tool call falls outside the sandbox (`deny` or `approve` for HITL approval).
+- **Sandbox rules** (`type: sandbox`) — allowlist-based governance that defines what agents CAN do, replacing open-ended deny-lists. Sandbox rules check file paths (`within`/`not_within`), command allowlists (`allows.commands`), and domain allowlists (`allows.domains`/`not_allows.domains`). The `outside` field controls the effect when a tool call falls outside the sandbox (`block` or `ask` for HITL approval).
 - **Multi-tool matching for sandbox** — `tools: [read_file, write_file, edit_file]` applies one sandbox rule to multiple tools
-- **Pipeline sandbox stage** — sandbox evaluates after preconditions (deny) and before session rules, creating a deny-then-allowlist evaluation order
+- **Pipeline sandbox stage** — sandbox evaluates after preconditions (deny) and before session rules, creating a block-then-allowlist evaluation order
 - **Sandbox in CLI** — `edictum check` and `edictum test` evaluate sandbox rules alongside checks
 - **Sandbox in dry-run evaluation** — `evaluate()` and `evaluate_batch()` include sandbox `RuleResult` entries with `rule_type="sandbox"`
 - **Sandbox composition** — `from_multiple()` merges sandbox rules across bundles with duplicate ID detection

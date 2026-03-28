@@ -79,7 +79,7 @@ def _evaluate_preconditions(
     """Evaluate compiled preconditions against an tool_call.
 
     Returns (decision, rule_id, message, evaluated_records).
-    decision is "denied" or "allowed".
+    decision is "blocked" or "allowed".
     """
     evaluated: list[dict] = []
 
@@ -99,7 +99,7 @@ def _evaluate_preconditions(
         evaluated.append(record)
 
         if not decision.passed:
-            return "denied", record["id"], decision.message, evaluated
+            return "blocked", record["id"], decision.message, evaluated
 
     return "allowed", None, None, evaluated
 
@@ -111,7 +111,7 @@ def _evaluate_sandbox_contracts(
     """Evaluate compiled sandbox rules against an tool_call.
 
     Returns (decision, rule_id, message, evaluated_records).
-    decision is "denied" or "allowed".
+    decision is "blocked" or "allowed".
     """
     from fnmatch import fnmatch
 
@@ -133,7 +133,7 @@ def _evaluate_sandbox_contracts(
         evaluated.append(record)
 
         if not decision.passed:
-            return "denied", record["id"], decision.message, evaluated
+            return "blocked", record["id"], decision.message, evaluated
 
     return "allowed", None, None, evaluated
 
@@ -146,7 +146,7 @@ def _evaluate_all(
 
     Runs preconditions first. If all pass, runs sandbox rules.
     Returns (decision, rule_id, message, evaluated_records).
-    decision is "denied" or "allowed".
+    decision is "blocked" or "allowed".
     """
     decision, rule_id, message, evaluated = _evaluate_preconditions(compiled, tool_call)
     if decision == "allowed":

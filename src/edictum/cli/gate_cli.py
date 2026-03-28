@@ -249,7 +249,7 @@ def _init_contracts(gate_dir: Path, custom_contracts: str | None, non_interactiv
             minimal = (
                 "apiVersion: edictum/v1\nkind: Ruleset\n\n"
                 "metadata:\n  name: base\n  description: Base gate rules\n\n"
-                "defaults:\n  mode: observe\n\ncontracts: []\n"
+                "defaults:\n  mode: observe\n\nrules: []\n"
             )
             template_dst.write_text(minimal)
             _console.print(f"  [yellow]Created[/yellow] {template_dst} (empty — template not found)")
