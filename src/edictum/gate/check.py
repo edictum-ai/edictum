@@ -398,7 +398,7 @@ def _write_audit(
 
 
 def main() -> None:
-    """Entry point for `python -m edictum.gate`."""
+    """Entry point for gate check evaluation."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Edictum Gate check")

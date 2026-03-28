@@ -2,6 +2,11 @@
 
 ## M1 Terminology Rename
 
+## CLI Removal
+
+### Removed
+- **Python CLI removed.** The `edictum` CLI commands (validate, check, test, diff, replay, gate, skill) are no longer part of the Python package. Use the Go binary (`edictum-go`) for all CLI workflows. The Python package is now library-only.
+
 ### Changed
 - Updated governance and repository markdown to use the M1 terminology consistently: rules/rulesets, ToolCall, Decision, CheckPipeline, blocked, and violations.
 - Refreshed YAML examples and reviewer guidance to use `kind: Ruleset`, `rules:`, and `action:`.

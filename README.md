@@ -125,16 +125,16 @@ See [Adapter docs](https://docs.edictum.ai/docs/adapters/overview) for all 8 fra
 
 **Test and validate:**
 
-- `edictum validate` -- catch schema errors at load time
-- `edictum test` -- YAML test cases with expected decisions
 - `guard.evaluate()` -- dry-run without executing the tool
+- Load rules in tests and assert decisions directly from Python
+- For CLI workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go) -- that is the canonical Edictum CLI
 
 **Ship safely:**
 
 - Observe mode -- log what would be blocked, then enforce
 - Multi-file composition with deterministic merge
 - Custom YAML operators and selectors
-- `edictum diff` and `edictum replay` for rule drift detection
+- For CLI-based diff/replay workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go)
 
 **Audit and observability:**
 
@@ -165,8 +165,9 @@ Pre-execution governance for coding assistants. Sits between the assistant and t
 
 ```bash
 pip install edictum[gate]
-edictum gate init
 ```
+
+The Python package ships the Gate library and integrations. For command-line workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go) -- that is the canonical Edictum CLI.
 
 Supports Claude Code, Cursor, Copilot CLI, Gemini CLI, and OpenCode. Self-protection rules prevent the assistant from disabling governance. Optional sync to [Edictum Console](https://github.com/edictum-ai/edictum-console) for centralized audit.
 
@@ -194,9 +195,7 @@ Edictum was evaluated across six regulated domains in the GAP benchmark (6 LLMs,
 
 Used to audit [OpenClaw](https://github.com/OpenClaw)'s 36,000-skill registry -- found live C2 malware on first scan.
 
-```bash
-edictum skill scan ./skills/
-```
+For CLI-based scanning and other command-line workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go).
 
 ## Install
 
@@ -206,12 +205,13 @@ Requires Python 3.11+.
 pip install edictum              # core (zero deps)
 pip install edictum[yaml]        # + YAML rule parsing
 pip install edictum[otel]        # + OpenTelemetry span emission
-pip install edictum[cli]         # + validate/check/diff/replay CLI
-pip install edictum[gate]        # + coding assistant governance
+pip install edictum[gate]        # + coding assistant governance library
 pip install edictum[verified]    # + Ed25519 bundle signature verification
 pip install edictum[server]      # + server SDK (connect to Edictum Console)
-pip install edictum[all]         # everything
+pip install edictum[all]         # everything in this Python package
 ```
+
+For CLI workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go).
 
 ## How It Compares
 

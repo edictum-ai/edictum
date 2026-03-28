@@ -10,7 +10,7 @@ Current version: 0.16.0 (PyPI: `edictum`)
 
 Two deployment units. One library, one server.
 
-- `src/edictum/` -- MIT core. All rule types (pre, post, session, sandbox), pipeline, 8 adapters, CLI, audit to stdout/file/OTel, local approval backend, single-process session tracking.
+- `src/edictum/` -- MIT core. All rule types (pre, post, session, sandbox), pipeline, 8 adapters, audit to stdout/file/OTel, local approval backend, single-process session tracking.
 - `src/edictum/server/` -- Server SDK client (`pip install edictum[server]`). Implements core protocols (`ApprovalBackend`, `AuditSink`, `StorageBackend`) over HTTP to connect agents to the server.
 - `edictum-server` -- A separate deployment (coming soon, open source). Centralized approval workflows, audit dashboards, distributed sessions, hot-reload rules, RBAC.
 
@@ -29,7 +29,6 @@ Core provides protocols and interfaces. The server SDK provides HTTP-backed impl
 - Sandbox rules (`type: sandbox`) — allowlist-based governance for file paths, commands, and domains
 - Observe mode
 - on_postcondition_warn callbacks
-- edictum check + edictum test CLI
 - AuditEvent dataclass + StdoutAuditSink + FileAuditSink (.jsonl) + RedactionPolicy
 - OTel span instrumentation + GovernanceTelemetry
 - Violation classification (`findings.py`, `Finding`) with pii_detected, secret_detected, policy_violation types
@@ -58,6 +57,8 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - LocalApprovalBackend for development approval -- core. Production approval workflows (webhooks, Slack, review UI) -- server
 
 ## Dropped Features (do NOT implement)
+- **Python CLI** — removed entirely. Go binary is the canonical CLI.
+- **Gate install/uninstall** — removed from Python. Gate install is Go-only (`edictum gate install`).
 
 - `reset_session()` — new run_id handles this naturally
 - Redis StorageBackend — not our problem, application layer concern
@@ -65,10 +66,10 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 
 ## What's Shipped
 
-- v0.5.0: Core library — pipeline, 6 adapters, YAML rules, CLI check, OTel, observe mode
+- v0.5.0: Core library — pipeline, 6 adapters, YAML rules, OTel, observe mode
 - v0.5.1: Adapter bug fixes (CrewAI, Agno, SK)
 - v0.5.2: Adapter bug fixes (LangChain, OpenAI)
-- v0.5.3: Claude SDK on_postcondition_warn callback, edictum test CLI
+- v0.5.3: Claude SDK on_postcondition_warn callback, edictum test (removed — use Go CLI)
 - v0.5.4: Dry-run evaluation API (evaluate, evaluate_batch), edictum test --calls
 - v0.6.0: Postcondition enforcement effects (redact/block), SideEffect classification
 - v0.6.1: YAML tools: section for side-action classifications
@@ -76,7 +77,7 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - v0.7.0: env.* selector, Edictum.from_multiple() guard merging, Claude Code GitHub Actions
 - v0.8.0: Bundle composition (compose_bundles, from_yaml multi-file), dual-mode evaluation
 - v0.8.1: ContractResult → RuleResult rename, terminology enforcement
-- v0.9.0: YAML extensibility (custom_operators, custom_selectors, metadata.* selector, template_dirs, from_yaml_string), adapter lifecycle (on_deny, on_allow, success_check, set_principal, principal_resolver), CompositeSink, CLI --json/--environment, OTel TLS
+- v0.9.0: YAML extensibility (custom_operators, custom_selectors, metadata.* selector, template_dirs, from_yaml_string), adapter lifecycle (on_deny, on_allow, success_check, set_principal, principal_resolver), CompositeSink, --json/--environment flags (removed — use Go CLI), OTel TLS
 - Docs overhaul: homepage, quickstart, concepts section, patterns, 7 guides
 - edictum-demo repo: github.com/edictum-ai/edictum-demo
 - v0.10.0: HITL approval workflows (ApprovalBackend, action: ask, timeout/timeout_action), wildcard tool matching (fnmatch), Nanobot adapter, Server SDK package (edictum[server])
@@ -86,7 +87,7 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - v0.11.3: Adversarial test suite, CI hardening (bandit + security test step), code-reviewer security criteria, architecture.md refresh
 - v0.14.0: Google ADK adapter — plugin and agent callback integration for Google Agent Development Kit (8th framework adapter)
 - v0.15.0: Edictum Gate (coding assistant governance), `CollectingAuditSink`, `Edictum.from_server()`, `Edictum.reload()`, `Edictum.close()`, SSE watcher, server rule source revision tracking, `ServerAuditSink` multi-bundle support. Default audit sink changed from `StdoutAuditSink` to `CollectingAuditSink` only.
-- v0.16.0: `edictum skill scan` CLI for skill security analysis. Ed25519 bundle signature verification (`edictum[verified]`). Server HTTPS enforcement. Batch session counter reads. Cross-SDK conformance runner. Terminology rename `shadow_*` → `observe_*` completed. Removed `ShadowContract` deprecation alias and `"shadows"` backward-compat JSON key. 14 security fixes including session injection, shell separator bypass, and redaction gaps.
+- v0.16.0: Skill security analysis module (CLI removed — use Go binary). Ed25519 bundle signature verification (`edictum[verified]`). Server HTTPS enforcement. Batch session counter reads. Cross-SDK conformance runner. Terminology rename `shadow_*` → `observe_*` completed. Removed `ShadowContract` deprecation alias and `"shadows"` backward-compat JSON key. 14 security fixes including session injection, shell separator bypass, and redaction gaps.
 
 ## Session Model
 
@@ -97,7 +98,6 @@ MemoryBackend stores counters in a Python dict -- one process, one agent. This c
 ```bash
 pytest tests/ -v              # full test suite
 ruff check src/ tests/        # lint
-edictum validate rules.yaml  # validate YAML rules
 ```
 
 ## Code Conventions
