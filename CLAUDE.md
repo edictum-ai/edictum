@@ -85,7 +85,7 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - v0.11.3: Adversarial test suite, CI hardening (bandit + security test step), code-reviewer security criteria, architecture.md refresh
 - v0.14.0: Google ADK adapter — plugin and agent callback integration for Google Agent Development Kit (8th framework adapter)
 - v0.15.0: Edictum Gate (coding assistant governance), `CollectingAuditSink`, `Edictum.from_server()`, `Edictum.reload()`, `Edictum.close()`, SSE watcher, server rule source revision tracking, `ServerAuditSink` multi-bundle support. Default audit sink changed from `StdoutAuditSink` to `CollectingAuditSink` only.
-- v0.16.0: `edictum skill scan` CLI for skill security analysis. Ed25519 bundle signature verification (`edictum[verified]`). Server HTTPS enforcement. Batch session counter reads. Cross-SDK conformance runner. Terminology rename `shadow_*` → `observe_*` completed. Removed `ShadowContract` deprecation alias and `"shadows"` backward-compat JSON key. 14 security fixes including session injection, shell separator bypass, and redaction gaps.
+- v0.16.0: Skill security analysis module (CLI removed — use Go binary). Ed25519 bundle signature verification (`edictum[verified]`). Server HTTPS enforcement. Batch session counter reads. Cross-SDK conformance runner. Terminology rename `shadow_*` → `observe_*` completed. Removed `ShadowContract` deprecation alias and `"shadows"` backward-compat JSON key. 14 security fixes including session injection, shell separator bypass, and redaction gaps.
 
 ## Session Model
 
