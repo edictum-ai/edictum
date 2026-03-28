@@ -393,11 +393,11 @@ def check(
         tags = deny_record.get("metadata", {}).get("tags", [])
         if tags:
             _console.print(f"  Tags: {', '.join(str(t) for t in tags)}")
-        _console.print(f"  Contracts evaluated: {n_evaluated}")
+        _console.print(f"  Rules evaluated: {n_evaluated}")
         sys.exit(1)
     else:
         _console.print("[green bold]ALLOWED[/green bold]")
-        _console.print(f"  Contracts evaluated: {n_evaluated}")
+        _console.print(f"  Rules evaluated: {n_evaluated}")
         sys.exit(0)
 
 

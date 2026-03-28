@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import importlib.resources as _resources
 import re
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -53,63 +51,7 @@ def _compute_hash(raw_bytes: bytes) -> BundleHash:
     return BundleHash(hex=hashlib.sha256(raw_bytes).hexdigest())
 
 
-def _warn_deprecated(old: str, new: str) -> None:
-    warnings.warn(f"'{old}' is deprecated, use '{new}' instead", DeprecationWarning, stacklevel=2)
 
-
-def _normalize_action_value(value: Any) -> Any:
-    """Normalize legacy action/outside values to v2 action vocabulary."""
-    if value == "block":
-        _warn_deprecated("block", "block")
-        return "block"
-    if value == "ask":
-        _warn_deprecated("ask", "ask")
-        return "ask"
-    return value
-
-
-def _normalize_contract(rule: dict[str, Any]) -> dict[str, Any]:
-    normalized = copy.deepcopy(rule)
-
-    if "then" in normalized and isinstance(normalized["then"], dict):
-        then = normalized["then"]
-        if "action" in then and "action" not in then:
-            _warn_deprecated("action:", "action:")
-            then["action"] = then.pop("action")
-        elif "action" in then and "action" in then:
-            _warn_deprecated("action:", "action:")
-            then.pop("action")
-
-        if "action" in then:
-            then["action"] = _normalize_action_value(then["action"])
-
-        if "timeout_action" in then:
-            then["timeout_action"] = _normalize_action_value(then["timeout_action"])
-
-    if "outside" in normalized:
-        normalized["outside"] = _normalize_action_value(normalized["outside"])
-    if "timeout_action" in normalized:
-        normalized["timeout_action"] = _normalize_action_value(normalized["timeout_action"])
-
-    return normalized
-
-
-def _normalize_bundle(data: dict[str, Any]) -> dict[str, Any]:
-    """Normalize YAML-facing terminology to v2 vocabulary."""
-    normalized = copy.deepcopy(data)
-
-    if "rules" in normalized and "rules" not in normalized:
-        _warn_deprecated("rules:", "rules:")
-        normalized["rules"] = normalized.pop("rules")
-    elif "rules" in normalized and "rules" in normalized:
-        _warn_deprecated("rules:", "rules:")
-        normalized.pop("rules")
-
-    if normalized.get("kind") == "Ruleset":
-        normalized["kind"] = "Ruleset"
-
-    normalized["rules"] = [_normalize_contract(rule) for rule in normalized.get("rules", [])]
-    return normalized
 
 
 def _validate_schema(data: dict) -> None:
@@ -123,7 +65,7 @@ def _validate_schema(data: dict) -> None:
     v1_schema = _get_schema("v1")
 
     try:
-        jsonschema.validate(instance=_normalize_bundle(data), schema=v2_schema)
+        jsonschema.validate(instance=data, schema=v2_schema)
         return
     except jsonschema.ValidationError as v2_error:
         try:
@@ -258,7 +200,7 @@ def _load_data(raw_bytes: bytes) -> tuple[dict, BundleHash]:
         raise EdictumConfigError("YAML document must be a mapping")
 
     _validate_schema(data)
-    normalized = _normalize_bundle(data)
+    normalized = data
     _validate_unique_ids(normalized)
     _validate_regexes(normalized)
     _validate_pre_selectors(normalized)

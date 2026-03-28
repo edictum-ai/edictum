@@ -1,4 +1,4 @@
-"""Tests for the Edictum Rule Cookbook (examples/contract_cookbook.py).
+"""Tests for the Edictum Rule Cookbook (examples/rule_cookbook.py).
 
 Covers all 4 parts:
   Part 1: Preconditions (10 rules)
@@ -22,7 +22,7 @@ from edictum.storage import MemoryBackend
 # Add examples/ to import path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples"))
 
-from contract_cookbook import (
+from rule_cookbook import (
     allowlist_read_only_commands,
     block_sensitive_reads,
     detect_pii_in_output,
