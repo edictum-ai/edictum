@@ -54,26 +54,15 @@ def _compute_hash(raw_bytes: bytes) -> BundleHash:
 
 
 def _validate_schema(data: dict) -> None:
-    """Validate parsed YAML against Edictum JSON Schemas.
-
-    Tries v2 first using compatibility normalization, then falls back to raw v1.
-    """
+    """Validate parsed YAML against the Edictum v2 JSON Schema."""
     from edictum import EdictumConfigError
 
-    v2_schema = _get_schema("v2")
-    v1_schema = _get_schema("v1")
+    schema = _get_schema("v2")
 
     try:
-        jsonschema.validate(instance=data, schema=v2_schema)
-        return
-    except jsonschema.ValidationError as v2_error:
-        try:
-            jsonschema.validate(instance=data, schema=v1_schema)
-            return
-        except jsonschema.ValidationError as v1_error:
-            raise EdictumConfigError(
-                f"Schema validation failed: {v2_error.message} (v2); fallback v1 also failed: {v1_error.message}"
-            ) from v2_error
+        jsonschema.validate(instance=data, schema=schema)
+    except jsonschema.ValidationError as error:
+        raise EdictumConfigError(f"Schema validation failed: {error.message}") from error
 
 
 def _validate_unique_ids(data: dict) -> None:

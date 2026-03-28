@@ -13,14 +13,14 @@ src/edictum/
 ├── __init__.py          # Edictum class, guard.run(), exceptions, re-exports
 ├── envelope.py          # ToolCall (frozen), SideEffect, ToolRegistry, BashClassifier
 ├── hooks.py             # HookDecision (ALLOW/DENY)
-├── rules.py         # Decision, @precondition, @postcondition, @session_rule
+├── rules.py         # Decision, @precondition, @postcondition, @session_contract
 ├── limits.py            # OperationLimits (attempt + execution + per-tool caps)
 ├── pipeline.py          # CheckPipeline — single source of governance logic
 ├── session.py           # Session (atomic counters via StorageBackend)
 ├── storage.py           # StorageBackend protocol + MemoryBackend
 ├── audit.py             # AuditEvent, RedactionPolicy, Stdout/File sinks
 ├── telemetry.py         # OpenTelemetry (graceful no-op if absent)
-├── builtins.py          # block_sensitive_reads()
+├── builtins.py          # deny_sensitive_reads()
 ├── types.py             # Internal types (HookRegistration, ToolConfig)
 └── adapters/
     ├── langchain.py         # LangChain adapter (pre/post tool call hooks)
@@ -86,7 +86,7 @@ Pipeline.pre_execute() — 5 steps:
 
 **1. Framework-agnostic (`guard.run()`):**
 ```python
-guard = Edictum(rules=[block_sensitive_reads()])
+guard = Edictum(rules=[deny_sensitive_reads()])
 result = await guard.run("Bash", {"command": "ls"}, my_bash_fn)
 ```
 

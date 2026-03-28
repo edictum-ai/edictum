@@ -6,7 +6,7 @@ Each recipe is a standalone, copy-paste-ready rule with:
 - The denial message written to help the agent self-correct
 
 Run this file to verify all rules compile:
-    python contract_cookbook.py
+    python rule_cookbook.py
 
 Contracts are organized by the THREE rule types:
     1. Preconditions  — block BEFORE the tool runs (safe to block)
