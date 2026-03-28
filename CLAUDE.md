@@ -57,6 +57,8 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - LocalApprovalBackend for development approval -- core. Production approval workflows (webhooks, Slack, review UI) -- server
 
 ## Dropped Features (do NOT implement)
+- **Python CLI** — removed entirely. Go binary is the canonical CLI.
+- **Gate install/uninstall** — removed from Python. Gate install is Go-only (`edictum gate install`).
 
 - `reset_session()` — new run_id handles this naturally
 - Redis StorageBackend — not our problem, application layer concern
