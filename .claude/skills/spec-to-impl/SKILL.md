@@ -17,14 +17,14 @@ All artifacts go into `.claude/skills/spec-to-impl/{feature-slug}/`:
 ```
 .claude/skills/spec-to-impl/{feature-slug}/
   README.md              <-- execution order, status tracking, dependency graph
-  SPEC-AUDIT.md          <-- Phase 2 findings (persisted for reference)
+  SPEC-AUDIT.md          <-- Phase 2 violations (persisted for reference)
   SPEC-DECISIONS.md      <-- Phase 3 decisions log
   P1-{SCOPE}.md          <-- first implementation prompt
   P2-{SCOPE}.md          <-- second implementation prompt
   ...
 ```
 
-The `{feature-slug}` is derived from the spec file name or feature description (lowercase, hyphens, no spaces). Example: `google-adk-adapter`, `sandbox-contracts`, `hitl-approval`.
+The `{feature-slug}` is derived from the spec file name or feature description (lowercase, hyphens, no spaces). Example: `google-adk-adapter`, `sandbox-rules`, `hitl-approval`.
 
 Create the directory at the start of Phase 2 (once you know the feature name).
 
@@ -42,14 +42,14 @@ Then read the actual codebase to understand current state:
 
 4. **Core modules** — Read the relevant modules in `src/edictum/` to know what already exists. Key files:
    - `__init__.py` (Edictum class, public API, `__all__` exports)
-   - `pipeline.py` (GovernancePipeline, PreDecision, PostDecision)
-   - `envelope.py` (ToolEnvelope, Principal, create_envelope, SideEffect, ToolRegistry)
+   - `pipeline.py` (CheckPipeline, PreDecision, PostDecision)
+   - `envelope.py` (ToolCall, Principal, create_envelope, SideEffect, ToolRegistry)
    - `session.py` (Session, counter keys)
    - `audit.py` (AuditEvent, AuditAction, AuditSink, RedactionPolicy, sinks)
-   - `findings.py` (Finding, PostCallResult, build_findings)
-   - `telemetry.py` (GovernanceTelemetry, start_tool_span, record_denial)
+   - `violations.py` (Violation, PostCallResult, build_violations)
+   - `telemetry.py` (GovernanceTelemetry, start_tool_span, record_block)
    - `approval.py` (ApprovalBackend, ApprovalRequest, ApprovalDecision, ApprovalStatus)
-5. **Existing adapter patterns** — Read at least 2 adapters in `src/edictum/adapters/` to understand the established pattern (constructor, _pre/_post, _deny, _check_tool_success, _emit_audit_pre, pending state, observe mode, on_deny/on_allow callbacks, approval handling). Good choices:
+5. **Existing adapter patterns** — Read at least 2 adapters in `src/edictum/adapters/` to understand the established pattern (constructor, _pre/_post, _block, _check_tool_success, _emit_audit_pre, pending state, observe mode, on_block/on_allow callbacks, approval handling). Good choices:
    - One simple adapter (e.g., `openai_agents.py` — clean pre/post with guardrails)
    - One complex adapter (e.g., `nanobot.py` — inline execution + approval handling)
 6. **Test patterns** — Read `tests/conftest.py` (shared fixtures: NullAuditSink, CapturingAuditSink, make_guard pattern), `tests/test_adapter_parity.py` (parity test tiers and helper function conventions), and one adapter test file (e.g., `tests/test_adapter_openai_agents.py`) to understand framework-mocking strategy.
@@ -69,23 +69,23 @@ Check for these categories of violations:
 - Does anything contradict CLAUDE.md's core vs server boundary? (evaluation = core, coordination = server)
 - Does it introduce runtime dependencies that violate "zero runtime deps in core"?
 - Does it add imports from `src/edictum/server/` into core code?
-- Does it bypass the GovernancePipeline and implement governance logic in the adapter?
+- Does it bypass the CheckPipeline and implement governance logic in the adapter?
 - Does it add features listed in CLAUDE.md's "Dropped Features" section?
 
 ### Adapter Pattern Violations (HIGH)
 - Does the adapter follow the established constructor pattern? (guard, session_id, principal, principal_resolver)
-- Does it implement ALL required internal methods? (_pre, _post, _emit_audit_pre, _check_tool_success, _deny, set_principal, _resolve_principal, session_id property)
-- Does it follow the correct pre-execution flow? (create_envelope → increment_attempts → start_span → pre_execute → observe/deny/allow handling)
-- Does it follow the correct post-execution flow? (pop pending → check_success → post_execute → record_execution → emit audit → end span → build_findings)
+- Does it implement ALL required internal methods? (_pre, _post, _emit_audit_pre, _check_tool_success, _block, set_principal, _resolve_principal, session_id property)
+- Does it follow the correct pre-execution flow? (create_envelope → increment_attempts → start_span → pre_execute → observe/block/allow handling)
+- Does it follow the correct post-execution flow? (pop pending → check_success → post_execute → record_execution → emit audit → end span → build_violations)
 - Does pending state management match the framework's execution model? (dict for parallel, single-slot for sequential, none for inline)
-- Does it handle observe mode correctly? (deny → allow with CALL_WOULD_DENY audit)
-- Does it handle per-contract observed denials?
-- Does it call on_deny/on_allow/on_postcondition_warn callbacks at the right place?
+- Does it handle observe mode correctly? (block → allow with CALL_WOULD_DENY audit)
+- Does it handle per-rule observed blocks?
+- Does it call on_block/on_allow/on_postcondition_warn callbacks at the right place?
 
 ### API Design Checklist (HIGH)
 - Does every new parameter have an observable effect with a behavior test?
 - Do collection parameters have documented merge semantics?
-- Do deny decisions propagate end-to-end through the adapter?
+- Do block decisions propagate end-to-end through the adapter?
 - Do callbacks fire exactly once?
 - Is the new feature handled by ALL adapters (or documented why not)?
 - Are there ghost features? (documented but not implemented)
@@ -98,8 +98,8 @@ Check for these categories of violations:
 - Are read-modify-write operations protected with `asyncio.Lock`?
 
 ### Shared Module Duplication (HIGH)
-- Does the spec define types that already exist in core? (Principal, ToolEnvelope, AuditEvent, Finding, PostCallResult)
-- Does it propose utility functions that core already provides? (create_envelope, build_findings, _check_tool_success pattern)
+- Does the spec define types that already exist in core? (Principal, ToolCall, AuditEvent, Violation, PostCallResult)
+- Does it propose utility functions that core already provides? (create_envelope, build_violations, _check_tool_success pattern)
 - Does it redefine patterns that adapters already share?
 
 ### Test Coverage Gaps (MEDIUM)
@@ -111,13 +111,13 @@ Check for these categories of violations:
 
 ### Terminology (MEDIUM)
 - Any forbidden terms? Check against `.docs-style-guide.md`:
-  - rule/rules → contract/contracts
-  - block·ed → denied
+  - contract/contracts → rule/rules
+  - denied → blocked
   - engine → pipeline
   - shadow·mode → observe mode
-  - alert → finding
+  - finding → violation
   - guard/guards → (avoid in prose)
-  - policy → contract (in prose context)
+  - policy → rule (in prose context)
 - Any marketing language? (powerful, seamless, robust, elegant)
 - Any incorrect metaphors? (gatekeeper, guardian, shield, firewall)
 
@@ -135,8 +135,8 @@ Check for these categories of violations:
 **Output of Phase 2:**
 
 1. Create the output directory: `.claude/skills/spec-to-impl/{feature-slug}/`
-2. Write findings to `SPEC-AUDIT.md` in that directory (persisted for reference)
-3. Present findings to the user as a prioritized table:
+2. Write violations to `SPEC-AUDIT.md` in that directory (persisted for reference)
+3. Present violations to the user as a prioritized table:
 
 ```
 | Priority | # | Issue | Action needed |
@@ -146,7 +146,7 @@ Check for these categories of violations:
 | ...
 ```
 
-Group by priority. For each finding, state:
+Group by priority. For each issue, state:
 - What the rule says (with file + line reference)
 - What the spec says (with section reference)
 - What needs to happen (decision from user, or a specific fix)
@@ -155,16 +155,16 @@ Group by priority. For each finding, state:
 
 ## Phase 3: Collect Decisions
 
-Wait for the user to respond to every finding. They will say things like:
+Wait for the user to respond to every issue. They will say things like:
 - "your suggestion" — apply your recommended fix
 - "fix it" — apply the obvious fix
 - "option A" — apply that specific option
 - "I don't understand" — explain the issue more clearly
 - A custom answer
 
-Do NOT proceed to Phase 4 until every finding has a decision.
+Do NOT proceed to Phase 4 until every issue has a decision.
 
-**Output of Phase 3:** Write `SPEC-DECISIONS.md` in the output directory with each finding number, the user's decision, and what will change.
+**Output of Phase 3:** Write `SPEC-DECISIONS.md` in the output directory with each issue number, the user's decision, and what will change.
 
 ---
 
@@ -258,7 +258,7 @@ pytest tests/test_docs_sync.py -v
 
 ## Artifacts
 
-- [SPEC-AUDIT.md](SPEC-AUDIT.md) — Audit findings from Phase 2
+- [SPEC-AUDIT.md](SPEC-AUDIT.md) — Audit violations from Phase 2
 - [SPEC-DECISIONS.md](SPEC-DECISIONS.md) — User decisions from Phase 3
 ```
 
@@ -295,9 +295,9 @@ Implementation prompts ready at:
 
 ## Key Principles
 
-- **Rules exist in files, not in heads.** Every audit finding must point to a specific rule in a specific file (CLAUDE.md, .docs-style-guide.md, architecture.md).
+- **Rules exist in files, not in heads.** Every audit violation must point to a specific rule in a specific file (CLAUDE.md, .docs-style-guide.md, architecture.md).
 - **The codebase is ground truth.** Read actual adapter code, actual test patterns, actual core interfaces — not what the spec assumes.
-- **The user stays in decision mode.** Present findings and options. Don't make architectural decisions without user input.
+- **The user stays in decision mode.** Present violations and options. Don't make architectural decisions without user input.
 - **Each prompt = one testable deliverable.** No "build everything then check."
-- **Adapters translate, they don't govern.** Governance logic lives in GovernancePipeline. Adapters only create envelopes, manage pending state, and translate decisions into framework-native format.
+- **Adapters translate, they don't govern.** Governance logic lives in CheckPipeline. Adapters only create envelopes, manage pending state, and translate decisions into framework-native format.
 - **Tests verify, not just exist.** Every test must assert a concrete observable behavior, not just call a method and assert True.

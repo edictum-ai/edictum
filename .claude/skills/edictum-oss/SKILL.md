@@ -11,9 +11,9 @@ Read CLAUDE.md first. Understand the boundary principle before writing code.
 
 Everything under `src/edictum/` is the core library (MIT). This includes:
 
-- Pipeline (`pipeline.py`) — GovernancePipeline, PreDecision, PostDecision
-- Envelope (`envelope.py`) — ToolEnvelope, Principal, create_envelope()
-- Contracts (`contracts.py`) — @precondition, @postcondition, @session_contract, Verdict
+- Pipeline (`pipeline.py`) — CheckPipeline, PreDecision, PostDecision
+- Envelope (`envelope.py`) — ToolCall, Principal, create_envelope()
+- Contracts (`rules.py`) — @precondition, @postcondition, @session_rule, Decision
 - YAML engine (`yaml_engine/`) — loader, evaluator, compiler (including sandbox compilation), templates
 - Adapters (`adapters/`) — all 7 framework adapters
 - Audit (`audit.py`) — AuditEvent, StdoutAuditSink, FileAuditSink, RedactionPolicy
@@ -26,7 +26,7 @@ Everything under `src/edictum/` is the core library (MIT). This includes:
 
 Two deployment units:
 
-- **Core** (`pip install edictum`) — runs fully standalone. All 4 contract types (pre, post, session, sandbox), pipeline, 7 adapters, CLI, local audit, local approval.
+- **Core** (`pip install edictum`) — runs fully standalone. All 4 rule types (pre, post, session, sandbox), pipeline, 7 adapters, CLI, local audit, local approval.
 - **Server** (`edictum-server`) — separate deployment, coming soon. The Server SDK (`pip install edictum[server]`) provides the client-side connectivity.
 
 Core provides protocols and interfaces. The server SDK provides HTTP-backed implementations.
@@ -37,15 +37,15 @@ Most features work without the server. These require it:
 
 | Feature | Core | Server |
 |---|---|---|
-| Contract evaluation (all 4 types) | Yes | -- |
-| `outside: deny` / `effect: deny` | Yes | -- |
-| `outside: approve` / `effect: approve` (dev) | Yes (LocalApprovalBackend) | -- |
-| `outside: approve` / `effect: approve` (production) | -- | Yes (ServerApprovalBackend) |
+| Rule evaluation (all 4 types) | Yes | -- |
+| `outside: block` / `action: block` | Yes | -- |
+| `outside: ask` / `action: ask` (dev) | Yes (LocalApprovalBackend) | -- |
+| `outside: ask` / `action: ask` (production) | -- | Yes (ServerApprovalBackend) |
 | Audit to stdout/file/OTel | Yes | -- |
 | Centralized audit dashboard | -- | Yes (ServerAuditSink) |
 | Session tracking (single process) | Yes (MemoryBackend) | -- |
 | Session tracking (multi-process) | -- | Yes (ServerBackend) |
-| Hot-reload contracts | -- | Yes (ServerContractSource) |
+| Hot-reload rules | -- | Yes (ServerRuleSource) |
 
 ## Workflow
 

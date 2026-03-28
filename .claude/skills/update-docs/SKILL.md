@@ -23,10 +23,10 @@ Map changes to affected docs:
 
 | Source file | Affected doc pages |
 |---|---|
-| `src/edictum/pipeline.py`, `contracts.py` | concepts/how-it-works.md, architecture.md |
-| `src/edictum/yaml_engine/` | contracts/yaml-reference.md, contracts/operators.md |
+| `src/edictum/pipeline.py`, `rules.py` | concepts/how-it-works.md, architecture.md |
+| `src/edictum/yaml_engine/` | rules/yaml-reference.md, rules/operators.md |
 | `src/edictum/adapters/*.py` | corresponding adapters/*.md page |
-| `src/edictum/session.py`, `limits.py` | concepts/contracts.md, architecture.md |
+| `src/edictum/session.py`, `limits.py` | concepts/rules.md, architecture.md |
 | `src/edictum/audit.py`, `telemetry.py` | audit/sinks.md, audit/telemetry.md |
 | `src/edictum/cli/` | cli.md |
 | `src/edictum/envelope.py` | concepts/principals.md, architecture.md |
@@ -53,16 +53,16 @@ For each affected page:
    - If new code adds a feature, update the scenarios to cover the new capability
    - Read the ACTUAL SOURCE CODE for the feature before writing scenarios — reference real method names, real classes, real behavior
 5. **Verify terminology** against .docs-style-guide.md:
-   - "contracts" not "policies" or "rules"
-   - Use `denied` (see .docs-style-guide.md for banned alternatives)
+   - "rules" not "policies", "contracts", or "guards"
+   - Use `blocked` (see .docs-style-guide.md for banned alternatives)
    - Use `enforces` (not "governs")
    - Use `pipeline` (not "engine")
    - Use `tool call` (not "function call")
    - Use `adapter` (not "integration" or "plugin")
    - Use `observe mode` (see .docs-style-guide.md for banned alternatives)
-   - Use `finding` / `findings` (not "alert")
+   - Use `violation` / `violations` (not "finding" or "alert")
 6. **Verify core vs server boundaries** against CLAUDE.md:
-   - All contract evaluation (pre, post, session, sandbox) is core
+   - All rule evaluation (check, check_output, session, sandbox) is core
    - StdoutAuditSink, FileAuditSink, OTel are core
    - Production approval workflows (ServerApprovalBackend) require the server
    - Centralized audit dashboards require the server

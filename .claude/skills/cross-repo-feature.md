@@ -38,17 +38,17 @@ description: "What this tests"
 fixtures:
   - id: "feature-001"
     description: "When X, expect Y"
-    contract:
+    ruleset:
       apiVersion: edictum/v1
-      kind: ContractBundle
+      kind: Ruleset
       metadata: { name: test, version: "1.0" }
-      defaults: { effect: deny }
-      contracts: [...]
+      defaults: { action: block }
+      rules: [...]
     envelope:
       tool_name: "ToolName"
       arguments: { key: "value" }
     expected:
-      verdict: denied|allowed
+      verdict: blocked|allowed
       message_contains: "expected text"
 ```
 
