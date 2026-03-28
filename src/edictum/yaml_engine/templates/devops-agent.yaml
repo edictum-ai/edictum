@@ -1,5 +1,5 @@
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: devops-agent
@@ -8,7 +8,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: block-sensitive-reads
     type: pre
     tool: read_file
@@ -16,7 +16,7 @@ contracts:
       args.path:
         contains_any: [".env", ".secret", "kubeconfig", "credentials", ".pem", "id_rsa"]
     then:
-      effect: deny
+      action: block
       message: "Sensitive file '{args.path}' denied."
       tags: [secrets, dlp]
 
@@ -29,7 +29,7 @@ contracts:
         - args.command: { matches: '\\bmkfs\\b' }
         - args.command: { contains: '> /dev/' }
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied: '{args.command}'."
       tags: [destructive, safety]
 
@@ -41,7 +41,7 @@ contracts:
         - environment: { equals: production }
         - principal.role: { not_in: [senior_engineer, sre, admin] }
     then:
-      effect: deny
+      action: block
       message: "Production deploys require senior role (sre/admin)."
       tags: [change-control, production]
 
@@ -53,7 +53,7 @@ contracts:
         - environment: { equals: production }
         - principal.ticket_ref: { exists: false }
     then:
-      effect: deny
+      action: block
       message: "Production changes require a ticket reference."
       tags: [change-control, compliance]
 
@@ -65,7 +65,7 @@ contracts:
         matches_any:
           - '\\b\\d{3}-\\d{2}-\\d{4}\\b'
     then:
-      effect: warn
+      action: warn
       message: "PII pattern detected in output. Redact before using."
       tags: [pii, compliance]
 
@@ -75,6 +75,6 @@ contracts:
       max_tool_calls: 20
       max_attempts: 50
     then:
-      effect: deny
+      action: block
       message: "Session limit reached. Summarize progress and stop."
       tags: [rate-limit]

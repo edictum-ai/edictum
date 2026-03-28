@@ -1,4 +1,4 @@
-"""Tests for postcondition effects: redact, deny, warn."""
+"""Tests for postcondition effects: redact, block, warn."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import tempfile
 
 import pytest
 
-from edictum import Edictum, GovernancePipeline, SideEffect, create_envelope
+from edictum import Edictum, CheckPipeline, SideEffect, create_envelope
 from edictum.envelope import ToolRegistry
 from edictum.pipeline import PostDecision
 
@@ -37,9 +37,9 @@ def _make_envelope(tool_name: str = "search", side_effect: SideEffect = SideEffe
     )
 
 
-async def _post_execute(guard: Edictum, envelope, tool_response: str) -> PostDecision:
-    pipeline = GovernancePipeline(guard)
-    return await pipeline.post_execute(envelope, tool_response, True)
+async def _post_execute(guard: Edictum, tool_call, tool_response: str) -> PostDecision:
+    pipeline = CheckPipeline(guard)
+    return await pipeline.post_execute(tool_call, tool_response, True)
 
 
 # ---------------------------------------------------------------------------
@@ -48,12 +48,12 @@ async def _post_execute(guard: Edictum, envelope, tool_response: str) -> PostDec
 
 REDACT_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-redact
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: secrets-redact
     type: post
     tool: "*"
@@ -61,39 +61,39 @@ contracts:
       output.text:
         matches_any: ['sk-prod-[a-z0-9]{8}', 'AKIA-PROD-[A-Z]{12}']
     then:
-      effect: redact
+      action: redact
       message: "Secrets detected and redacted."
       tags: [secrets]
 """
 
 DENY_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
-  name: test-deny
+  name: test-block
 defaults:
   mode: enforce
-contracts:
-  - id: accommodation-deny
+rules:
+  - id: accommodation-block
     type: post
     tool: "*"
     when:
       output.text:
         matches: '\\b(504\\s*Plan|IEP|accommodation)\\b'
     then:
-      effect: deny
+      action: block
       message: "Accommodation info cannot be returned."
       tags: [ferpa]
 """
 
 WARN_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-warn
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: pii-warn
     type: post
     tool: "*"
@@ -101,19 +101,19 @@ contracts:
       output.text:
         matches: '\\b\\d{3}-\\d{2}-\\d{4}\\b'
     then:
-      effect: warn
+      action: warn
       message: "PII detected in output."
       tags: [pii]
 """
 
 OBSERVE_REDACT_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-observe-redact
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: observed-redact
     type: post
     tool: "*"
@@ -122,19 +122,19 @@ contracts:
       output.text:
         matches_any: ['sk-prod-[a-z0-9]{8}']
     then:
-      effect: redact
+      action: redact
       message: "Secrets detected (observed)."
       tags: [secrets]
 """
 
 MULTI_REDACT_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-multi-redact
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: redact-api-keys
     type: post
     tool: "*"
@@ -142,7 +142,7 @@ contracts:
       output.text:
         matches_any: ['sk-prod-[a-z0-9]{8}']
     then:
-      effect: redact
+      action: redact
       message: "API keys redacted."
       tags: [secrets]
   - id: redact-aws-keys
@@ -152,19 +152,19 @@ contracts:
       output.text:
         matches_any: ['AKIA-PROD-[A-Z]{12}']
     then:
-      effect: redact
+      action: redact
       message: "AWS keys redacted."
       tags: [secrets]
 """
 
 DENY_AFTER_REDACT_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
-  name: test-deny-after-redact
+  name: test-block-after-redact
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: redact-secrets
     type: post
     tool: "*"
@@ -172,29 +172,29 @@ contracts:
       output.text:
         matches_any: ['sk-prod-[a-z0-9]{8}']
     then:
-      effect: redact
+      action: redact
       message: "Secrets redacted."
       tags: [secrets]
-  - id: deny-accommodation
+  - id: block-accommodation
     type: post
     tool: "*"
     when:
       output.text:
         matches: '\\b(accommodation)\\b'
     then:
-      effect: deny
+      action: block
       message: "Accommodation info suppressed."
       tags: [ferpa]
 """
 
 NESTED_EXPR_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-nested
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: nested-redact
     type: post
     tool: "*"
@@ -206,19 +206,19 @@ contracts:
             - output.text:
                 matches_any: ['AKIA-PROD-[A-Z]{12}', 'ghp_[a-zA-Z0-9]{36}']
     then:
-      effect: redact
+      action: redact
       message: "Secrets detected in nested expression."
       tags: [secrets]
 """
 
 NO_PATTERN_REDACT_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-no-pattern
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: generic-redact
     type: post
     tool: "*"
@@ -226,28 +226,28 @@ contracts:
       output.text:
         contains: "secret_value"
     then:
-      effect: redact
+      action: redact
       message: "Sensitive data found."
       tags: [secrets]
 """
 
 
 # ---------------------------------------------------------------------------
-# Tests: effect: redact
+# Tests: action: redact
 # ---------------------------------------------------------------------------
 
 
 class TestRedactEffect:
-    """Tests for effect: redact postcondition behavior."""
+    """Tests for action: redact postcondition behavior."""
 
     @pytest.mark.asyncio
     async def test_redact_read_removes_patterns(self):
-        """effect: redact + SideEffect.READ -> redacted_response has [REDACTED], patterns removed."""
+        """action: redact + SideEffect.READ -> redacted_response has [REDACTED], patterns removed."""
         guard = Edictum.from_yaml(_write_yaml(REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Found key: sk-prod-abcd1234 and more text"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is not None
         assert "[REDACTED]" in decision.redacted_response
@@ -257,12 +257,12 @@ class TestRedactEffect:
 
     @pytest.mark.asyncio
     async def test_redact_pure_removes_patterns(self):
-        """effect: redact + SideEffect.PURE -> same behavior as READ."""
+        """action: redact + SideEffect.PURE -> same behavior as READ."""
         guard = Edictum.from_yaml(_write_yaml(REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.PURE)
+        tool_call = _make_envelope(side_effect=SideEffect.PURE)
         response = "Key is AKIA-PROD-ABCDEFGHIJKL in config"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is not None
         assert "[REDACTED]" in decision.redacted_response
@@ -272,12 +272,12 @@ class TestRedactEffect:
 
     @pytest.mark.asyncio
     async def test_redact_write_falls_back_to_warn(self):
-        """effect: redact + SideEffect.WRITE -> redacted_response is None, warning mentions 'Tool already executed'."""
+        """action: redact + SideEffect.WRITE -> redacted_response is None, warning mentions 'Tool already executed'."""
         guard = Edictum.from_yaml(_write_yaml(REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.WRITE)
+        tool_call = _make_envelope(side_effect=SideEffect.WRITE)
         response = "Found key: sk-prod-abcd1234"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is None
         assert not decision.output_suppressed
@@ -286,12 +286,12 @@ class TestRedactEffect:
 
     @pytest.mark.asyncio
     async def test_redact_irreversible_falls_back_to_warn(self):
-        """effect: redact + SideEffect.IRREVERSIBLE -> same as WRITE, falls back to warn."""
+        """action: redact + SideEffect.IRREVERSIBLE -> same as WRITE, falls back to warn."""
         guard = Edictum.from_yaml(_write_yaml(REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.IRREVERSIBLE)
+        tool_call = _make_envelope(side_effect=SideEffect.IRREVERSIBLE)
         response = "Found key: sk-prod-abcd1234"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is None
         assert any("Tool already executed" in w for w in decision.warnings)
@@ -300,10 +300,10 @@ class TestRedactEffect:
     async def test_redact_multiple_patterns(self):
         """Multiple matches_any patterns are all redacted."""
         guard = Edictum.from_yaml(_write_yaml(REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Keys: sk-prod-abcd1234 and AKIA-PROD-ABCDEFGHIJKL found"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is not None
         assert "sk-prod-abcd1234" not in decision.redacted_response
@@ -314,10 +314,10 @@ class TestRedactEffect:
     async def test_redact_no_match_passes(self):
         """When redact rule doesn't match, no redaction occurs."""
         guard = Edictum.from_yaml(_write_yaml(REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "This is safe output with no secrets"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is None
         assert decision.postconditions_passed is True
@@ -325,32 +325,32 @@ class TestRedactEffect:
 
     @pytest.mark.asyncio
     async def test_redact_warning_mentions_contract_name(self):
-        """Redaction warning includes the contract name."""
+        """Redaction warning includes the rule name."""
         guard = Edictum.from_yaml(_write_yaml(REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Found key: sk-prod-abcd1234"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert any("secrets-redact" in w for w in decision.warnings)
 
 
 # ---------------------------------------------------------------------------
-# Tests: effect: deny
+# Tests: action: block
 # ---------------------------------------------------------------------------
 
 
 class TestDenyEffect:
-    """Tests for effect: deny postcondition behavior."""
+    """Tests for action: block postcondition behavior."""
 
     @pytest.mark.asyncio
     async def test_deny_read_suppresses_output(self):
-        """effect: deny + READ -> suppressed output, output_suppressed True."""
+        """action: block + READ -> suppressed output, output_suppressed True."""
         guard = Edictum.from_yaml(_write_yaml(DENY_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Student has an IEP with specific accommodation requirements"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.output_suppressed is True
         assert decision.redacted_response is not None
@@ -359,24 +359,24 @@ class TestDenyEffect:
 
     @pytest.mark.asyncio
     async def test_deny_pure_suppresses_output(self):
-        """effect: deny + SideEffect.PURE -> same as READ, full suppression."""
+        """action: block + SideEffect.PURE -> same as READ, full suppression."""
         guard = Edictum.from_yaml(_write_yaml(DENY_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.PURE)
+        tool_call = _make_envelope(side_effect=SideEffect.PURE)
         response = "The 504 Plan details are as follows..."
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.output_suppressed is True
         assert decision.redacted_response.startswith("[OUTPUT SUPPRESSED]")
 
     @pytest.mark.asyncio
     async def test_deny_write_falls_back_to_warn(self):
-        """effect: deny + SideEffect.WRITE -> redacted_response is None, falls back to warn."""
+        """action: block + SideEffect.WRITE -> redacted_response is None, falls back to warn."""
         guard = Edictum.from_yaml(_write_yaml(DENY_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.WRITE)
+        tool_call = _make_envelope(side_effect=SideEffect.WRITE)
         response = "Student requires accommodation for testing"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is None
         assert not decision.output_suppressed
@@ -385,23 +385,23 @@ class TestDenyEffect:
 
     @pytest.mark.asyncio
     async def test_deny_warning_mentions_contract_name(self):
-        """Deny warning includes the contract name."""
+        """Deny warning includes the rule name."""
         guard = Edictum.from_yaml(_write_yaml(DENY_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Student has an IEP"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
-        assert any("accommodation-deny" in w for w in decision.warnings)
+        assert any("accommodation-block" in w for w in decision.warnings)
 
     @pytest.mark.asyncio
     async def test_deny_no_match_passes(self):
-        """When deny rule doesn't match, output passes through."""
+        """When block rule doesn't match, output passes through."""
         guard = Edictum.from_yaml(_write_yaml(DENY_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Student has good grades and attendance"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is None
         assert not decision.output_suppressed
@@ -409,21 +409,21 @@ class TestDenyEffect:
 
 
 # ---------------------------------------------------------------------------
-# Tests: effect: warn (default)
+# Tests: action: warn (default)
 # ---------------------------------------------------------------------------
 
 
 class TestWarnEffect:
-    """Tests for effect: warn (default) postcondition behavior."""
+    """Tests for action: warn (default) postcondition behavior."""
 
     @pytest.mark.asyncio
     async def test_warn_default_behavior_read(self):
-        """effect: warn + SideEffect.READ -> redacted_response is None, warning with 'Consider retrying'."""
+        """action: warn + SideEffect.READ -> redacted_response is None, warning with 'Consider retrying'."""
         guard = Edictum.from_yaml(_write_yaml(WARN_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Found SSN: 123-45-6789"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is None
         assert not decision.output_suppressed
@@ -432,12 +432,12 @@ class TestWarnEffect:
 
     @pytest.mark.asyncio
     async def test_warn_default_behavior_write(self):
-        """effect: warn + SideEffect.WRITE -> redacted_response is None, warning with 'Tool already executed'."""
+        """action: warn + SideEffect.WRITE -> redacted_response is None, warning with 'Tool already executed'."""
         guard = Edictum.from_yaml(_write_yaml(WARN_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.WRITE)
+        tool_call = _make_envelope(side_effect=SideEffect.WRITE)
         response = "Wrote SSN: 123-45-6789 to file"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is None
         assert not decision.output_suppressed
@@ -446,12 +446,12 @@ class TestWarnEffect:
 
     @pytest.mark.asyncio
     async def test_warn_postconditions_not_passed(self):
-        """Warn effect still marks postconditions_passed as False."""
+        """Warn action still marks postconditions_passed as False."""
         guard = Edictum.from_yaml(_write_yaml(WARN_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Found SSN: 123-45-6789"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert not decision.postconditions_passed
 
@@ -462,16 +462,16 @@ class TestWarnEffect:
 
 
 class TestObserveModeRedact:
-    """Tests for observe mode with redact effect."""
+    """Tests for observe mode with redact action."""
 
     @pytest.mark.asyncio
     async def test_observe_redact_no_redaction(self):
-        """Observe mode + effect: redact -> no redaction, observe warning only."""
+        """Observe mode + action: redact -> no redaction, observe warning only."""
         guard = Edictum.from_yaml(_write_yaml(OBSERVE_REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Found key: sk-prod-abcd1234"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is None
         assert not decision.output_suppressed
@@ -485,14 +485,14 @@ class TestObserveModeRedact:
         """Observe mode must NOT affect postconditions_passed.
 
         postconditions_passed propagates to on_postcondition_warn in all
-        7 adapters. If observe-mode contracts set it to False, observe mode
+        7 adapters. If observe-mode rules set it to False, observe mode
         silently becomes enforcement — violating the core guarantee.
         """
         guard = Edictum.from_yaml(_write_yaml(OBSERVE_REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Found key: sk-prod-abcd1234"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.postconditions_passed
 
@@ -509,10 +509,10 @@ class TestMultiplePostconditions:
     async def test_second_redact_operates_on_already_redacted(self):
         """Multiple redact postconditions: second operates on already-redacted text."""
         guard = Edictum.from_yaml(_write_yaml(MULTI_REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Keys: sk-prod-abcd1234 and AKIA-PROD-ABCDEFGHIJKL found"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is not None
         assert "sk-prod-abcd1234" not in decision.redacted_response
@@ -522,12 +522,12 @@ class TestMultiplePostconditions:
 
     @pytest.mark.asyncio
     async def test_deny_after_redact_overrides(self):
-        """deny after redact overrides with full suppression."""
+        """block after redact overrides with full suppression."""
         guard = Edictum.from_yaml(_write_yaml(DENY_AFTER_REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "sk-prod-abcd1234 accommodation details"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.output_suppressed is True
         assert decision.redacted_response.startswith("[OUTPUT SUPPRESSED]")
@@ -546,10 +546,10 @@ class TestNestedExpressionPatterns:
     async def test_nested_any_patterns_extracted(self):
         """Regex patterns correctly extracted from nested any expression."""
         guard = Edictum.from_yaml(_write_yaml(NESTED_EXPR_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Found key: sk-prod-abcd1234 in config"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is not None
         assert "sk-prod-abcd1234" not in decision.redacted_response
@@ -559,11 +559,11 @@ class TestNestedExpressionPatterns:
     async def test_nested_all_patterns_extracted(self):
         """Regex patterns correctly extracted from nested all expression."""
         guard = Edictum.from_yaml(_write_yaml(NESTED_EXPR_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         # This matches the 'any' branch via the 'all' sub-branch
         response = "Found key: AKIA-PROD-ABCDEFGHIJKL in config"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.redacted_response is not None
         assert "AKIA-PROD-ABCDEFGHIJKL" not in decision.redacted_response
@@ -582,10 +582,10 @@ class TestFallbackToRedactionPolicy:
     async def test_no_pattern_redact_uses_redaction_policy(self):
         """Fallback to RedactionPolicy when no regex patterns in the when expression."""
         guard = Edictum.from_yaml(_write_yaml(NO_PATTERN_REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "The secret_value is exposed here"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         # RedactionPolicy is applied as fallback since no matches/matches_any patterns
         assert decision.redacted_response is not None
@@ -602,12 +602,12 @@ class TestPostDecisionFields:
 
     @pytest.mark.asyncio
     async def test_contracts_evaluated_populated(self):
-        """contracts_evaluated list is populated with contract info."""
+        """contracts_evaluated list is populated with rule info."""
         guard = Edictum.from_yaml(_write_yaml(REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Found key: sk-prod-abcd1234"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert len(decision.contracts_evaluated) == 1
         assert decision.contracts_evaluated[0]["name"] == "secrets-redact"
@@ -618,22 +618,22 @@ class TestPostDecisionFields:
     async def test_tool_success_field(self):
         """tool_success is correctly passed through."""
         guard = Edictum.from_yaml(_write_yaml(REDACT_BUNDLE), audit_sink=_NullSink())
-        pipeline = GovernancePipeline(guard)
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        pipeline = CheckPipeline(guard)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
 
-        decision = await pipeline.post_execute(envelope, "safe output", True)
+        decision = await pipeline.post_execute(tool_call, "safe output", True)
         assert decision.tool_success is True
 
-        decision = await pipeline.post_execute(envelope, "safe output", False)
+        decision = await pipeline.post_execute(tool_call, "safe output", False)
         assert decision.tool_success is False
 
     @pytest.mark.asyncio
     async def test_policy_error_false_on_normal(self):
         """policy_error is False for normal evaluation."""
         guard = Edictum.from_yaml(_write_yaml(REDACT_BUNDLE), audit_sink=_NullSink())
-        envelope = _make_envelope(side_effect=SideEffect.READ)
+        tool_call = _make_envelope(side_effect=SideEffect.READ)
         response = "Found key: sk-prod-abcd1234"
 
-        decision = await _post_execute(guard, envelope, response)
+        decision = await _post_execute(guard, tool_call, response)
 
         assert decision.policy_error is False

@@ -13,45 +13,45 @@ from edictum.audit import AuditAction
 
 ENFORCED_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: enforced-policy
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-env-reads
     type: pre
     tool: read_file
     when:
       args.path: { contains: ".env" }
     then:
-      effect: deny
+      action: block
       message: "Denied read of .env file"
   - id: session-limit
     type: session
     limits:
       max_tool_calls: 100
     then:
-      effect: deny
+      action: block
       message: "Session limit reached (enforced)"
 """
 
 CANDIDATE_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: candidate-policy
 defaults:
   mode: enforce
 observe_alongside: true
-contracts:
+rules:
   - id: block-env-reads
     type: pre
     tool: read_file
     when:
       args.path: { contains: ".secret" }
     then:
-      effect: deny
+      action: block
       message: "Denied read of .secret file"
   - id: new-observe-only
     type: pre
@@ -59,14 +59,14 @@ contracts:
     when:
       args.cmd: { contains: "rm -rf" }
     then:
-      effect: deny
+      action: block
       message: "Dangerous rm command denied"
   - id: session-limit
     type: session
     limits:
       max_tool_calls: 5
     then:
-      effect: deny
+      action: block
       message: "Session limit reached (candidate)"
 """
 
@@ -103,7 +103,7 @@ class TestObserveModeAuditEvents:
         sink = _CaptureSink()
         guard = Edictum.from_yaml(enforced_path, candidate_path, audit_sink=sink)
 
-        # read_file with .secret triggers the observe-mode contract but not the enforced one
+        # read_file with .secret triggers the observe-mode rule but not the enforced one
         result = await guard.run(
             "read_file",
             {"path": "/home/config.secret"},
@@ -122,7 +122,7 @@ class TestObserveModeAuditEvents:
 
 
 class TestObserveModeDoesNotBlockRealCalls:
-    """Observe-mode contracts don't block real calls -- PreDecision still allows."""
+    """Observe-mode rules don't block real calls -- PreDecision still allows."""
 
     async def test_observe_deny_does_not_block(self, tmp_path):
         enforced_path, candidate_path = _write_bundles(tmp_path)
@@ -142,7 +142,7 @@ class TestObserveModeDoesNotBlockRealCalls:
         sink = _CaptureSink()
         guard = Edictum.from_yaml(enforced_path, candidate_path, audit_sink=sink)
 
-        # .env should still be denied by the enforced contract
+        # .env should still be denied by the enforced rule
         with pytest.raises(EdictumDenied, match="Denied read of .env file"):
             await guard.run(
                 "read_file",
@@ -152,7 +152,7 @@ class TestObserveModeDoesNotBlockRealCalls:
 
 
 class TestObserveModeSessionContracts:
-    """Observe-mode session contracts track counters independently."""
+    """Observe-mode session rules track counters independently."""
 
     async def test_observe_session_evaluates_against_real_counters(self, tmp_path):
         enforced_path, candidate_path = _write_bundles(tmp_path)
@@ -160,7 +160,7 @@ class TestObserveModeSessionContracts:
         guard = Edictum.from_yaml(enforced_path, candidate_path, audit_sink=sink)
 
         # The candidate has max_tool_calls=5, enforced has 100
-        # After 5 calls, the observe-mode session contract should report would-deny
+        # After 5 calls, the observe-mode session rule should report would-block
         # but the real session should still allow
         for _ in range(6):
             await guard.run(
@@ -172,12 +172,12 @@ class TestObserveModeSessionContracts:
         # All calls should succeed (enforced limit is 100)
         # But we should see observe-mode audit events after the 5th call
         observe_events = [e for e in sink.events if e.mode == "observe"]
-        # Observe-mode session contract events should appear
+        # Observe-mode session rule events should appear
         assert len(observe_events) > 0
 
 
 class TestObserveModeWithoutEnforcedCounterpart:
-    """observe_alongside with new contract ID (no enforced counterpart) -- observe-mode still evaluates."""
+    """observe_alongside with new rule ID (no enforced counterpart) -- observe-mode still evaluates."""
 
     async def test_new_observe_only_contract(self, tmp_path):
         enforced_path, candidate_path = _write_bundles(tmp_path)
@@ -215,7 +215,7 @@ class TestObserveModeAuditActions:
 
         # Observe-mode events that pass should use CALL_ALLOWED
         observe_events = [e for e in sink.events if e.mode == "observe"]
-        # The new-observe-only contract matches tool="*" but only triggers on rm -rf
+        # The new-observe-only rule matches tool="*" but only triggers on rm -rf
         # So it should pass and produce a CALL_ALLOWED observe-mode event
         assert any(e.action == AuditAction.CALL_ALLOWED for e in observe_events)
 
@@ -224,7 +224,7 @@ class TestObserveModeAuditActions:
         sink = _CaptureSink()
         guard = Edictum.from_yaml(enforced_path, candidate_path, audit_sink=sink)
 
-        # Trigger the observe-mode contract but not the enforced
+        # Trigger the observe-mode rule but not the enforced
         await guard.run(
             "read_file",
             {"path": "/home/app.secret"},
@@ -236,7 +236,7 @@ class TestObserveModeAuditActions:
 
 
 class TestNormalContractsRegression:
-    """Normal contracts still work exactly as before (regression)."""
+    """Normal rules still work exactly as before (regression)."""
 
     async def test_enforced_deny_unchanged(self, tmp_path):
         enforced_path = tmp_path / "enforced.yaml"

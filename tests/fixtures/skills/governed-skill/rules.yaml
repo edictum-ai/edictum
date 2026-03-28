@@ -1,9 +1,9 @@
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
-  name: file-manager-contracts
+  name: file-manager-rules
   description: Contracts for the file manager skill
-contracts:
+rules:
   - id: restrict-to-workspace
     type: sandbox
     tools:
@@ -11,5 +11,5 @@ contracts:
     within:
       - /workspace
     outside:
-      effect: deny
+      action: block
       message: "File operations restricted to /workspace"

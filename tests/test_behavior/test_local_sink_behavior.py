@@ -10,12 +10,12 @@ from tests.conftest import CapturingAuditSink, NullAuditSink
 
 MINIMAL_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: allow-all
     type: pre
     tool: "*"
@@ -23,14 +23,14 @@ contracts:
       tool_name:
         equals: "__never_matches__"
     then:
-      effect: deny
+      action: block
       message: "never fires"
 """
 
 
 @pytest.fixture()
 def yaml_path(tmp_path):
-    p = tmp_path / "contracts.yaml"
+    p = tmp_path / "rules.yaml"
     p.write_text(MINIMAL_YAML)
     return p
 

@@ -1,20 +1,20 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://edictum.dev/schemas/edictum-v1-contractbundle.json",
-  "title": "Edictum ContractBundle v1",
-  "description": "Schema for Edictum YAML contract bundles. Enforces structure, type-specific constraints, and effect constraints.",
+  "title": "Edictum Ruleset v1",
+  "description": "Schema for Edictum YAML rule bundles. Enforces structure, type-specific constraints, and action constraints.",
   "type": "object",
-  "required": ["apiVersion", "kind", "metadata", "defaults", "contracts"],
+  "required": ["apiVersion", "kind", "metadata", "defaults", "rules"],
   "additionalProperties": false,
   "properties": {
     "apiVersion": { "const": "edictum/v1" },
-    "kind": { "const": "ContractBundle" },
+    "kind": { "const": "Ruleset" },
     "metadata": { "$ref": "#/$defs/Metadata" },
     "defaults": { "$ref": "#/$defs/Defaults" },
-    "contracts": {
+    "rules": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/Contract" }
+      "items": { "$ref": "#/$defs/Rule" }
     },
     "tools": { "$ref": "#/$defs/Tools" },
     "observability": { "$ref": "#/$defs/Observability" },
@@ -24,7 +24,7 @@
   "$defs": {
     "Tools": {
       "type": "object",
-      "description": "Tool side-effect classifications for postcondition enforcement.",
+      "description": "Tool side-action classifications for postcondition enforcement.",
       "additionalProperties": { "$ref": "#/$defs/ToolDef" }
     },
 
@@ -102,7 +102,7 @@
       "enum": ["enforce", "observe"]
     },
 
-    "Contract": {
+    "Rule": {
       "oneOf": [
         { "$ref": "#/$defs/PreContract" },
         { "$ref": "#/$defs/PostContract" },
@@ -116,7 +116,7 @@
       "required": ["id", "type", "tool", "when", "then"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/ContractId" },
+        "id": { "$ref": "#/$defs/RuleId" },
         "type": { "const": "pre" },
         "enabled": { "type": "boolean", "default": true },
         "mode": { "$ref": "#/$defs/Mode" },
@@ -124,15 +124,15 @@
         "when": { "$ref": "#/$defs/Expression" },
         "then": {
           "type": "object",
-          "required": ["effect", "message"],
+          "required": ["action", "message"],
           "additionalProperties": false,
           "properties": {
-            "effect": { "enum": ["deny", "approve"] },
+            "action": { "enum": ["block", "ask"] },
             "message": { "$ref": "#/$defs/MessageString" },
             "tags": { "$ref": "#/$defs/Tags" },
             "metadata": { "$ref": "#/$defs/ThenMetadata" },
             "timeout": { "type": "integer", "minimum": 1, "default": 300 },
-            "timeout_effect": { "enum": ["deny", "allow"], "default": "deny" }
+            "timeout_action": { "enum": ["block", "allow"], "default": "block" }
           }
         }
       }
@@ -143,7 +143,7 @@
       "required": ["id", "type", "tool", "when", "then"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/ContractId" },
+        "id": { "$ref": "#/$defs/RuleId" },
         "type": { "const": "post" },
         "enabled": { "type": "boolean", "default": true },
         "mode": { "$ref": "#/$defs/Mode" },
@@ -151,10 +151,10 @@
         "when": { "$ref": "#/$defs/Expression" },
         "then": {
           "type": "object",
-          "required": ["effect", "message"],
+          "required": ["action", "message"],
           "additionalProperties": false,
           "properties": {
-            "effect": { "enum": ["warn", "redact", "deny"] },
+            "action": { "enum": ["warn", "redact", "block"] },
             "message": { "$ref": "#/$defs/MessageString" },
             "tags": { "$ref": "#/$defs/Tags" },
             "metadata": { "$ref": "#/$defs/ThenMetadata" }
@@ -168,17 +168,17 @@
       "required": ["id", "type", "limits", "then"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/ContractId" },
+        "id": { "$ref": "#/$defs/RuleId" },
         "type": { "const": "session" },
         "enabled": { "type": "boolean", "default": true },
         "mode": { "$ref": "#/$defs/Mode" },
         "limits": { "$ref": "#/$defs/SessionLimits" },
         "then": {
           "type": "object",
-          "required": ["effect", "message"],
+          "required": ["action", "message"],
           "additionalProperties": false,
           "properties": {
-            "effect": { "const": "deny" },
+            "action": { "const": "block" },
             "message": { "$ref": "#/$defs/MessageString" },
             "tags": { "$ref": "#/$defs/Tags" },
             "metadata": { "$ref": "#/$defs/ThenMetadata" }
@@ -192,7 +192,7 @@
       "required": ["id", "type", "message"],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/ContractId" },
+        "id": { "$ref": "#/$defs/RuleId" },
         "type": { "const": "sandbox" },
         "enabled": { "type": "boolean", "default": true },
         "mode": { "$ref": "#/$defs/Mode" },
@@ -215,12 +215,12 @@
         "not_allows": { "$ref": "#/$defs/SandboxNotAllows" },
         "outside": {
           "type": "string",
-          "enum": ["deny", "approve"],
-          "default": "deny"
+          "enum": ["block", "ask"],
+          "default": "block"
         },
         "message": { "$ref": "#/$defs/MessageString" },
         "timeout": { "type": "integer", "minimum": 1, "default": 300 },
-        "timeout_effect": { "enum": ["deny", "allow"], "default": "deny" }
+        "timeout_action": { "enum": ["block", "allow"], "default": "block" }
       },
       "allOf": [
         {
@@ -267,11 +267,11 @@
       }
     },
 
-    "ContractId": {
+    "RuleId": {
       "type": "string",
       "minLength": 1,
       "pattern": "^[a-z0-9][a-z0-9_-]*$",
-      "description": "Unique contract identifier within the bundle."
+      "description": "Unique rule identifier within the bundle."
     },
 
     "ToolSelector": {
@@ -296,7 +296,7 @@
     "ThenMetadata": {
       "type": "object",
       "additionalProperties": true,
-      "description": "Arbitrary key-value metadata stamped into Verdict and audit."
+      "description": "Arbitrary key-value metadata stamped into Decision and audit."
     },
 
     "SessionLimits": {

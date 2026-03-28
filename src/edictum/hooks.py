@@ -8,7 +8,7 @@ from enum import Enum
 
 class HookResult(Enum):
     ALLOW = "allow"
-    DENY = "deny"
+    DENY = "block"
 
 
 @dataclass
@@ -21,7 +21,7 @@ class HookDecision:
         return cls(result=HookResult.ALLOW)
 
     @classmethod
-    def deny(cls, reason: str) -> HookDecision:
+    def block(cls, reason: str) -> HookDecision:
         if len(reason) > 500:
             reason = reason[:497] + "..."
         return cls(result=HookResult.DENY, reason=reason)

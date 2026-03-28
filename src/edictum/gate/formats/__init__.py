@@ -13,9 +13,9 @@ class FormatHandler(Protocol):
         ...
 
     def format_output(
-        self, verdict: str, contract_id: str | None, reason: str | None, evaluated: int
+        self, decision: str, rule_id: str | None, reason: str | None, evaluated: int
     ) -> tuple[str, int]:
-        """Format verdict for assistant. Returns (json_string, exit_code)."""
+        """Format decision for assistant. Returns (json_string, exit_code)."""
         ...
 
 

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from edictum import Edictum, Principal, Verdict, postcondition, precondition
+from edictum import Edictum, Principal, Decision, postcondition, precondition
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -96,7 +96,7 @@ ADAPTER_IDS = [c[0] for c in CONFIGS]
 
 
 class TestParityAllow:
-    """All adapters must allow when no contracts match."""
+    """All adapters must allow when no rules match."""
 
     @pytest.mark.parametrize("name,cls,pre_fn,post_fn,allow_check,deny_check", CONFIGS, ids=ADAPTER_IDS)
     async def test_allow_path(self, name, cls, pre_fn, post_fn, allow_check, deny_check):
@@ -107,18 +107,18 @@ class TestParityAllow:
 
 
 class TestParityDeny:
-    """All adapters must deny when a precondition fails."""
+    """All adapters must block when a precondition fails."""
 
     @pytest.mark.parametrize("name,cls,pre_fn,post_fn,allow_check,deny_check", CONFIGS, ids=ADAPTER_IDS)
     async def test_deny_path(self, name, cls, pre_fn, post_fn, allow_check, deny_check):
         @precondition("*")
-        def block_all(envelope):
-            return Verdict.fail("not allowed")
+        def block_all(tool_call):
+            return Decision.fail("not allowed")
 
-        guard = _make_guard(contracts=[block_all])
+        guard = _make_guard(rules=[block_all])
         adapter = cls(guard)
         result = await pre_fn(adapter)
-        assert deny_check(result), f"{name} did not return deny value"
+        assert deny_check(result), f"{name} did not return block value"
 
 
 class TestParityDenyReason:
@@ -127,11 +127,11 @@ class TestParityDenyReason:
     @pytest.mark.parametrize("name,cls,pre_fn,post_fn,allow_check,deny_check", CONFIGS, ids=ADAPTER_IDS)
     async def test_deny_reason_in_audit(self, name, cls, pre_fn, post_fn, allow_check, deny_check):
         @precondition("*")
-        def block_with_reason(envelope):
-            return Verdict.fail("specific reason XYZ")
+        def block_with_reason(tool_call):
+            return Decision.fail("specific reason XYZ")
 
         sink = NullAuditSink()
-        guard = _make_guard(contracts=[block_with_reason], audit_sink=sink)
+        guard = _make_guard(rules=[block_with_reason], audit_sink=sink)
         adapter = cls(guard)
         await pre_fn(adapter)
 
@@ -143,15 +143,15 @@ class TestParityDenyReason:
 
 
 class TestParityObserve:
-    """All adapters must convert deny to allow in observe mode."""
+    """All adapters must convert block to allow in observe mode."""
 
     @pytest.mark.parametrize("name,cls,pre_fn,post_fn,allow_check,deny_check", CONFIGS, ids=ADAPTER_IDS)
     async def test_observe_mode_allows(self, name, cls, pre_fn, post_fn, allow_check, deny_check):
         @precondition("*")
-        def block_all(envelope):
-            return Verdict.fail("would deny")
+        def block_all(tool_call):
+            return Decision.fail("would block")
 
-        guard = _make_guard(contracts=[block_all], mode="observe")
+        guard = _make_guard(rules=[block_all], mode="observe")
         adapter = cls(guard)
         result = await pre_fn(adapter)
         assert allow_check(result), f"{name} denied in observe mode (should allow)"
@@ -181,10 +181,10 @@ class TestParityCallbackCount:
     @pytest.mark.parametrize("name,cls,pre_fn,post_fn", CALLBACK_CONFIGS, ids=CALLBACK_IDS)
     async def test_callback_fires_once(self, name, cls, pre_fn, post_fn):
         @postcondition("TestTool")
-        def detect(envelope, result):
-            return Verdict.fail("issue found")
+        def detect(tool_call, result):
+            return Decision.fail("issue found")
 
-        guard = _make_guard(contracts=[detect])
+        guard = _make_guard(rules=[detect])
         callback = MagicMock()
         adapter = cls(guard)
         adapter._on_postcondition_warn = callback
@@ -242,11 +242,11 @@ class TestParityOnDeny:
     @pytest.mark.parametrize("name,cls,pre_fn", ALL_CONFIGS, ids=ALL_ADAPTER_IDS)
     async def test_on_deny_fires_once(self, name, cls, pre_fn):
         @precondition("*")
-        def block_all(envelope):
-            return Verdict.fail("not allowed")
+        def block_all(tool_call):
+            return Decision.fail("not allowed")
 
         on_deny = MagicMock()
-        guard = _make_guard(contracts=[block_all], on_deny=on_deny)
+        guard = _make_guard(rules=[block_all], on_deny=on_deny)
         adapter = cls(guard)
         await pre_fn(adapter)
 
@@ -254,7 +254,7 @@ class TestParityOnDeny:
 
 
 class TestParityOnAllow:
-    """All adapters must fire on_allow exactly once when no contracts deny."""
+    """All adapters must fire on_allow exactly once when no rules block."""
 
     @pytest.mark.parametrize("name,cls,pre_fn", ALL_CONFIGS, ids=ALL_ADAPTER_IDS)
     async def test_on_allow_fires_once(self, name, cls, pre_fn):
@@ -344,7 +344,7 @@ def _is_denied(result) -> bool:
             return True
         # Claude SDK format
         hook = result.get("hookSpecificOutput", {})
-        return hook.get("permissionDecision") == "deny"
+        return hook.get("permissionDecision") == "block"
     # LangChain ToolMessage
     content = getattr(result, "content", "")
     return "DENIED" in content
@@ -418,17 +418,17 @@ class TestParitySetPrincipal:
     )
     async def test_set_principal_updates_enforcement(self, name, cls, pre_fn, pre_fn_2):
         @precondition("*")
-        def require_admin(envelope):
-            if envelope.principal is None or envelope.principal.role != "admin":
-                return Verdict.fail("admin required")
-            return Verdict.pass_()
+        def require_admin(tool_call):
+            if tool_call.principal is None or tool_call.principal.role != "admin":
+                return Decision.fail("admin required")
+            return Decision.pass_()
 
-        guard = _make_guard(contracts=[require_admin])
+        guard = _make_guard(rules=[require_admin])
         adapter = cls(guard, principal=Principal(role="viewer"))
 
         # First call: viewer -> denied
         result1 = await pre_fn(adapter)
-        assert _is_denied(result1), f"{name} did not deny viewer principal"
+        assert _is_denied(result1), f"{name} did not block viewer principal"
 
         # Mutate principal
         adapter.set_principal(Principal(role="admin"))
@@ -444,15 +444,15 @@ class TestParityPrincipalResolver:
     @pytest.mark.parametrize("name,cls,pre_fn", ALL_CONFIGS, ids=ALL_ADAPTER_IDS)
     async def test_resolver_determines_principal(self, name, cls, pre_fn):
         @precondition("*")
-        def require_admin(envelope):
-            if envelope.principal is None or envelope.principal.role != "admin":
-                return Verdict.fail("admin required")
-            return Verdict.pass_()
+        def require_admin(tool_call):
+            if tool_call.principal is None or tool_call.principal.role != "admin":
+                return Decision.fail("admin required")
+            return Decision.pass_()
 
         def resolver(tool_name: str, tool_input: dict) -> Principal:
             return Principal(role="admin")
 
-        guard = _make_guard(contracts=[require_admin])
+        guard = _make_guard(rules=[require_admin])
         adapter = cls(guard, principal_resolver=resolver)
 
         result = await pre_fn(adapter)
@@ -461,15 +461,15 @@ class TestParityPrincipalResolver:
     @pytest.mark.parametrize("name,cls,pre_fn", ALL_CONFIGS, ids=ALL_ADAPTER_IDS)
     async def test_resolver_overrides_static_principal(self, name, cls, pre_fn):
         @precondition("*")
-        def require_admin(envelope):
-            if envelope.principal is None or envelope.principal.role != "admin":
-                return Verdict.fail("admin required")
-            return Verdict.pass_()
+        def require_admin(tool_call):
+            if tool_call.principal is None or tool_call.principal.role != "admin":
+                return Decision.fail("admin required")
+            return Decision.pass_()
 
         def resolver(tool_name: str, tool_input: dict) -> Principal:
             return Principal(role="admin")
 
-        guard = _make_guard(contracts=[require_admin])
+        guard = _make_guard(rules=[require_admin])
         # Static principal is viewer, but resolver returns admin
         adapter = cls(guard, principal=Principal(role="viewer"), principal_resolver=resolver)
 

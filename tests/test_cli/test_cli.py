@@ -31,7 +31,7 @@ from click.testing import CliRunner
 
 VALID_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: test-bundle
@@ -40,7 +40,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: block-env-reads
     type: pre
     tool: read_file
@@ -48,7 +48,7 @@ contracts:
       args.path:
         contains_any: [".env", ".secret"]
     then:
-      effect: deny
+      action: block
       message: "Sensitive file '{args.path}' denied."
       tags: [secrets]
 
@@ -59,7 +59,7 @@ contracts:
       args.command:
         matches: '\\brm\\s+-rf\\b'
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied."
       tags: [safety]
 
@@ -70,7 +70,7 @@ contracts:
       output.text:
         matches: '\\b\\d{3}-\\d{2}-\\d{4}\\b'
     then:
-      effect: warn
+      action: warn
       message: "PII detected."
       tags: [pii]
 
@@ -79,35 +79,35 @@ contracts:
     limits:
       max_tool_calls: 50
     then:
-      effect: deny
+      action: block
       message: "Session limit reached."
       tags: [rate-limit]
 """
 
 INVALID_WRONG_EFFECT = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
-  name: bad-effect
+  name: bad-action
 
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: bad-rule
     type: pre
     tool: bash
     when:
       args.command: { contains: "rm" }
     then:
-      effect: warn
-      message: "Wrong effect for pre."
+      action: warn
+      message: "Wrong action for pre."
 """
 
 INVALID_DUPLICATE_ID = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: dupe-ids
@@ -115,14 +115,14 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: same-id
     type: pre
     tool: bash
     when:
       args.command: { contains: "rm" }
     then:
-      effect: deny
+      action: block
       message: "First rule."
 
   - id: same-id
@@ -131,13 +131,13 @@ contracts:
     when:
       args.path: { contains: ".env" }
     then:
-      effect: deny
+      action: block
       message: "Duplicate."
 """
 
 INVALID_BAD_REGEX = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: bad-regex
@@ -145,7 +145,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: bad-regex-rule
     type: pre
     tool: bash
@@ -153,31 +153,31 @@ contracts:
       args.command:
         matches: '[invalid(regex'
     then:
-      effect: deny
+      action: block
       message: "Bad regex."
 """
 
 INVALID_YAML_SYNTAX = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: broken
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: rule1
     type: pre
     tool: bash
     when:
       args.command: { contains: "rm"
     then:
-      effect: deny
+      action: block
       message: "Broken YAML."
 """
 
 INVALID_MISSING_WHEN = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: no-when
@@ -185,18 +185,18 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: no-when-rule
     type: pre
     tool: bash
     then:
-      effect: deny
+      action: block
       message: "Missing when."
 """
 
 BUNDLE_V2 = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: test-bundle-v2
@@ -205,7 +205,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: block-env-reads
     type: pre
     tool: read_file
@@ -213,7 +213,7 @@ contracts:
       args.path:
         contains_any: [".env", ".secret", ".pem"]
     then:
-      effect: deny
+      action: block
       message: "Sensitive file '{args.path}' denied."
       tags: [secrets]
 
@@ -223,7 +223,7 @@ contracts:
     when:
       principal.ticket_ref: { exists: false }
     then:
-      effect: deny
+      action: block
       message: "Ticket required."
       tags: [compliance]
 
@@ -234,7 +234,7 @@ contracts:
       output.text:
         matches: '\\b\\d{3}-\\d{2}-\\d{4}\\b'
     then:
-      effect: warn
+      action: warn
       message: "PII detected."
       tags: [pii]
 
@@ -243,7 +243,7 @@ contracts:
     limits:
       max_tool_calls: 100
     then:
-      effect: deny
+      action: block
       message: "Session limit reached."
       tags: [rate-limit]
 """
@@ -266,7 +266,7 @@ def write_file(content: str, suffix: str = ".yaml") -> str:
 #
 #   @click.group()
 #   def cli():
-#       """Edictum — Runtime contracts for AI agents."""
+#       """Edictum — Runtime rules for AI agents."""
 #       pass
 #
 #   @cli.command()
@@ -312,19 +312,19 @@ class TestValidateCommand:
     """
     SPEC: edictum validate <file.yaml> [file2.yaml ...]
 
-    Validates one or more contract bundle files.
+    Validates one or more rule bundle files.
     For each file:
     - Parse YAML (report syntax errors)
     - Validate against JSON Schema (report structural errors)
-    - Check unique contract IDs
+    - Check unique rule IDs
     - Compile all regexes and report invalid ones
-    - Report contract summary (count by type)
+    - Report rule summary (count by type)
 
     Exit code 0: all files valid
     Exit code 1: any file has errors
 
     Output format:
-    ✓ contracts.yaml — 4 contracts (2 pre, 1 post, 1 session)
+    ✓ rules.yaml — 4 rules (2 pre, 1 post, 1 session)
     ✗ bad.yaml:14 — error description
     """
 
@@ -333,7 +333,7 @@ class TestValidateCommand:
         runner = CliRunner()
         result = runner.invoke(cli, ["validate", path])
         assert result.exit_code == 0
-        assert "4 contract" in result.output
+        assert "4 rule" in result.output
         # Should show type breakdown
         assert "pre" in result.output
         assert "post" in result.output
@@ -352,7 +352,7 @@ class TestValidateCommand:
         result = runner.invoke(cli, ["validate", path])
         assert result.exit_code == 1
         # Should mention what's wrong
-        assert "effect" in result.output.lower() or "warn" in result.output.lower()
+        assert "action" in result.output.lower() or "warn" in result.output.lower()
 
     def test_duplicate_id_reports_error(self):
         path = write_file(INVALID_DUPLICATE_ID)
@@ -395,7 +395,7 @@ class TestValidateCommand:
         result = runner.invoke(cli, ["validate", valid_path, invalid_path])
         assert result.exit_code == 1
         # But valid file should still show success
-        assert "4 contract" in result.output
+        assert "4 rule" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -411,14 +411,14 @@ class TestCheckCommand:
                           [--principal-user <user>]
                           [--principal-ticket <ticket>]
 
-    Dry-run: create a synthetic envelope and evaluate it against the contracts.
-    Show which rules matched, which passed, which would deny/warn.
+    Dry-run: create a synthetic tool_call and evaluate it against the rules.
+    Show which rules matched, which passed, which would block/warn.
 
     Exit code 0: tool call would be ALLOWED
     Exit code 1: tool call would be DENIED
 
     Output should show:
-    - Verdict (ALLOWED / DENIED)
+    - Decision (ALLOWED / DENIED)
     - Which rule denied (if denied): id, message, tags
     - How many rules were evaluated
     """
@@ -585,10 +585,10 @@ class TestCheckCommand:
         )
         assert result.exit_code == 0
         # Should mention number of rules evaluated
-        assert "rule" in result.output.lower() or "contract" in result.output.lower()
+        assert "rule" in result.output.lower() or "rule" in result.output.lower()
 
     def test_unrelated_tool_passes(self):
-        """Tool not targeted by any pre contract should pass."""
+        """Tool not targeted by any pre rule should pass."""
         path = write_file(VALID_BUNDLE)
         runner = CliRunner()
         result = runner.invoke(
@@ -614,12 +614,12 @@ class TestDiffCommand:
     """
     SPEC: edictum diff <old.yaml> <new.yaml>
 
-    Compare two contract bundles and show what changed.
+    Compare two rule bundles and show what changed.
     Output categories:
-    - Added: contracts in new but not in old (by id)
-    - Removed: contracts in old but not in new (by id)
-    - Changed: contracts with same id but different content
-    - Unchanged: contracts identical in both
+    - Added: rules in new but not in old (by id)
+    - Removed: rules in old but not in new (by id)
+    - Changed: rules with same id but different content
+    - Unchanged: rules identical in both
 
     Exit code 0: no changes (bundles identical)
     Exit code 1: changes detected
@@ -702,29 +702,29 @@ class TestReplayCommand:
     SPEC: edictum replay <file.yaml> --audit-log <events.jsonl>
                            [--output <report.jsonl>]
 
-    Replay an audit log against a (potentially different) contract bundle.
+    Replay an audit log against a (potentially different) rule bundle.
     For each event in the log:
-    - Reconstruct the envelope (tool_name, tool_args, environment, principal)
-    - Evaluate against the provided contracts
-    - Compare: would the new contracts produce a different verdict?
+    - Reconstruct the tool_call (tool_name, tool_args, environment, principal)
+    - Evaluate against the provided rules
+    - Compare: would the new rules produce a different decision?
 
     Output:
     - Summary: N events replayed, M would change
-    - Changed events: old verdict → new verdict, which rule, why
+    - Changed events: old decision → new decision, which rule, why
     - If --output specified, write detailed report as JSONL
 
-    Exit code 0: no changes (new contracts produce same verdicts)
+    Exit code 0: no changes (new rules produce same verdicts)
     Exit code 1: changes detected
 
-    Use case: "If we deploy this new contract bundle, which past tool calls
+    Use case: "If we deploy this new rule bundle, which past tool calls
     would have been affected?"
     """
 
     @pytest.fixture
     def audit_log(self) -> str:
-        """Create a sample audit log with events that match/don't match contracts."""
+        """Create a sample audit log with events that match/don't match rules."""
         events = [
-            # Event 1: read_file on .env — was allowed (no contracts before)
+            # Event 1: read_file on .env — was allowed (no rules before)
             {
                 "action": "call_allowed",
                 "tool_name": "read_file",
@@ -740,7 +740,7 @@ class TestReplayCommand:
                 "environment": "production",
                 "principal": {"user_id": "dev-1", "role": "developer"},
             },
-            # Event 3: bash rm -rf — was allowed (no contracts before)
+            # Event 3: bash rm -rf — was allowed (no rules before)
             {
                 "action": "call_allowed",
                 "tool_name": "bash",
@@ -773,9 +773,9 @@ class TestReplayCommand:
 
     def test_replay_detects_changes(self, audit_log):
         """Events 1 and 3 were allowed but would now be denied by VALID_BUNDLE."""
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         runner = CliRunner()
-        result = runner.invoke(cli, ["replay", contracts, "--audit-log", audit_log])
+        result = runner.invoke(cli, ["replay", rules, "--audit-log", audit_log])
         assert result.exit_code == 1  # changes detected
         # Should report that some events would change
         assert "change" in result.output.lower() or "would" in result.output.lower()
@@ -783,14 +783,14 @@ class TestReplayCommand:
         assert "5" in result.output or "event" in result.output.lower()
 
     def test_replay_with_output_file(self, audit_log):
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         output_path = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False).name
         runner = CliRunner()
         runner.invoke(
             cli,
             [
                 "replay",
-                contracts,
+                rules,
                 "--audit-log",
                 audit_log,
                 "--output",
@@ -809,7 +809,7 @@ class TestReplayCommand:
             assert "original_action" in data or "new_verdict" in data
 
     def test_replay_no_changes(self):
-        """If the audit log only has events that match current contracts, no changes."""
+        """If the audit log only has events that match current rules, no changes."""
         events = [
             {
                 "action": "call_allowed",
@@ -823,25 +823,25 @@ class TestReplayCommand:
             "\n".join(json.dumps(e) for e in events),
             suffix=".jsonl",
         )
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         runner = CliRunner()
-        result = runner.invoke(cli, ["replay", contracts, "--audit-log", log_path])
+        result = runner.invoke(cli, ["replay", rules, "--audit-log", log_path])
         assert result.exit_code == 0
         assert "no change" in result.output.lower() or "0" in result.output
 
     def test_replay_empty_log(self):
         log_path = write_file("", suffix=".jsonl")
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         runner = CliRunner()
-        result = runner.invoke(cli, ["replay", contracts, "--audit-log", log_path])
+        result = runner.invoke(cli, ["replay", rules, "--audit-log", log_path])
         assert result.exit_code == 0
         assert "0" in result.output
 
     def test_replay_invalid_contracts(self, audit_log):
-        """Replay with invalid contracts should fail gracefully."""
-        contracts = write_file(INVALID_WRONG_EFFECT)
+        """Replay with invalid rules should fail gracefully."""
+        rules = write_file(INVALID_WRONG_EFFECT)
         runner = CliRunner()
-        result = runner.invoke(cli, ["replay", contracts, "--audit-log", audit_log])
+        result = runner.invoke(cli, ["replay", rules, "--audit-log", audit_log])
         assert result.exit_code != 0
 
     def test_replay_malformed_log_line(self):
@@ -852,9 +852,9 @@ class TestReplayCommand:
             '{"action":"call_allowed","tool_name":"bash","tool_args":{"command":"pwd"}}'
         )
         log_path = write_file(log_content, suffix=".jsonl")
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         runner = CliRunner()
-        result = runner.invoke(cli, ["replay", contracts, "--audit-log", log_path])
+        result = runner.invoke(cli, ["replay", rules, "--audit-log", log_path])
         # Should process 2 valid events and warn about 1 bad line
         assert "skip" in result.output.lower() or "warn" in result.output.lower() or "invalid" in result.output.lower()
 
@@ -918,7 +918,7 @@ cases:
     tool: read_file
     args:
       path: "/app/.env"
-    expect: deny
+    expect: block
     match_contract: block-env-reads
   - id: test-allow-normal
     tool: read_file
@@ -933,7 +933,7 @@ cases:
     tool: read_file
     args:
       path: "report.txt"
-    expect: deny
+    expect: block
 """
 
 CASES_WITH_PRINCIPAL = """\
@@ -944,7 +944,7 @@ cases:
       service: api
     principal:
       role: sre
-    expect: deny
+    expect: block
     match_contract: require-ticket
   - id: test-with-ticket-allowed
     tool: deploy_service
@@ -976,7 +976,7 @@ cases:
     tool: read_file
     args:
       path: "/app/.env"
-    expect: deny
+    expect: block
     match_contract: nonexistent-rule
 """
 
@@ -985,12 +985,12 @@ class TestTestCommand:
     """
     SPEC: edictum test <file.yaml> --cases <cases.yaml>
 
-    Validate contracts against YAML test cases (preconditions only).
+    Validate rules against YAML test cases (preconditions only).
     For each test case:
-    - Build an envelope from tool, args, principal
+    - Build an tool_call from tool, args, principal
     - Evaluate preconditions
-    - Compare result to expected verdict (allow/deny)
-    - Optionally verify that the correct contract triggered
+    - Compare result to expected decision (allow/block)
+    - Optionally verify that the correct rule triggered
 
     Exit code 0: all cases pass
     Exit code 1: any case fails
@@ -1000,92 +1000,92 @@ class TestTestCommand:
 
     def test_all_pass(self):
         """edictum test should exit 0 when all cases pass."""
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         cases = write_file(PASSING_CASES)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases])
         assert result.exit_code == 0
         assert "2/2 passed" in result.output
         assert "0 failed" in result.output
 
     def test_with_failure(self):
         """edictum test should exit non-zero when cases fail."""
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         cases = write_file(FAILING_CASES)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases])
         assert result.exit_code != 0
         assert "failed" in result.output
         assert "0/1 passed" in result.output or "1 failed" in result.output
 
     def test_match_contract(self):
         """edictum test should verify match_contract when specified."""
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         cases = write_file(PASSING_CASES)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases])
         assert result.exit_code == 0
-        # The output should show the matching contract for deny cases
+        # The output should show the matching rule for block cases
         assert "block-env-reads" in result.output
 
     def test_match_contract_wrong_id(self):
         """edictum test should fail when match_contract doesn't match the firing rule."""
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         cases = write_file(CASES_WRONG_CONTRACT)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases])
         assert result.exit_code != 0
         assert "1 failed" in result.output
 
     def test_principal_with_ticket(self):
         """edictum test should support principal fields in test cases."""
-        contracts = write_file(BUNDLE_V2)
+        rules = write_file(BUNDLE_V2)
         cases = write_file(CASES_WITH_PRINCIPAL)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases])
         assert result.exit_code == 0
         assert "2/2 passed" in result.output
 
     def test_principal_with_claims(self):
         """edictum test should support principal claims in test cases."""
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         cases = write_file(CASES_WITH_CLAIMS)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases])
         assert result.exit_code == 0
         assert "1/1 passed" in result.output
 
     def test_invalid_contracts(self):
-        """edictum test should fail gracefully on invalid contract YAML."""
-        contracts = write_file(INVALID_WRONG_EFFECT)
+        """edictum test should fail gracefully on invalid rule YAML."""
+        rules = write_file(INVALID_WRONG_EFFECT)
         cases = write_file(PASSING_CASES)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases])
         assert result.exit_code != 0
 
     def test_invalid_cases_no_cases_key(self):
         """edictum test should fail gracefully on malformed test cases."""
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         bad_cases = write_file("not_cases:\n  - foo: bar\n")
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", bad_cases])
+        result = runner.invoke(cli, ["test", rules, "--cases", bad_cases])
         assert result.exit_code != 0
         assert "cases" in result.output.lower()
 
     def test_invalid_cases_not_a_list(self):
         """edictum test should fail when cases is not a list."""
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         bad_cases = write_file("cases: not-a-list\n")
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", bad_cases])
+        result = runner.invoke(cli, ["test", rules, "--cases", bad_cases])
         assert result.exit_code != 0
 
     def test_missing_tool_field(self):
         """edictum test should reject cases missing the 'tool' field."""
-        bad = write_file("cases:\n  - id: no-tool\n    expect: deny\n")
-        contracts = write_file(VALID_BUNDLE)
+        bad = write_file("cases:\n  - id: no-tool\n    expect: block\n")
+        rules = write_file(VALID_BUNDLE)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", bad])
+        result = runner.invoke(cli, ["test", rules, "--cases", bad])
         assert result.exit_code == 2
         assert "missing" in result.output.lower()
         assert "tool" in result.output
@@ -1093,9 +1093,9 @@ class TestTestCommand:
     def test_missing_expect_field(self):
         """edictum test should reject cases missing the 'expect' field."""
         bad = write_file("cases:\n  - id: no-expect\n    tool: read_file\n    args:\n      path: x\n")
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", bad])
+        result = runner.invoke(cli, ["test", rules, "--cases", bad])
         assert result.exit_code == 2
         assert "missing" in result.output.lower()
         assert "expect" in result.output
@@ -1105,9 +1105,9 @@ class TestTestCommand:
         bad = write_file(
             "cases:\n  - id: bad-expect\n    tool: read_file\n    args:\n      path: x\n    expect: warn\n"
         )
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", bad])
+        result = runner.invoke(cli, ["test", rules, "--cases", bad])
         assert result.exit_code == 2
         assert "invalid" in result.output.lower()
         assert "warn" in result.output
@@ -1115,9 +1115,9 @@ class TestTestCommand:
     def test_invalid_expect_value_block(self):
         """edictum test should reject 'block' as an expect value."""
         bad = write_file("cases:\n  - id: bad\n    tool: bash\n    args:\n      command: ls\n    expect: block\n")
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", bad])
+        result = runner.invoke(cli, ["test", rules, "--cases", bad])
         assert result.exit_code == 2
         assert "block" in result.output
 
@@ -1129,17 +1129,17 @@ cases:
     tool: read_file
     args:
       path: "/app/.env"
-    expect: deny
+    expect: block
   - id: test-wrong-expect
     tool: read_file
     args:
       path: "safe.txt"
-    expect: deny
+    expect: block
 """
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         cases = write_file(mixed_cases)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases])
         assert result.exit_code != 0
         assert "1/2 passed" in result.output
         assert "1 failed" in result.output
@@ -1174,7 +1174,7 @@ class TestCallsCommand:
     """
     SPEC: edictum test <file.yaml> --calls <calls.json> [--json]
 
-    Evaluate JSON tool calls against contracts using guard.evaluate_batch().
+    Evaluate JSON tool calls against rules using guard.evaluate_batch().
     Supports both preconditions and postconditions (via output field).
 
     Exit code 0: no denials.
@@ -1183,65 +1183,65 @@ class TestCallsCommand:
     """
 
     def test_safe_calls_exit_0(self):
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         calls = write_file(SAFE_CALLS, suffix=".json")
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--calls", calls])
+        result = runner.invoke(cli, ["test", rules, "--calls", calls])
         assert result.exit_code == 0
 
     def test_denied_calls_exit_1(self):
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         calls = write_file(DENY_CALLS, suffix=".json")
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--calls", calls])
+        result = runner.invoke(cli, ["test", rules, "--calls", calls])
         assert result.exit_code == 1
 
     def test_json_flag(self):
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         calls = write_file(SAFE_CALLS, suffix=".json")
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--calls", calls, "--json"])
+        result = runner.invoke(cli, ["test", rules, "--calls", calls, "--json"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
         assert len(parsed) == 2
-        assert parsed[0]["verdict"] == "allow"
+        assert parsed[0]["decision"] == "allow"
 
     def test_with_output_field(self):
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         calls = write_file(CALLS_WITH_OUTPUT, suffix=".json")
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--calls", calls, "--json"])
-        assert result.exit_code == 0  # postconditions warn, don't deny
+        result = runner.invoke(cli, ["test", rules, "--calls", calls, "--json"])
+        assert result.exit_code == 0  # postconditions warn, don't block
         parsed = json.loads(result.output)
-        assert parsed[0]["verdict"] == "warn"
+        assert parsed[0]["decision"] == "warn"
         assert len(parsed[0]["warn_reasons"]) > 0
 
     def test_invalid_json_exit_2(self):
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         calls = write_file("not valid json {{{", suffix=".json")
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--calls", calls])
+        result = runner.invoke(cli, ["test", rules, "--calls", calls])
         assert result.exit_code == 2
 
     def test_non_array_json_exit_2(self):
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         calls = write_file('{"tool": "bash"}', suffix=".json")
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--calls", calls])
+        result = runner.invoke(cli, ["test", rules, "--calls", calls])
         assert result.exit_code == 2
         assert "array" in result.output.lower()
 
     def test_both_cases_and_calls_exit_2(self):
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         cases = write_file(PASSING_CASES)
         calls = write_file(SAFE_CALLS, suffix=".json")
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases, "--calls", calls])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases, "--calls", calls])
         assert result.exit_code == 2
 
     def test_neither_cases_nor_calls_exit_2(self):
-        contracts = write_file(VALID_BUNDLE)
+        rules = write_file(VALID_BUNDLE)
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts])
+        result = runner.invoke(cli, ["test", rules])
         assert result.exit_code == 2

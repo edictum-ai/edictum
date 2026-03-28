@@ -40,7 +40,7 @@ class ServerApprovalBackend:
         message: str,
         *,
         timeout: int = 300,
-        timeout_effect: str = "deny",
+        timeout_action: str = "block",
         principal: dict | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ApprovalRequest:
@@ -51,7 +51,7 @@ class ServerApprovalBackend:
             "tool_args": tool_args,
             "message": message,
             "timeout": timeout,
-            "timeout_effect": timeout_effect,
+            "timeout_action": timeout_action,
         }
         response = await self._client.post("/api/v1/approvals", body)
 
@@ -61,7 +61,7 @@ class ServerApprovalBackend:
             tool_args=tool_args,
             message=message,
             timeout=timeout,
-            timeout_effect=timeout_effect,
+            timeout_action=timeout_action,
             principal=principal,
             metadata=metadata or {},
         )
@@ -76,7 +76,7 @@ class ServerApprovalBackend:
         """Poll the server until the approval is resolved or timeout is exceeded."""
         request = self._pending.get(approval_id)
         effective_timeout = timeout if timeout is not None else (request.timeout if request else 300)
-        timeout_effect = request.timeout_effect if request else "deny"
+        timeout_action = request.timeout_action if request else "block"
 
         deadline = asyncio.get_running_loop().time() + effective_timeout
 
@@ -104,7 +104,7 @@ class ServerApprovalBackend:
 
             if status == "timeout":
                 return ApprovalDecision(
-                    approved=(timeout_effect == "allow"),
+                    approved=(timeout_action == "allow"),
                     status=ApprovalStatus.TIMEOUT,
                     timestamp=datetime.now(UTC),
                 )
@@ -112,7 +112,7 @@ class ServerApprovalBackend:
             # Still pending — check local deadline
             if asyncio.get_running_loop().time() >= deadline:
                 return ApprovalDecision(
-                    approved=(timeout_effect == "allow"),
+                    approved=(timeout_action == "allow"),
                     status=ApprovalStatus.TIMEOUT,
                     timestamp=datetime.now(UTC),
                 )

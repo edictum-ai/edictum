@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
-from edictum import Edictum, Verdict, precondition
+from edictum import Edictum, Decision, precondition
 from edictum.adapters.langchain import LangChainAdapter
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
@@ -52,10 +52,10 @@ class TestLangChainAdapter:
 
     async def test_deny_returns_correct_format(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied")
+        def always_deny(tool_call):
+            return Decision.fail("denied")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = LangChainAdapter(guard)
         result = await adapter._pre_tool_call(_make_request())
         assert result is not None
@@ -79,10 +79,10 @@ class TestLangChainAdapter:
 
     async def test_deny_clears_pending(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("no")
+        def always_deny(tool_call):
+            return Decision.fail("no")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = LangChainAdapter(guard)
 
         await adapter._pre_tool_call(_make_request())
@@ -110,11 +110,11 @@ class TestLangChainAdapter:
 
     async def test_observe_mode_would_deny(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("would be denied")
+        def always_deny(tool_call):
+            return Decision.fail("would be denied")
 
         sink = NullAuditSink()
-        guard = make_guard(mode="observe", contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
         adapter = LangChainAdapter(guard)
 
         result = await adapter._pre_tool_call(_make_request())
@@ -171,11 +171,11 @@ class TestLangChainAdapter:
 
     async def test_deny_audit_event_emitted(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied")
+        def always_deny(tool_call):
+            return Decision.fail("denied")
 
         sink = NullAuditSink()
-        guard = make_guard(contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(rules=[always_deny], audit_sink=sink)
         adapter = LangChainAdapter(guard)
 
         await adapter._pre_tool_call(_make_request())
@@ -223,10 +223,10 @@ class TestLangChainAdapter:
 
     async def test_tool_wrapper_denies_without_calling_handler(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied")
+        def always_deny(tool_call):
+            return Decision.fail("denied")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = LangChainAdapter(guard)
         wrapper = adapter.as_tool_wrapper()
         request = _make_request()
@@ -285,10 +285,10 @@ class TestLangChainAdapter:
 
     async def test_async_tool_wrapper_denies_without_calling_handler(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied")
+        def always_deny(tool_call):
+            return Decision.fail("denied")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = LangChainAdapter(guard)
         wrapper = adapter.as_async_tool_wrapper()
         request = _make_request()

@@ -114,30 +114,30 @@ class TestCursorOutput:
         assert code == 0
 
     def test_format_allow_no_reason(self) -> None:
-        stdout, code = self.fmt.format_output("allow", "some-contract", None, 3)
+        stdout, code = self.fmt.format_output("allow", "some-rule", None, 3)
         result = json.loads(stdout)
         assert result["decision"] == "allow"
         assert "reason" not in result
 
     def test_format_deny(self) -> None:
-        stdout, code = self.fmt.format_output("deny", "test-contract", "Not allowed", 5)
+        stdout, code = self.fmt.format_output("block", "test-rule", "Not allowed", 5)
         result = json.loads(stdout)
-        assert result["decision"] == "deny"
-        assert "test-contract" in result["reason"]
+        assert result["decision"] == "block"
+        assert "test-rule" in result["reason"]
         assert "Not allowed" in result["reason"]
         assert code == 0
 
     def test_format_deny_no_contract(self) -> None:
-        stdout, code = self.fmt.format_output("deny", None, "Generic deny", 0)
+        stdout, code = self.fmt.format_output("block", None, "Generic block", 0)
         result = json.loads(stdout)
-        assert result["decision"] == "deny"
-        assert result["reason"] == "Generic deny"
+        assert result["decision"] == "block"
+        assert result["reason"] == "Generic block"
 
     def test_format_deny_contract_only(self) -> None:
-        stdout, code = self.fmt.format_output("deny", "my-contract", None, 1)
+        stdout, code = self.fmt.format_output("block", "my-rule", None, 1)
         result = json.loads(stdout)
-        assert result["decision"] == "deny"
-        assert "my-contract" in result["reason"]
+        assert result["decision"] == "block"
+        assert "my-rule" in result["reason"]
 
     def test_format_warn_treated_as_allow(self) -> None:
         stdout, code = self.fmt.format_output("warn", None, None, 2)

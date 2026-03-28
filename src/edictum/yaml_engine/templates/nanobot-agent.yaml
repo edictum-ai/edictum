@@ -1,9 +1,9 @@
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: nanobot-agent
-  description: "Governance contracts for nanobot AI agents"
+  description: "Governance rules for nanobot AI agents"
 
 defaults:
   mode: enforce
@@ -32,91 +32,91 @@ tools:
   "mcp_*":
     side_effect: irreversible
 
-contracts:
+rules:
   # Require approval for shell commands
-  - id: approve-exec
+  - id: ask-exec
     type: pre
     tool: exec
     when:
       tool.name:
         exists: true
     then:
-      effect: approve
+      action: ask
       message: "Shell command requires approval: {args.command}"
       timeout: 300
-      timeout_effect: deny
+      timeout_action: block
 
   # Require approval for spawning sub-agents
-  - id: approve-spawn
+  - id: ask-spawn
     type: pre
     tool: spawn
     when:
       tool.name:
         exists: true
     then:
-      effect: approve
+      action: ask
       message: "Sub-agent spawn requires approval: {args.task}"
       timeout: 300
-      timeout_effect: deny
+      timeout_action: block
 
   # Require approval for cron jobs
-  - id: approve-cron
+  - id: ask-cron
     type: pre
     tool: cron
     when:
       tool.name:
         exists: true
     then:
-      effect: approve
+      action: ask
       message: "Cron job requires approval: {args.schedule}"
       timeout: 300
-      timeout_effect: deny
+      timeout_action: block
 
   # Deny writing outside allowed paths
-  - id: deny-write-outside-workspace
+  - id: block-write-outside-workspace
     type: pre
     tool: write_file
     when:
       args.path:
         matches: '^(?!/workspace/).*'
     then:
-      effect: deny
+      action: block
       message: "Cannot write outside workspace: {args.path}"
 
   # Deny editing outside allowed paths
-  - id: deny-edit-outside-workspace
+  - id: block-edit-outside-workspace
     type: pre
     tool: edit_file
     when:
       args.path:
         matches: '^(?!/workspace/).*'
     then:
-      effect: deny
+      action: block
       message: "Cannot edit outside workspace: {args.path}"
 
   # Deny reading sensitive files
-  - id: deny-sensitive-reads
+  - id: block-sensitive-reads
     type: pre
     tool: read_file
     when:
       args.path:
         matches: '.*\.(env|key|pem|secret)$'
     then:
-      effect: deny
+      action: block
       message: "Cannot read sensitive file: {args.path}"
 
   # Require approval for unknown MCP tools
-  - id: approve-mcp-tools
+  - id: ask-mcp-tools
     type: pre
     tool: "mcp_*"
     when:
       tool.name:
         exists: true
     then:
-      effect: approve
+      action: ask
       message: "MCP tool call requires approval: {tool.name}"
       timeout: 120
-      timeout_effect: deny
+      timeout_action: block
 
   # Session limits
   - id: session-limits
@@ -129,5 +129,5 @@ contracts:
         spawn: 5
         cron: 10
     then:
-      effect: deny
+      action: block
       message: "Session limit reached. Summarize progress and stop."

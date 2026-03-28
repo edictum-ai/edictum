@@ -9,48 +9,48 @@ from edictum._guard import _CompiledState
 
 BUNDLE_V1 = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-v1
 defaults:
   mode: enforce
-contracts:
-  - id: deny-rm
+rules:
+  - id: block-rm
     type: pre
     tool: bash
     when:
       args.command:
         contains: "rm -rf"
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied."
 """
 
 BUNDLE_V2 = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-v2
 defaults:
   mode: enforce
-contracts:
-  - id: deny-curl
+rules:
+  - id: block-curl
     type: pre
     tool: bash
     when:
       args.command:
         contains: "curl"
     then:
-      effect: deny
+      action: block
       message: "Network access denied."
-  - id: deny-wget
+  - id: block-wget
     type: pre
     tool: bash
     when:
       args.command:
         contains: "wget"
     then:
-      effect: deny
+      action: block
       message: "Network access denied."
   - id: check-sandbox
     type: sandbox
@@ -61,18 +61,18 @@ contracts:
 
 BUNDLE_WITH_SESSION = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-session
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: max-calls
     type: session
     limits:
       max_tool_calls: 42
     then:
-      effect: deny
+      action: block
       message: "Session limit reached."
 """
 
@@ -85,7 +85,7 @@ class _NullSink:
 
 
 class TestReloadReplacesContracts:
-    """reload() with new YAML replaces active contracts."""
+    """reload() with new YAML replaces active rules."""
 
     @pytest.mark.asyncio
     async def test_reload_replaces_contracts(self):
@@ -101,7 +101,7 @@ class TestReloadReplacesContracts:
 
 
 class TestReloadPreservesStateOnFailure:
-    """reload() with invalid YAML preserves old contracts (fail-closed)."""
+    """reload() with invalid YAML preserves old rules (fail-closed)."""
 
     @pytest.mark.asyncio
     async def test_reload_preserves_state_on_failure(self):
@@ -118,7 +118,7 @@ class TestReloadPreservesStateOnFailure:
 
 
 class TestReloadStateIsConsistent:
-    """After reload, all contract lists come from the same bundle."""
+    """After reload, all rule lists come from the same bundle."""
 
     @pytest.mark.asyncio
     async def test_reload_state_is_consistent(self):
@@ -141,22 +141,22 @@ class TestReloadStateIsConsistent:
 
 
 class TestReloadWipesInitObserveContracts:
-    """reload() replaces _state entirely — init-time Python contracts are not preserved."""
+    """reload() replaces _state entirely — init-time Python rules are not preserved."""
 
     @pytest.mark.asyncio
     async def test_reload_wipes_init_observe_contracts(self):
-        from edictum.contracts import Verdict, precondition
+        from edictum.rules import Decision, precondition
 
         @precondition("bash")
-        def observe_pre(envelope):
-            return Verdict.fail("Observe-mode deny.")
+        def observe_pre(tool_call):
+            return Decision.fail("Observe-mode block.")
 
-        # Mark it as an observe-mode contract (as the composer does)
+        # Mark it as an observe-mode rule (as the composer does)
         observe_pre._edictum_observe = True
 
         guard = Edictum(
             mode="enforce",
-            contracts=[observe_pre],
+            rules=[observe_pre],
             audit_sink=_NullSink(),
         )
 
@@ -165,9 +165,9 @@ class TestReloadWipesInitObserveContracts:
 
         await guard.reload(BUNDLE_V1)
 
-        # reload() replaces _state entirely — init-time Python contracts are wiped
+        # reload() replaces _state entirely — init-time Python rules are wiped
         assert len(guard._state.observe_preconditions) == 0
-        # Enforce contracts come from the new bundle
+        # Enforce rules come from the new bundle
         assert len(guard._state.preconditions) == 1
 
 
@@ -198,7 +198,7 @@ class TestLimitsUpdatedOnReload:
 
         await guard.reload(BUNDLE_WITH_SESSION)
 
-        # New limits from the session contract
+        # New limits from the session rule
         assert guard.limits.max_tool_calls == 42
 
 

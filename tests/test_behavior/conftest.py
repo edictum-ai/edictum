@@ -8,7 +8,7 @@ from tests.conftest import (  # noqa: F401
     backend,
     bash_envelope,
     capturing_sink,
-    envelope,
+    tool_call,
     guard,
     null_sink,
     read_envelope,

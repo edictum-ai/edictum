@@ -18,7 +18,7 @@ class TestSkillScanCLI:
 
     def test_scan_single_skill_human_output(self) -> None:
         result = self.runner.invoke(cli, ["skill", "scan", str(FIXTURES / "bird-ch")])
-        assert result.exit_code == 1  # has findings
+        assert result.exit_code == 1  # has violations
         assert "CRITICAL" in result.output
 
     def test_scan_clean_skill_exit_0(self) -> None:
@@ -29,7 +29,7 @@ class TestSkillScanCLI:
 
     def test_scan_directory_finds_all(self) -> None:
         result = self.runner.invoke(cli, ["skill", "scan", str(FIXTURES)])
-        assert result.exit_code == 1  # CRITICAL findings exist
+        assert result.exit_code == 1  # CRITICAL violations exist
         # Check for key content (avoid matching exact line-wrapped text from Rich)
         assert "8 skills" in result.output.replace("\n", " ")
 
@@ -38,7 +38,7 @@ class TestSkillScanCLI:
         assert result.exit_code == 1
         data = json.loads(result.output)
         assert "scanner_version" in data
-        assert "findings" in data
+        assert "violations" in data
         assert "stats" in data
         assert data["total_scanned"] == 8
         assert data["stats"]["critical"] >= 1
@@ -46,11 +46,11 @@ class TestSkillScanCLI:
     def test_json_findings_have_risk_level(self) -> None:
         result = self.runner.invoke(cli, ["skill", "scan", str(FIXTURES / "bird-ch"), "--json"])
         data = json.loads(result.output)
-        assert len(data["findings"]) >= 1
-        assert data["findings"][0]["risk_level"] == "CRITICAL"
+        assert len(data["violations"]) >= 1
+        assert data["violations"][0]["risk_level"] == "CRITICAL"
 
     def test_threshold_critical_ignores_high(self) -> None:
-        """--threshold CRITICAL means HIGH findings don't cause exit 1."""
+        """--threshold CRITICAL means HIGH violations don't cause exit 1."""
         result = self.runner.invoke(cli, ["skill", "scan", str(FIXTURES / "ssh-setup"), "--threshold", "CRITICAL"])
         # ssh-setup is HIGH, threshold is CRITICAL → exit 0
         assert result.exit_code == 0
@@ -61,7 +61,7 @@ class TestSkillScanCLI:
 
     def test_structural_only(self) -> None:
         result = self.runner.invoke(cli, ["skill", "scan", str(FIXTURES), "--structural-only"])
-        assert "contracts.yaml" in result.output
+        assert "rules.yaml" in result.output
 
     def test_structural_only_json(self) -> None:
         result = self.runner.invoke(cli, ["skill", "scan", str(FIXTURES), "--structural-only", "--json"])

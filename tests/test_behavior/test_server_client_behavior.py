@@ -15,7 +15,7 @@ from edictum.server.client import EdictumServerClient
 
 
 class TestHttpsEnforcement:
-    """Observable effect: allow_insecure controls whether http:// URLs are accepted."""
+    """Observable action: allow_insecure controls whether http:// URLs are accepted."""
 
     def test_https_url_accepted(self):
         """HTTPS URLs are always accepted without error."""

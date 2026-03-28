@@ -50,26 +50,26 @@ class CursorFormat:
         return tool_name, tool_input, cwd
 
     def format_output(
-        self, verdict: str, contract_id: str | None, reason: str | None, evaluated: int
+        self, decision: str, rule_id: str | None, reason: str | None, evaluated: int
     ) -> tuple[str, int]:
-        """Format verdict for Cursor.
+        """Format decision for Cursor.
 
         Allow: {"decision": "allow"}, exit 0.
-        Deny: {"decision": "deny", "reason": "..."}, exit 0.
+        Deny: {"decision": "block", "reason": "..."}, exit 0.
         """
-        if verdict != "deny":
+        if decision != "block":
             return json.dumps({"decision": "allow"}), 0
 
         deny_reason = ""
-        if contract_id and reason:
-            deny_reason = f"Contract '{contract_id}': {reason}"
+        if rule_id and reason:
+            deny_reason = f"Rule '{rule_id}': {reason}"
         elif reason:
             deny_reason = reason
-        elif contract_id:
-            deny_reason = f"Denied by contract '{contract_id}'"
+        elif rule_id:
+            deny_reason = f"Denied by rule '{rule_id}'"
 
         output = {
-            "decision": "deny",
+            "decision": "block",
             "reason": deny_reason,
         }
         return json.dumps(output), 0

@@ -37,7 +37,7 @@ class GateAuditEvent:
     # Governance decision — same names as core AuditEvent
     action: str  # "call_allowed" | "call_denied" | "call_would_deny"
     decision_source: str | None
-    decision_name: str | None  # contract_id
+    decision_name: str | None  # rule_id
     reason: str | None
     contracts_evaluated: list[dict] = field(default_factory=list)
 
@@ -75,17 +75,17 @@ def _resolve_user() -> str:
         return os.getenv("USER", "unknown")
 
 
-def _verdict_to_action(verdict: str, mode: str) -> str:
-    """Map Gate verdict+mode to core AuditAction value."""
-    if verdict == "deny" and mode == "observe":
+def _verdict_to_action(decision: str, mode: str) -> str:
+    """Map Gate decision+mode to core AuditAction value."""
+    if decision == "block" and mode == "observe":
         return "call_would_deny"
-    if verdict == "deny":
+    if decision == "block":
         return "call_denied"
     return "call_allowed"
 
 
 def _contracts_to_dicts(evaluation_result: Any) -> list[dict]:
-    """Extract contract evaluation details from EvaluationResult.
+    """Extract rule evaluation details from EvaluationResult.
 
     Field names match what the console dashboard expects:
     - name (dashboard reads c.name for display)
@@ -93,12 +93,12 @@ def _contracts_to_dicts(evaluation_result: Any) -> list[dict]:
     """
     if evaluation_result is None:
         return []
-    contracts = getattr(evaluation_result, "contracts", [])
+    rules = getattr(evaluation_result, "rules", [])
     result = []
-    for c in contracts:
+    for c in rules:
         result.append(
             {
-                "name": c.contract_id,
+                "name": c.rule_id,
                 "type": c.contract_type,
                 "passed": c.passed,
                 "message": c.message,
@@ -114,9 +114,9 @@ def build_audit_event(
     tool_name: str,
     tool_input: dict,
     category: str,
-    verdict: str,
+    decision: str,
     mode: str,
-    contract_id: str | None,
+    rule_id: str | None,
     decision_source: str | None,
     reason: str | None,
     cwd: str,
@@ -148,15 +148,15 @@ def build_audit_event(
         except (json.JSONDecodeError, ValueError):
             pass
 
-    action = _verdict_to_action(verdict, mode)
-    contracts = _contracts_to_dicts(evaluation_result)
+    action = _verdict_to_action(decision, mode)
+    rules = _contracts_to_dicts(evaluation_result)
     pe = getattr(evaluation_result, "policy_error", False) if evaluation_result else False
     evaluated_count = getattr(evaluation_result, "contracts_evaluated", 0) if evaluation_result else 0
 
     # For backward compat with old WAL readers, include contracts_evaluated as count
-    # if no contract details available
-    if not contracts and evaluated_count:
-        contracts = [{"_count": evaluated_count}]
+    # if no rule details available
+    if not rules and evaluated_count:
+        rules = [{"_count": evaluated_count}]
 
     return GateAuditEvent(
         call_id=str(uuid.uuid4()),
@@ -167,9 +167,9 @@ def build_audit_event(
         side_effect=category,
         action=action,
         decision_source=decision_source,
-        decision_name=contract_id,
+        decision_name=rule_id,
         reason=reason,
-        contracts_evaluated=contracts,
+        contracts_evaluated=rules,
         mode=mode,
         policy_version=policy_version,
         policy_error=pe,
@@ -283,7 +283,7 @@ class AuditBuffer:
         except Exception as exc:
             print(f"Gate audit rotate error: {exc}", file=sys.stderr)
 
-    def read_recent(self, limit: int = 20, tool: str | None = None, verdict: str | None = None) -> list[dict]:
+    def read_recent(self, limit: int = 20, tool: str | None = None, decision: str | None = None) -> list[dict]:
         """Read recent events from WAL with optional filters."""
         if not self._buffer_path.exists():
             return []
@@ -305,13 +305,13 @@ class AuditBuffer:
                         continue
                     if tool and event.get("tool_name") != tool:
                         continue
-                    # Support both old (verdict) and new (action) field names
-                    event_verdict = event.get("action", event.get("verdict", ""))
-                    if verdict:
+                    # Support both old (decision) and new (action) field names
+                    event_verdict = event.get("action", event.get("decision", ""))
+                    if decision:
                         # Map filter to action values
-                        if verdict == "deny" and event_verdict not in ("call_denied", "call_would_deny", "deny"):
+                        if decision == "block" and event_verdict not in ("call_denied", "call_would_deny", "block"):
                             continue
-                        if verdict == "allow" and event_verdict not in ("call_allowed", "allow"):
+                        if decision == "allow" and event_verdict not in ("call_allowed", "allow"):
                             continue
                     events.append(event)
         except OSError:
@@ -328,7 +328,7 @@ class AuditBuffer:
         and packs everything else into payload.
         """
         # Top-level fields the console expects
-        action = raw.get("action", raw.get("verdict", "call_allowed"))
+        action = raw.get("action", raw.get("decision", "call_allowed"))
         mode = raw.get("mode", "enforce")
 
         # Build payload from all remaining fields
@@ -352,8 +352,8 @@ class AuditBuffer:
                 payload[key] = val
 
         # Backward compat: old WAL events used different field names
-        if "contract_id" in raw and "decision_name" not in payload:
-            payload["decision_name"] = raw["contract_id"]
+        if "rule_id" in raw and "decision_name" not in payload:
+            payload["decision_name"] = raw["rule_id"]
         if "tool_category" in raw and "side_effect" not in payload:
             payload["side_effect"] = raw["tool_category"]
         if "args_preview" in raw and "tool_args" not in payload:
@@ -372,7 +372,7 @@ class AuditBuffer:
             "call_id": raw.get("call_id", str(uuid.uuid4())),
             "agent_id": agent_id,
             "tool_name": raw.get("tool_name", ""),
-            "verdict": action,
+            "decision": action,
             "mode": mode,
             "timestamp": raw.get("timestamp", datetime.now(UTC).isoformat()),
             "payload": payload or None,
@@ -443,7 +443,7 @@ class AuditBuffer:
         # Map WAL events to Console schema
         console_events = [self._to_console_event(e) for e in raw_events]
 
-        # Read contract manifest for coverage reporting
+        # Read rule manifest for coverage reporting
         payload: dict[str, object] = {"events": console_events}
         manifest_path = self._buffer_path.parent / "manifest.json"
         if manifest_path.exists():
@@ -455,7 +455,7 @@ class AuditBuffer:
                 payload["agent_manifest"] = {
                     "agent_id": agent_id,
                     "policy_version": manifest.get("policy_version", ""),
-                    "contracts": manifest.get("contracts", []),
+                    "rules": manifest.get("rules", []),
                 }
             except (json.JSONDecodeError, OSError):
                 pass

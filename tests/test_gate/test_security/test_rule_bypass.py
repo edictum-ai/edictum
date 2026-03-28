@@ -1,4 +1,4 @@
-"""Security tests for contract evaluation bypass attempts."""
+"""Security tests for rule evaluation bypass attempts."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ from edictum.gate.config import AuditConfig, GateConfig
 
 _CONTRACTS_WITH_DENY = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
   description: test
 defaults:
   mode: enforce
-contracts:
-  - id: deny-env
+rules:
+  - id: block-env
     type: pre
     tool: Bash
     when:
@@ -27,15 +27,15 @@ contracts:
         matches_any:
           - 'cat\\s+\\.env'
     then:
-      effect: deny
+      action: block
       message: "Denied"
 """
 
 
-def _config(tmp_path: Path, contracts: str = _CONTRACTS_WITH_DENY) -> GateConfig:
-    cp = tmp_path / "contracts.yaml"
-    cp.write_text(contracts)
-    return GateConfig(contracts=(str(cp),), audit=AuditConfig(enabled=False), fail_open=False)
+def _config(tmp_path: Path, rules: str = _CONTRACTS_WITH_DENY) -> GateConfig:
+    cp = tmp_path / "rules.yaml"
+    cp.write_text(rules)
+    return GateConfig(rules=(str(cp),), audit=AuditConfig(enabled=False), fail_open=False)
 
 
 @pytest.mark.security
@@ -46,28 +46,28 @@ class TestContractBypass:
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
         # Empty args should still be evaluated — just won't match the pattern
-        assert result["verdict"] == "allow"
+        assert result["decision"] == "allow"
 
     def test_type_confusion_args_as_list(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
         stdin = json.dumps({"tool_name": "Bash", "tool_input": ["ls"]})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_type_confusion_args_as_string(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
         stdin = json.dumps({"tool_name": "Bash", "tool_input": "cat .env"})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_missing_tool_name(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
         stdin = json.dumps({"tool_input": {"command": "ls"}})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_missing_tool_input(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
@@ -75,16 +75,16 @@ class TestContractBypass:
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
         # Missing tool_input defaults to {} — allowed since no args to check
-        assert result["verdict"] in ("allow", "deny")
+        assert result["decision"] in ("allow", "block")
 
     def test_tool_name_case_sensitivity(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
-        # "bash" (lowercase) should NOT match the contract for "Bash"
+        # "bash" (lowercase) should NOT match the rule for "Bash"
         stdin = json.dumps({"tool_name": "bash", "tool_input": {"command": "cat .env"}})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        # lowercase "bash" doesn't match "Bash" tool filter — contract not evaluated
-        assert result["verdict"] == "allow"
+        # lowercase "bash" doesn't match "Bash" tool filter — rule not evaluated
+        assert result["decision"] == "allow"
 
     def test_format_mismatch(self, tmp_path: Path) -> None:
         """Claude Code format with mismatched data should fail gracefully."""
@@ -104,47 +104,47 @@ class TestContractBypass:
 
     def test_contracts_file_missing(self, tmp_path: Path) -> None:
         config = GateConfig(
-            contracts=(str(tmp_path / "nonexistent.yaml"),),
+            rules=(str(tmp_path / "nonexistent.yaml"),),
             audit=AuditConfig(enabled=False),
             fail_open=False,
         )
         stdin = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_contracts_file_empty(self, tmp_path: Path) -> None:
         cp = tmp_path / "empty.yaml"
         cp.write_text("")
         config = GateConfig(
-            contracts=(str(cp),),
+            rules=(str(cp),),
             audit=AuditConfig(enabled=False),
             fail_open=False,
         )
         stdin = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_contracts_file_malformed(self, tmp_path: Path) -> None:
         cp = tmp_path / "bad.yaml"
         cp.write_text("this: is: not: valid: yaml: [[[")
         config = GateConfig(
-            contracts=(str(cp),),
+            rules=(str(cp),),
             audit=AuditConfig(enabled=False),
             fail_open=False,
         )
         stdin = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_stdin_as_array(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
         stdin = json.dumps([{"tool_name": "Bash"}])
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_wildcard_tool_name(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
@@ -153,5 +153,5 @@ class TestContractBypass:
         result = json.loads(stdout)
         # create_envelope rejects * in tool_name (contains /)
         # Actually * doesn't contain / or \x00, so it may pass validation
-        # But it's treated as an unknown tool, so contracts won't match
-        assert result["verdict"] in ("allow", "deny")
+        # But it's treated as an unknown tool, so rules won't match
+        assert result["decision"] in ("allow", "block")

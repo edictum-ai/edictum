@@ -6,7 +6,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from edictum.envelope import Principal, create_envelope
-from edictum.evaluation import ContractResult, EvaluationResult
+from edictum.evaluation import RuleResult, EvaluationResult
 
 if TYPE_CHECKING:
     from edictum._guard import Edictum
@@ -21,14 +21,14 @@ def _evaluate(
     output: str | None = None,
     environment: str | None = None,
 ) -> EvaluationResult:
-    """Dry-run evaluation of a tool call against all matching contracts.
+    """Dry-run evaluation of a tool call against all matching rules.
 
     Unlike run(), this never executes the tool and evaluates all
-    matching contracts exhaustively (no short-circuit on first deny).
-    Session contracts are skipped (no session state in dry-run).
+    matching rules exhaustively (no short-circuit on first block).
+    Session rules are skipped (no session state in dry-run).
     """
     env = environment or self.environment
-    envelope = create_envelope(
+    tool_call = create_envelope(
         tool_name=tool_name,
         tool_input=args,
         environment=env,
@@ -36,134 +36,134 @@ def _evaluate(
         registry=self.tool_registry,
     )
 
-    contracts: list[ContractResult] = []
+    rules: list[RuleResult] = []
     deny_reasons: list[str] = []
     warn_reasons: list[str] = []
 
     # Evaluate all matching preconditions (exhaustive, no short-circuit)
-    for contract in self.get_preconditions(envelope):
-        contract_id = getattr(contract, "_edictum_id", None) or getattr(contract, "__name__", "unknown")
+    for rule in self.get_preconditions(tool_call):
+        rule_id = getattr(rule, "_edictum_id", None) or getattr(rule, "__name__", "unknown")
         try:
-            verdict = contract(envelope)
+            decision = rule(tool_call)
         except Exception as exc:
-            contract_result = ContractResult(
-                contract_id=contract_id,
+            contract_result = RuleResult(
+                rule_id=rule_id,
                 contract_type="precondition",
                 passed=False,
                 message=f"Precondition error: {exc}",
                 policy_error=True,
             )
-            contracts.append(contract_result)
+            rules.append(contract_result)
             deny_reasons.append(contract_result.message)
             continue
 
-        tags = verdict.metadata.get("tags", []) if verdict.metadata else []
-        is_observed = getattr(contract, "_edictum_mode", None) == "observe" and not verdict.passed
-        pe = verdict.metadata.get("policy_error", False) if verdict.metadata else False
+        tags = decision.metadata.get("tags", []) if decision.metadata else []
+        is_observed = getattr(rule, "_edictum_mode", None) == "observe" and not decision.passed
+        pe = decision.metadata.get("policy_error", False) if decision.metadata else False
 
-        contract_result = ContractResult(
-            contract_id=contract_id,
+        contract_result = RuleResult(
+            rule_id=rule_id,
             contract_type="precondition",
-            passed=verdict.passed,
-            message=verdict.message,
+            passed=decision.passed,
+            message=decision.message,
             tags=tags,
             observed=is_observed,
             policy_error=pe,
         )
-        contracts.append(contract_result)
+        rules.append(contract_result)
 
-        if not verdict.passed and not is_observed:
-            deny_reasons.append(verdict.message or "")
+        if not decision.passed and not is_observed:
+            deny_reasons.append(decision.message or "")
 
-    # Evaluate sandbox contracts (exhaustive, no short-circuit)
-    for contract in self.get_sandbox_contracts(envelope):
-        contract_id = getattr(contract, "_edictum_id", None) or getattr(contract, "__name__", "unknown")
+    # Evaluate sandbox rules (exhaustive, no short-circuit)
+    for rule in self.get_sandbox_contracts(tool_call):
+        rule_id = getattr(rule, "_edictum_id", None) or getattr(rule, "__name__", "unknown")
         try:
-            verdict = contract(envelope)
+            decision = rule(tool_call)
         except Exception as exc:
-            contract_result = ContractResult(
-                contract_id=contract_id,
+            contract_result = RuleResult(
+                rule_id=rule_id,
                 contract_type="sandbox",
                 passed=False,
                 message=f"Sandbox error: {exc}",
                 policy_error=True,
             )
-            contracts.append(contract_result)
+            rules.append(contract_result)
             deny_reasons.append(contract_result.message)
             continue
 
-        tags = verdict.metadata.get("tags", []) if verdict.metadata else []
-        is_observed = getattr(contract, "_edictum_mode", None) == "observe" and not verdict.passed
-        pe = verdict.metadata.get("policy_error", False) if verdict.metadata else False
+        tags = decision.metadata.get("tags", []) if decision.metadata else []
+        is_observed = getattr(rule, "_edictum_mode", None) == "observe" and not decision.passed
+        pe = decision.metadata.get("policy_error", False) if decision.metadata else False
 
-        contract_result = ContractResult(
-            contract_id=contract_id,
+        contract_result = RuleResult(
+            rule_id=rule_id,
             contract_type="sandbox",
-            passed=verdict.passed,
-            message=verdict.message,
+            passed=decision.passed,
+            message=decision.message,
             tags=tags,
             observed=is_observed,
             policy_error=pe,
         )
-        contracts.append(contract_result)
+        rules.append(contract_result)
 
-        if not verdict.passed and not is_observed:
-            deny_reasons.append(verdict.message or "")
+        if not decision.passed and not is_observed:
+            deny_reasons.append(decision.message or "")
 
     # Evaluate postconditions only when output is provided
     if output is not None:
-        for contract in self.get_postconditions(envelope):
-            contract_id = getattr(contract, "_edictum_id", None) or getattr(contract, "__name__", "unknown")
+        for rule in self.get_postconditions(tool_call):
+            rule_id = getattr(rule, "_edictum_id", None) or getattr(rule, "__name__", "unknown")
             try:
-                verdict = contract(envelope, output)
+                decision = rule(tool_call, output)
             except Exception as exc:
-                contract_result = ContractResult(
-                    contract_id=contract_id,
+                contract_result = RuleResult(
+                    rule_id=rule_id,
                     contract_type="postcondition",
                     passed=False,
                     message=f"Postcondition error: {exc}",
                     policy_error=True,
                 )
-                contracts.append(contract_result)
+                rules.append(contract_result)
                 warn_reasons.append(contract_result.message)
                 continue
 
-            tags = verdict.metadata.get("tags", []) if verdict.metadata else []
-            is_observed = getattr(contract, "_edictum_mode", None) == "observe" and not verdict.passed
-            pe = verdict.metadata.get("policy_error", False) if verdict.metadata else False
-            effect = getattr(contract, "_edictum_effect", "warn")
+            tags = decision.metadata.get("tags", []) if decision.metadata else []
+            is_observed = getattr(rule, "_edictum_mode", None) == "observe" and not decision.passed
+            pe = decision.metadata.get("policy_error", False) if decision.metadata else False
+            action = getattr(rule, "_edictum_effect", "warn")
 
-            contract_result = ContractResult(
-                contract_id=contract_id,
+            contract_result = RuleResult(
+                rule_id=rule_id,
                 contract_type="postcondition",
-                passed=verdict.passed,
-                message=verdict.message,
+                passed=decision.passed,
+                message=decision.message,
                 tags=tags,
                 observed=is_observed,
-                effect=effect,
+                action=action,
                 policy_error=pe,
             )
-            contracts.append(contract_result)
+            rules.append(contract_result)
 
-            if not verdict.passed and not is_observed:
-                warn_reasons.append(verdict.message or "")
+            if not decision.passed and not is_observed:
+                warn_reasons.append(decision.message or "")
 
-    # Compute verdict
+    # Compute decision
     if deny_reasons:
-        verdict_str = "deny"
+        verdict_str = "block"
     elif warn_reasons:
         verdict_str = "warn"
     else:
         verdict_str = "allow"
 
     return EvaluationResult(
-        verdict=verdict_str,
+        decision=verdict_str,
         tool_name=tool_name,
-        contracts=contracts,
+        rules=rules,
         deny_reasons=deny_reasons,
         warn_reasons=warn_reasons,
-        contracts_evaluated=len(contracts),
-        policy_error=any(r.policy_error for r in contracts),
+        contracts_evaluated=len(rules),
+        policy_error=any(r.policy_error for r in rules),
     )
 
 

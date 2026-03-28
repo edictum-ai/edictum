@@ -90,7 +90,7 @@ async def run_with_guard(client: OpenAI) -> None:
     SK uses a filter pattern: _pre(name, args, call_id) -> {} | "DENIED: ...",
     then _post(call_id, result) after execution.
     """
-    from contracts import ALL_CONTRACTS
+    from rules import ALL_CONTRACTS
 
     from edictum import Edictum, FileAuditSink
     from edictum.adapters.semantic_kernel import SemanticKernelAdapter
@@ -104,7 +104,7 @@ async def run_with_guard(client: OpenAI) -> None:
     guard = Edictum(
         environment="demo",
         mode="enforce",
-        contracts=ALL_CONTRACTS,
+        rules=ALL_CONTRACTS,
         tools=EDICTUM_TOOLS_CONFIG,
         audit_sink=FileAuditSink(audit_path),
     )

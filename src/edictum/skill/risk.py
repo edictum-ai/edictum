@@ -63,17 +63,17 @@ class RiskClassification:
     """Risk classification for a scanned skill."""
 
     level: RiskLevel
-    findings: tuple[ScanFinding, ...]
+    violations: tuple[ScanFinding, ...]
     result: SkillScanResult
 
 
 def classify_risk(result: SkillScanResult) -> RiskClassification:
-    """Classify a scan result into a risk tier with findings.
+    """Classify a scan result into a risk tier with violations.
 
     Tier precedence: CRITICAL > HIGH > MEDIUM > CLEAN.
     A skill is classified at its highest-severity finding.
     """
-    findings: list[ScanFinding] = []
+    violations: list[ScanFinding] = []
 
     # Gather all features for cross-block analysis
     has_pipe_to_shell = False
@@ -99,7 +99,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         # Pipe-to-shell
         if cb.pipe_to_shell:
             has_pipe_to_shell = True
-            findings.append(
+            violations.append(
                 ScanFinding(
                     message="pipe to shell detected",
                     line=line,
@@ -110,7 +110,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         for ip in cb.ip_addresses_found:
             if not is_private_ip(ip):
                 has_public_ip = True
-                findings.append(
+                violations.append(
                     ScanFinding(
                         message=f"public IP address: {ip}",
                         line=line,
@@ -121,7 +121,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         for cmd in cb.dangerous_commands:
             if cmd in REVERSE_SHELL_LABELS:
                 has_reverse_shell = True
-                findings.append(
+                violations.append(
                     ScanFinding(
                         message=f"reverse shell pattern: {cmd}",
                         line=line,
@@ -131,7 +131,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         # Exfil domains
         for domain in cb.exfil_domains:
             has_exfil_domain = True
-            findings.append(
+            violations.append(
                 ScanFinding(
                     message=f"exfiltration domain: {domain}",
                     line=line,
@@ -141,7 +141,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         # Credential paths
         for cred in cb.credential_paths:
             has_credential_access = True
-            findings.append(
+            violations.append(
                 ScanFinding(
                     message=f"credential path access: {cred}",
                     line=line,
@@ -153,7 +153,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
             if blob.classification == "shell_command":
                 if blob.dangerous_pattern:
                     has_dangerous_b64_shell = True
-                    findings.append(
+                    violations.append(
                         ScanFinding(
                             message=f"base64 payload decodes to shell command ({blob.dangerous_pattern})",
                             line=line,
@@ -161,7 +161,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
                     )
                 else:
                     has_b64_shell = True
-                    findings.append(
+                    violations.append(
                         ScanFinding(
                             message="base64 payload decodes to shell command",
                             line=line,
@@ -174,44 +174,44 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
                 continue  # already handled above
             if cmd in ("eval_exec", "python_shell_exec"):
                 has_eval_exec = True
-                findings.append(ScanFinding(message=f"dangerous command: {cmd}", line=line))
+                violations.append(ScanFinding(message=f"dangerous command: {cmd}", line=line))
             elif cmd == "sudo_usage":
                 has_sudo = True
-                findings.append(ScanFinding(message="sudo usage", line=line))
+                violations.append(ScanFinding(message="sudo usage", line=line))
             elif cmd == "chmod_dangerous":
                 has_chmod_dangerous = True
-                findings.append(ScanFinding(message="chmod 777 or setuid", line=line))
+                violations.append(ScanFinding(message="chmod 777 or setuid", line=line))
             elif cmd == "dd_device_write":
                 has_dd_device = True
-                findings.append(ScanFinding(message="dd write to device", line=line))
+                violations.append(ScanFinding(message="dd write to device", line=line))
             elif cmd in ("hex_shellcode", "js_char_construction", "base64_decode_runtime"):
                 has_obfuscation = True
-                findings.append(ScanFinding(message=f"obfuscation: {cmd}", line=line))
+                violations.append(ScanFinding(message=f"obfuscation: {cmd}", line=line))
             elif cmd in ("ssh_key_access", "shadow_access"):
                 has_credential_access = True
-                findings.append(ScanFinding(message=f"credential-adjacent access: {cmd}", line=line))
+                violations.append(ScanFinding(message=f"credential-adjacent access: {cmd}", line=line))
             elif cmd == "passwd_access":
                 has_credential_access = True
-                findings.append(ScanFinding(message="passwd command usage", line=line))
+                violations.append(ScanFinding(message="passwd command usage", line=line))
             elif cmd == "exfiltration_keyword":
                 # Keyword match only (no actual domain) — route to dangerous_command
                 # to avoid false CRITICAL via credential+exfil when there's no real domain
                 has_dangerous_command = True
-                findings.append(ScanFinding(message="exfiltration keyword detected", line=line))
+                violations.append(ScanFinding(message="exfiltration keyword detected", line=line))
             elif cmd in ("curl_pipe_shell", "wget_pipe_shell"):
                 # These labels also match PIPE_TO_SHELL_RE independently via
                 # cb.pipe_to_shell, but set the flag here too for defense-in-depth
                 has_pipe_to_shell = True
-                findings.append(ScanFinding(message=f"dangerous command: {cmd}", line=line))
+                violations.append(ScanFinding(message=f"dangerous command: {cmd}", line=line))
             else:
                 # Catch-all: mkfs_format, destructive_rm_root, etc.
                 has_dangerous_command = True
-                findings.append(ScanFinding(message=f"dangerous command: {cmd}", line=line))
+                violations.append(ScanFinding(message=f"dangerous command: {cmd}", line=line))
 
         # Obfuscation signals
         for sig in cb.obfuscation_signals:
             has_obfuscation = True
-            findings.append(
+            violations.append(
                 ScanFinding(
                     message=f"obfuscation signal: {sig}",
                     line=line,
@@ -221,7 +221,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         # High entropy
         if cb.entropy_score >= HIGH_ENTROPY_THRESHOLD:
             has_high_entropy = True
-            findings.append(
+            violations.append(
                 ScanFinding(
                     message=f"high entropy code block ({cb.entropy_score:.1f} bits/char)",
                     line=line,
@@ -231,7 +231,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
         # Password-protected archives
         if cb.password_protected_archives:
             has_password_archive = True
-            findings.append(
+            violations.append(
                 ScanFinding(
                     message="password-protected archive reference",
                     line=line,
@@ -241,7 +241,7 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
     # External domain count
     if result.risk_signals.external_domain_count > 5:
         high_external_domains = True
-        findings.append(
+        violations.append(
             ScanFinding(
                 message=f"unusual number of external domains ({result.risk_signals.external_domain_count})",
             )
@@ -251,16 +251,16 @@ def classify_risk(result: SkillScanResult) -> RiskClassification:
     has_truncation = False
     if result.truncated:
         has_truncation = True
-        findings.append(ScanFinding(message="analysis truncated: code blocks exceeded limit (potential evasion)"))
+        violations.append(ScanFinding(message="analysis truncated: code blocks exceeded limit (potential evasion)"))
 
-    # No contracts (always reported as informational)
+    # No rules (always reported as informational)
     if result.risk_signals.no_contracts:
-        findings.append(ScanFinding(message="no contracts.yaml"))
+        violations.append(ScanFinding(message="no rules.yaml"))
 
-    # Deduplicate findings by message
+    # Deduplicate violations by message
     seen: set[str] = set()
     unique_findings: list[ScanFinding] = []
-    for f in findings:
+    for f in violations:
         key = f"{f.message}:{f.line}"
         if key not in seen:
             seen.add(key)

@@ -97,9 +97,9 @@ def _analyze_structural(skill_dir: Path) -> StructuralFeatures:
         return StructuralFeatures()
 
     # Try both extensions atomically via O_NOFOLLOW — no exists()/is_symlink() pre-checks
-    contracts_bytes = _read_no_follow(skill_dir / "contracts.yaml", MAX_FILE_SIZE)
+    contracts_bytes = _read_no_follow(skill_dir / "rules.yaml", MAX_FILE_SIZE)
     if contracts_bytes is None:
-        contracts_bytes = _read_no_follow(skill_dir / "contracts.yml", MAX_FILE_SIZE)
+        contracts_bytes = _read_no_follow(skill_dir / "rules.yml", MAX_FILE_SIZE)
     has_contracts = contracts_bytes is not None
 
     contracts_valid: bool | None = None
@@ -117,7 +117,7 @@ def _analyze_structural(skill_dir: Path) -> StructuralFeatures:
                     contracts_valid = True
                 else:
                     contracts_valid = False
-                    contracts_error = "not a valid Edictum contract bundle"
+                    contracts_error = "not a valid Edictum rule bundle"
             else:
                 contracts_valid = None  # can't validate without PyYAML
         except Exception as e:

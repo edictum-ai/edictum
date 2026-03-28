@@ -89,9 +89,9 @@ async def run_with_guard(client: OpenAI) -> None:
 
     The Claude SDK uses pre/post tool hooks that return dicts:
     - {} means allow
-    - {"hookSpecificOutput": {"permissionDecision": "deny", ...}} means deny
+    - {"hookSpecificOutput": {"permissionDecision": "block", ...}} means block
     """
-    from contracts import ALL_CONTRACTS
+    from rules import ALL_CONTRACTS
 
     from edictum import Edictum, FileAuditSink
     from edictum.adapters.claude_agent_sdk import ClaudeAgentSDKAdapter
@@ -105,7 +105,7 @@ async def run_with_guard(client: OpenAI) -> None:
     guard = Edictum(
         environment="demo",
         mode="enforce",
-        contracts=ALL_CONTRACTS,
+        rules=ALL_CONTRACTS,
         tools=EDICTUM_TOOLS_CONFIG,
         audit_sink=FileAuditSink(audit_path),
     )
@@ -151,9 +151,9 @@ async def run_with_guard(client: OpenAI) -> None:
             # Route through Claude Agent SDK adapter
             pre_result = await hooks["pre_tool_use"](fn_name, args, tool_use_id)
 
-            # Check if denied: non-empty dict with permissionDecision == "deny"
+            # Check if denied: non-empty dict with permissionDecision == "block"
             hook_output = pre_result.get("hookSpecificOutput", {})
-            if hook_output.get("permissionDecision") == "deny":
+            if hook_output.get("permissionDecision") == "block":
                 denied_count += 1
                 reason = hook_output.get("permissionDecisionReason", "denied")
                 result = f"DENIED: {reason}"

@@ -13,7 +13,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # Safe identifier: alphanumeric, hyphens, underscores, dots. No path separators,
-# control chars, or whitespace. Matches tool_name validation in envelope.py.
+# control chars, or whitespace. Matches tool_name validation in tool_call.py.
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 
 

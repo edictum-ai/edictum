@@ -1,6 +1,6 @@
 """Behavior tests for the skill scanner.
 
-Each test verifies an observable effect of a scanner feature through
+Each test verifies an observable action of a scanner feature through
 the public API. Tests use the fixture skills in tests/fixtures/skills/.
 """
 
@@ -193,7 +193,7 @@ class TestScanSkill:
         assert any(cb.pipe_to_shell for cb in result.code_blocks)
 
     def test_clean_skill_no_code_findings(self) -> None:
-        """A normal skill with no code blocks has no code block findings."""
+        """A normal skill with no code blocks has no code block violations."""
         result = scan_skill(FIXTURES / "clean-weather")
         assert result is not None
         assert result.skill_name == "weather-lookup"
@@ -217,7 +217,7 @@ class TestScanSkill:
         assert result.risk_signals.pipe_to_shell_count == 0
 
     def test_governed_skill_has_contracts(self) -> None:
-        """Skills with contracts.yaml should report contract presence."""
+        """Skills with rules.yaml should report rule presence."""
         result = scan_skill(FIXTURES / "governed-skill")
         assert result is not None
         assert result.structural.has_contracts_yaml is True
@@ -238,11 +238,11 @@ class TestScanSkill:
         assert has_obfuscation
 
     def test_prompt_injection_is_clean(self) -> None:
-        """Prompt injection in prose (no code blocks with findings) is detected correctly."""
+        """Prompt injection in prose (no code blocks with violations) is detected correctly."""
         result = scan_skill(FIXTURES / "prompt-injection")
         assert result is not None
         # The prompt injection text is in prose, not code blocks
-        # Scanner only analyzes code blocks, so this should have no code findings
+        # Scanner only analyzes code blocks, so this should have no code violations
         assert result.risk_signals.pipe_to_shell_count == 0
         assert result.risk_signals.credential_access_count == 0
         assert result.risk_signals.exfil_domain_count == 0
@@ -328,16 +328,16 @@ class TestSymlinkProtection:
         assert result is None
 
     def test_symlink_contracts_yaml_skipped(self, tmp_path: Path) -> None:
-        """Symlinked contracts.yaml must not be followed."""
+        """Symlinked rules.yaml must not be followed."""
         target = tmp_path / "secret.txt"
         target.write_text("secret content")
         skill_dir = tmp_path / "evil-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("# Evil\n")
-        (skill_dir / "contracts.yaml").symlink_to(target)
+        (skill_dir / "rules.yaml").symlink_to(target)
         result = scan_skill(skill_dir)
         assert result is not None
-        # contracts.yaml is a symlink — should be treated as absent
+        # rules.yaml is a symlink — should be treated as absent
         assert result.structural.has_contracts_yaml is False
         assert result.risk_signals.no_contracts is True
 

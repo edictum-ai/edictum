@@ -1,6 +1,6 @@
 """Behavior tests for risk classification.
 
-Each test verifies the observable effect of the risk classifier on
+Each test verifies the observable action of the risk classifier on
 specific threat patterns, using fixture skills.
 """
 
@@ -55,14 +55,14 @@ class TestBirdMalware:
         result = scan_skill(FIXTURES / "bird-ch")
         assert result is not None
         cls = classify_risk(result)
-        messages = [f.message for f in cls.findings]
+        messages = [f.message for f in cls.violations]
         assert any("pipe to shell" in m for m in messages)
 
     def test_has_public_ip_finding(self) -> None:
         result = scan_skill(FIXTURES / "bird-ch")
         assert result is not None
         cls = classify_risk(result)
-        messages = [f.message for f in cls.findings]
+        messages = [f.message for f in cls.violations]
         assert any("91.92.242.30" in m for m in messages)
 
 
@@ -76,12 +76,12 @@ class TestCleanSkill:
         assert cls.level == RiskLevel.CLEAN
 
     def test_still_reports_no_contracts(self) -> None:
-        """Even clean skills report missing contracts.yaml."""
+        """Even clean skills report missing rules.yaml."""
         result = scan_skill(FIXTURES / "clean-weather")
         assert result is not None
         cls = classify_risk(result)
-        messages = [f.message for f in cls.findings]
-        assert "no contracts.yaml" in messages
+        messages = [f.message for f in cls.violations]
+        assert "no rules.yaml" in messages
 
 
 class TestSSHSetup:
@@ -127,14 +127,14 @@ class TestEnvBackup:
         result = scan_skill(FIXTURES / "env-backup")
         assert result is not None
         cls = classify_risk(result)
-        messages = [f.message for f in cls.findings]
+        messages = [f.message for f in cls.violations]
         assert any("credential" in m for m in messages)
 
     def test_has_exfil_finding(self) -> None:
         result = scan_skill(FIXTURES / "env-backup")
         assert result is not None
         cls = classify_risk(result)
-        messages = [f.message for f in cls.findings]
+        messages = [f.message for f in cls.violations]
         assert any("webhook.site" in m for m in messages)
 
 
@@ -151,7 +151,7 @@ class TestObfuscatedSkill:
         result = scan_skill(FIXTURES / "obfuscated-skill")
         assert result is not None
         cls = classify_risk(result)
-        messages = [f.message for f in cls.findings]
+        messages = [f.message for f in cls.violations]
         assert any("obfuscation" in m.lower() or "eval" in m.lower() or "char_code" in m.lower() for m in messages)
 
 
@@ -166,14 +166,14 @@ class TestPromptInjection:
 
 
 class TestGovernedSkill:
-    """Skill with contracts.yaml — no no_contracts finding."""
+    """Skill with rules.yaml — no no_contracts finding."""
 
     def test_no_contracts_flag_false(self) -> None:
         result = scan_skill(FIXTURES / "governed-skill")
         assert result is not None
         cls = classify_risk(result)
-        messages = [f.message for f in cls.findings]
-        assert "no contracts.yaml" not in messages
+        messages = [f.message for f in cls.violations]
+        assert "no rules.yaml" not in messages
 
 
 # ---------------------------------------------------------------------------
@@ -333,4 +333,4 @@ class TestDangerousCommandBypass:
         assert result.truncated is True
         cls = classify_risk(result)
         assert cls.level >= RiskLevel.MEDIUM
-        assert any("truncated" in f.message for f in cls.findings)
+        assert any("truncated" in f.message for f in cls.violations)

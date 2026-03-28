@@ -10,12 +10,12 @@ from click.testing import CliRunner
 from edictum.cli.main import cli
 
 # ---------------------------------------------------------------------------
-# Fixtures: YAML bundle with environment-specific contract
+# Fixtures: YAML bundle with environment-specific rule
 # ---------------------------------------------------------------------------
 
 ENV_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: env-test-bundle
@@ -23,7 +23,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: staging-only-deploy
     type: pre
     tool: deploy_service
@@ -31,7 +31,7 @@ contracts:
       environment:
         equals: staging
     then:
-      effect: deny
+      action: block
       message: "Deployments denied in staging."
 
   - id: block-prod-delete
@@ -41,7 +41,7 @@ contracts:
       environment:
         not_equals: development
     then:
-      effect: deny
+      action: block
       message: "Deletion only allowed in development."
 """
 
@@ -57,8 +57,8 @@ class TestCliTestCasesEnvironment:
     """--environment flag on `edictum test --cases` changes evaluation."""
 
     def test_cases_environment_flag_affects_verdict(self):
-        """A contract matching environment=staging should deny when --environment staging."""
-        contracts = _write(ENV_BUNDLE)
+        """A rule matching environment=staging should block when --environment staging."""
+        rules = _write(ENV_BUNDLE)
         cases = _write(
             """\
 cases:
@@ -66,18 +66,18 @@ cases:
     tool: deploy_service
     args:
       service: api
-    expect: deny
+    expect: block
     match_contract: staging-only-deploy
 """
         )
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases, "--environment", "staging"])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases, "--environment", "staging"])
         assert result.exit_code == 0, f"Expected pass but got:\n{result.output}"
         assert "1/1 passed" in result.output
 
     def test_cases_default_environment_production(self):
-        """Without --environment, default is production; staging-only contract should not fire."""
-        contracts = _write(ENV_BUNDLE)
+        """Without --environment, default is production; staging-only rule should not fire."""
+        rules = _write(ENV_BUNDLE)
         cases = _write(
             """\
 cases:
@@ -90,13 +90,13 @@ cases:
         )
         runner = CliRunner()
         # No --environment flag, defaults to production
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases])
         assert result.exit_code == 0, f"Expected pass but got:\n{result.output}"
         assert "1/1 passed" in result.output
 
     def test_cases_environment_development_allows_delete(self):
         """block-prod-delete denies unless environment=development."""
-        contracts = _write(ENV_BUNDLE)
+        rules = _write(ENV_BUNDLE)
         cases = _write(
             """\
 cases:
@@ -108,13 +108,13 @@ cases:
 """
         )
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases, "--environment", "development"])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases, "--environment", "development"])
         assert result.exit_code == 0, f"Expected pass but got:\n{result.output}"
         assert "1/1 passed" in result.output
 
     def test_cases_per_case_environment_overrides_flag(self):
         """Per-case environment field should override the CLI flag."""
-        contracts = _write(ENV_BUNDLE)
+        rules = _write(ENV_BUNDLE)
         cases = _write(
             """\
 cases:
@@ -123,13 +123,13 @@ cases:
     args:
       service: api
     environment: staging
-    expect: deny
+    expect: block
     match_contract: staging-only-deploy
 """
         )
         runner = CliRunner()
         # CLI flag says production, but per-case says staging
-        result = runner.invoke(cli, ["test", contracts, "--cases", cases, "--environment", "production"])
+        result = runner.invoke(cli, ["test", rules, "--cases", cases, "--environment", "production"])
         assert result.exit_code == 0, f"Expected pass but got:\n{result.output}"
         assert "1/1 passed" in result.output
 
@@ -138,8 +138,8 @@ class TestCliTestCallsEnvironment:
     """--environment flag on `edictum test --calls` changes evaluation."""
 
     def test_calls_environment_flag_affects_verdict(self):
-        """Calls evaluated with --environment staging should trigger staging-only contract."""
-        contracts = _write(ENV_BUNDLE)
+        """Calls evaluated with --environment staging should trigger staging-only rule."""
+        rules = _write(ENV_BUNDLE)
         calls = _write(
             json.dumps([{"tool": "deploy_service", "args": {"service": "api"}}]),
             suffix=".json",
@@ -147,28 +147,28 @@ class TestCliTestCallsEnvironment:
         runner = CliRunner()
         result = runner.invoke(
             cli,
-            ["test", contracts, "--calls", calls, "--json", "--environment", "staging"],
+            ["test", rules, "--calls", calls, "--json", "--environment", "staging"],
         )
         assert result.exit_code == 1  # denial
         parsed = json.loads(result.output)
-        assert parsed[0]["verdict"] == "deny"
+        assert parsed[0]["decision"] == "block"
 
     def test_calls_default_environment_production(self):
-        """Without --environment, staging-only contract should not fire."""
-        contracts = _write(ENV_BUNDLE)
+        """Without --environment, staging-only rule should not fire."""
+        rules = _write(ENV_BUNDLE)
         calls = _write(
             json.dumps([{"tool": "deploy_service", "args": {"service": "api"}}]),
             suffix=".json",
         )
         runner = CliRunner()
-        result = runner.invoke(cli, ["test", contracts, "--calls", calls, "--json"])
+        result = runner.invoke(cli, ["test", rules, "--calls", calls, "--json"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert parsed[0]["verdict"] == "allow"
+        assert parsed[0]["decision"] == "allow"
 
     def test_calls_per_call_environment_overrides_flag(self):
         """Per-call environment field should override the CLI flag."""
-        contracts = _write(ENV_BUNDLE)
+        rules = _write(ENV_BUNDLE)
         calls = _write(
             json.dumps(
                 [
@@ -187,7 +187,7 @@ class TestCliTestCallsEnvironment:
             cli,
             [
                 "test",
-                contracts,
+                rules,
                 "--calls",
                 calls,
                 "--json",
@@ -197,4 +197,4 @@ class TestCliTestCallsEnvironment:
         )
         assert result.exit_code == 1
         parsed = json.loads(result.output)
-        assert parsed[0]["verdict"] == "deny"
+        assert parsed[0]["decision"] == "block"

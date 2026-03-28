@@ -7,7 +7,7 @@ import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from edictum import Edictum, Principal, Verdict, postcondition, precondition
+from edictum import Edictum, Principal, Decision, postcondition, precondition
 from edictum.adapters.google_adk import GoogleADKAdapter
 from edictum.approval import ApprovalDecision, ApprovalRequest, ApprovalStatus
 from edictum.audit import AuditAction
@@ -41,10 +41,10 @@ class TestGoogleADKAdapter:
 
     async def test_deny_returns_dict(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied")
+        def always_deny(tool_call):
+            return Decision.fail("denied")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = GoogleADKAdapter(guard)
         result = await adapter._pre(
             tool_name="TestTool",
@@ -73,10 +73,10 @@ class TestGoogleADKAdapter:
 
     async def test_deny_clears_pending(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("no")
+        def always_deny(tool_call):
+            return Decision.fail("no")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = GoogleADKAdapter(guard)
 
         await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
@@ -100,11 +100,11 @@ class TestGoogleADKAdapter:
 
     async def test_observe_mode_would_deny(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("would be denied")
+        def always_deny(tool_call):
+            return Decision.fail("would be denied")
 
         sink = NullAuditSink()
-        guard = make_guard(mode="observe", contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
         adapter = GoogleADKAdapter(guard)
 
         result = await adapter._pre(
@@ -164,15 +164,15 @@ class TestGoogleADKAdapter:
 
     async def test_principal_resolver(self):
         @precondition("*")
-        def require_admin(envelope):
-            if envelope.principal is None or envelope.principal.role != "admin":
-                return Verdict.fail("admin required")
-            return Verdict.pass_()
+        def require_admin(tool_call):
+            if tool_call.principal is None or tool_call.principal.role != "admin":
+                return Decision.fail("admin required")
+            return Decision.pass_()
 
         def resolver(tool_name, tool_input):
             return Principal(role="admin")
 
-        guard = make_guard(contracts=[require_admin])
+        guard = make_guard(rules=[require_admin])
         adapter = GoogleADKAdapter(guard, principal_resolver=resolver)
 
         result = await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
@@ -195,10 +195,10 @@ class TestGoogleADKAdapter:
             tool_context=mock_context,
         )
 
-        envelope, _ = adapter._pending["fc-1"]
-        assert envelope.principal is not None
-        assert envelope.principal.user_id == "u1"
-        assert envelope.principal.claims.get("adk_agent_name") == "a1"
+        tool_call, _ = adapter._pending["fc-1"]
+        assert tool_call.principal is not None
+        assert tool_call.principal.user_id == "u1"
+        assert tool_call.principal.claims.get("adk_agent_name") == "a1"
 
     async def test_metadata_from_context(self):
         guard = make_guard()
@@ -217,17 +217,17 @@ class TestGoogleADKAdapter:
             tool_context=mock_context,
         )
 
-        envelope, _ = adapter._pending["fc-1"]
-        assert envelope.metadata.get("adk_invocation_id") == "inv-1"
-        assert envelope.metadata.get("adk_agent_name") == "research_agent"
+        tool_call, _ = adapter._pending["fc-1"]
+        assert tool_call.metadata.get("adk_invocation_id") == "inv-1"
+        assert tool_call.metadata.get("adk_agent_name") == "research_agent"
 
     async def test_postcondition_warn_callback(self):
         @postcondition("TestTool")
-        def detect_issue(envelope, result):
-            return Verdict.fail("issue found in output")
+        def detect_issue(tool_call, result):
+            return Decision.fail("issue found in output")
 
         callback = MagicMock()
-        guard = make_guard(contracts=[detect_issue])
+        guard = make_guard(rules=[detect_issue])
         adapter = GoogleADKAdapter(guard)
         adapter._on_postcondition_warn = callback
 
@@ -238,13 +238,13 @@ class TestGoogleADKAdapter:
 
     async def test_postcondition_warn_exception_safety(self):
         @postcondition("TestTool")
-        def detect_issue(envelope, result):
-            return Verdict.fail("issue found")
+        def detect_issue(tool_call, result):
+            return Decision.fail("issue found")
 
-        def exploding_callback(result, findings):
+        def exploding_callback(result, violations):
             raise RuntimeError("boom")
 
-        guard = make_guard(contracts=[detect_issue])
+        guard = make_guard(rules=[detect_issue])
         adapter = GoogleADKAdapter(guard)
         adapter._on_postcondition_warn = exploding_callback
 
@@ -256,15 +256,15 @@ class TestGoogleADKAdapter:
 
     async def test_post_redaction(self):
         @postcondition("TestTool")
-        def detect_secret(envelope, result):
+        def detect_secret(tool_call, result):
             if "sk-" in str(result):
-                return Verdict.fail("secret detected")
-            return Verdict.pass_()
+                return Decision.fail("secret detected")
+            return Decision.pass_()
 
         detect_secret._edictum_effect = "redact"
         detect_secret._edictum_redact_patterns = [re.compile(r"sk-\w+")]
 
-        guard = make_guard(contracts=[detect_secret], tools=_READ_TOOLS)
+        guard = make_guard(rules=[detect_secret], tools=_READ_TOOLS)
         adapter = GoogleADKAdapter(guard)
 
         await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
@@ -276,12 +276,12 @@ class TestGoogleADKAdapter:
 
     async def test_post_output_suppressed(self):
         @postcondition("TestTool")
-        def detect_secret(envelope, result):
-            return Verdict.fail("secret detected")
+        def detect_secret(tool_call, result):
+            return Decision.fail("secret detected")
 
-        detect_secret._edictum_effect = "deny"
+        detect_secret._edictum_effect = "block"
 
-        guard = make_guard(contracts=[detect_secret], tools=_READ_TOOLS)
+        guard = make_guard(rules=[detect_secret], tools=_READ_TOOLS)
         adapter = GoogleADKAdapter(guard)
 
         await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
@@ -292,11 +292,11 @@ class TestGoogleADKAdapter:
 
     async def test_on_deny_callback(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("not allowed")
+        def always_deny(tool_call):
+            return Decision.fail("not allowed")
 
         on_deny = MagicMock()
-        guard = make_guard(contracts=[always_deny], on_deny=on_deny)
+        guard = make_guard(rules=[always_deny], on_deny=on_deny)
         adapter = GoogleADKAdapter(guard)
 
         await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
@@ -312,13 +312,13 @@ class TestGoogleADKAdapter:
 
     async def test_per_contract_observe(self):
         @precondition("*")
-        def observed_deny(envelope):
-            return Verdict.fail("would deny")
+        def observed_deny(tool_call):
+            return Decision.fail("would block")
 
         observed_deny._edictum_mode = "observe"
 
         sink = NullAuditSink()
-        guard = make_guard(contracts=[observed_deny], audit_sink=sink)
+        guard = make_guard(rules=[observed_deny], audit_sink=sink)
         adapter = GoogleADKAdapter(guard)
 
         result = await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
@@ -387,12 +387,12 @@ class TestPluginIntegration:
 
     async def test_plugin_before_tool_deny(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied by policy")
+        def always_deny(tool_call):
+            return Decision.fail("denied by policy")
 
         mock_base_plugin_cls, originals = self._mock_adk_modules()
         try:
-            guard = make_guard(contracts=[always_deny])
+            guard = make_guard(rules=[always_deny])
             adapter = GoogleADKAdapter(guard)
             plugin = adapter.as_plugin()
 
@@ -455,17 +455,17 @@ class TestPluginIntegration:
 
     async def test_plugin_after_tool_redact(self):
         @postcondition("TestTool")
-        def detect_secret(envelope, result):
+        def detect_secret(tool_call, result):
             if "sk-" in str(result):
-                return Verdict.fail("secret detected")
-            return Verdict.pass_()
+                return Decision.fail("secret detected")
+            return Decision.pass_()
 
         detect_secret._edictum_effect = "redact"
         detect_secret._edictum_redact_patterns = [re.compile(r"sk-\w+")]
 
         mock_base_plugin_cls, originals = self._mock_adk_modules()
         try:
-            guard = make_guard(contracts=[detect_secret], tools=_READ_TOOLS)
+            guard = make_guard(rules=[detect_secret], tools=_READ_TOOLS)
             adapter = GoogleADKAdapter(guard)
             plugin = adapter.as_plugin()
 
@@ -529,10 +529,10 @@ class TestAgentCallbacks:
 
     async def test_agent_before_callback_deny(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied by policy")
+        def always_deny(tool_call):
+            return Decision.fail("denied by policy")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = GoogleADKAdapter(guard)
         before_cb, _, _ = adapter.as_agent_callbacks()
 
@@ -568,15 +568,15 @@ class TestAgentCallbacks:
 
     async def test_agent_after_callback_redact(self):
         @postcondition("TestTool")
-        def detect_secret(envelope, result):
+        def detect_secret(tool_call, result):
             if "sk-" in str(result):
-                return Verdict.fail("secret detected")
-            return Verdict.pass_()
+                return Decision.fail("secret detected")
+            return Decision.pass_()
 
         detect_secret._edictum_effect = "redact"
         detect_secret._edictum_redact_patterns = [re.compile(r"sk-\w+")]
 
-        guard = make_guard(contracts=[detect_secret], tools=_READ_TOOLS)
+        guard = make_guard(rules=[detect_secret], tools=_READ_TOOLS)
         adapter = GoogleADKAdapter(guard)
         before_cb, after_cb, _ = adapter.as_agent_callbacks()
 
@@ -626,12 +626,12 @@ class TestAgentCallbacks:
 class TestApproval:
     async def test_approval_granted_proceeds(self):
         @precondition("*")
-        def require_approval(envelope):
-            return Verdict.fail("needs approval")
+        def require_approval(tool_call):
+            return Decision.fail("needs approval")
 
-        require_approval._edictum_effect = "approve"
+        require_approval._edictum_effect = "ask"
         require_approval._edictum_timeout = 60
-        require_approval._edictum_timeout_effect = "deny"
+        require_approval._edictum_timeout_action = "block"
 
         mock_backend = AsyncMock()
         mock_backend.request_approval.return_value = ApprovalRequest(
@@ -647,7 +647,7 @@ class TestApproval:
             status=ApprovalStatus.APPROVED,
         )
 
-        guard = make_guard(contracts=[require_approval], approval_backend=mock_backend)
+        guard = make_guard(rules=[require_approval], approval_backend=mock_backend)
         adapter = GoogleADKAdapter(guard)
 
         result = await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
@@ -655,12 +655,12 @@ class TestApproval:
 
     async def test_approval_denied_returns_dict(self):
         @precondition("*")
-        def require_approval(envelope):
-            return Verdict.fail("needs approval")
+        def require_approval(tool_call):
+            return Decision.fail("needs approval")
 
-        require_approval._edictum_effect = "approve"
+        require_approval._edictum_effect = "ask"
         require_approval._edictum_timeout = 60
-        require_approval._edictum_timeout_effect = "deny"
+        require_approval._edictum_timeout_action = "block"
 
         mock_backend = AsyncMock()
         mock_backend.request_approval.return_value = ApprovalRequest(
@@ -676,7 +676,7 @@ class TestApproval:
             status=ApprovalStatus.DENIED,
         )
 
-        guard = make_guard(contracts=[require_approval], approval_backend=mock_backend)
+        guard = make_guard(rules=[require_approval], approval_backend=mock_backend)
         adapter = GoogleADKAdapter(guard)
 
         result = await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
@@ -686,12 +686,12 @@ class TestApproval:
 
     async def test_approval_timeout_deny(self):
         @precondition("*")
-        def require_approval(envelope):
-            return Verdict.fail("needs approval")
+        def require_approval(tool_call):
+            return Decision.fail("needs approval")
 
-        require_approval._edictum_effect = "approve"
+        require_approval._edictum_effect = "ask"
         require_approval._edictum_timeout = 1
-        require_approval._edictum_timeout_effect = "deny"
+        require_approval._edictum_timeout_action = "block"
 
         mock_backend = AsyncMock()
         mock_backend.request_approval.return_value = ApprovalRequest(
@@ -706,7 +706,7 @@ class TestApproval:
             status=ApprovalStatus.TIMEOUT,
         )
 
-        guard = make_guard(contracts=[require_approval], approval_backend=mock_backend)
+        guard = make_guard(rules=[require_approval], approval_backend=mock_backend)
         adapter = GoogleADKAdapter(guard)
 
         result = await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
@@ -716,12 +716,12 @@ class TestApproval:
 
     async def test_approval_timeout_allow(self):
         @precondition("*")
-        def require_approval(envelope):
-            return Verdict.fail("needs approval")
+        def require_approval(tool_call):
+            return Decision.fail("needs approval")
 
-        require_approval._edictum_effect = "approve"
+        require_approval._edictum_effect = "ask"
         require_approval._edictum_timeout = 1
-        require_approval._edictum_timeout_effect = "allow"
+        require_approval._edictum_timeout_action = "allow"
 
         mock_backend = AsyncMock()
         mock_backend.request_approval.return_value = ApprovalRequest(
@@ -736,21 +736,21 @@ class TestApproval:
             status=ApprovalStatus.TIMEOUT,
         )
 
-        guard = make_guard(contracts=[require_approval], approval_backend=mock_backend)
+        guard = make_guard(rules=[require_approval], approval_backend=mock_backend)
         adapter = GoogleADKAdapter(guard)
 
         result = await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
-        assert result is None  # timeout_effect=allow
+        assert result is None  # timeout_action=allow
 
     async def test_approval_no_backend_denies(self):
         @precondition("*")
-        def require_approval(envelope):
-            return Verdict.fail("needs approval")
+        def require_approval(tool_call):
+            return Decision.fail("needs approval")
 
-        require_approval._edictum_effect = "approve"
+        require_approval._edictum_effect = "ask"
 
         sink = NullAuditSink()
-        guard = make_guard(contracts=[require_approval], audit_sink=sink)
+        guard = make_guard(rules=[require_approval], audit_sink=sink)
         adapter = GoogleADKAdapter(guard)
 
         result = await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")

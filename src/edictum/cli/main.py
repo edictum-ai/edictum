@@ -1,4 +1,4 @@
-"""Edictum CLI — validate, check, diff, and replay contract bundles."""
+"""Edictum CLI — validate, check, diff, and replay rule bundles."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ except ImportError:
     raise ImportError("The CLI requires click and rich. Install them with: pip install edictum[cli]")
 
 from edictum import EdictumConfigError
-from edictum.envelope import Principal, ToolEnvelope, create_envelope
+from edictum.envelope import Principal, ToolCall, create_envelope
 from edictum.yaml_engine.loader import load_bundle
 
 # ---------------------------------------------------------------------------
@@ -28,19 +28,19 @@ from edictum.yaml_engine.loader import load_bundle
 
 
 def _print_composition_report(report: Any) -> None:
-    """Print composition report (overrides and observe-mode contracts)."""
+    """Print composition report (overrides and observe-mode rules)."""
     if not report.overridden_contracts and not report.observe_contracts:
         return
 
     _console.print("\n[bold]Composition report:[/bold]")
     for o in report.overridden_contracts:
         _console.print(
-            f"  \u21c4 {escape(o.contract_id)} \u2014 overridden by "
+            f"  \u21c4 {escape(o.rule_id)} \u2014 overridden by "
             f"{escape(o.overridden_by)} (was in {escape(o.original_source)})"
         )
     for s in report.observe_contracts:
         _console.print(
-            f"  \u2295 {escape(s.contract_id)} \u2014 observe-mode from "
+            f"  \u2295 {escape(s.rule_id)} \u2014 observe-mode from "
             f"{escape(s.observed_source)} (enforced in {escape(s.enforced_source)})"
         )
 
@@ -62,8 +62,8 @@ def _build_envelope(
     tool_args: dict,
     environment: str = "production",
     principal: Principal | None = None,
-) -> ToolEnvelope:
-    """Build a synthetic ToolEnvelope for dry-run evaluation."""
+) -> ToolCall:
+    """Build a synthetic ToolCall for dry-run evaluation."""
     return create_envelope(
         tool_name=tool_name,
         tool_input=tool_args,
@@ -74,44 +74,44 @@ def _build_envelope(
 
 def _evaluate_preconditions(
     compiled: Any,
-    envelope: ToolEnvelope,
+    tool_call: ToolCall,
 ) -> tuple[str, str | None, str | None, list[dict]]:
-    """Evaluate compiled preconditions against an envelope.
+    """Evaluate compiled preconditions against an tool_call.
 
-    Returns (verdict, contract_id, message, evaluated_records).
-    verdict is "denied" or "allowed".
+    Returns (decision, rule_id, message, evaluated_records).
+    decision is "denied" or "allowed".
     """
     evaluated: list[dict] = []
 
     for fn in compiled.preconditions:
         tool_filter = getattr(fn, "_edictum_tool", "*")
-        if tool_filter != "*" and tool_filter != envelope.tool_name:
+        if tool_filter != "*" and tool_filter != tool_call.tool_name:
             continue
 
-        verdict = fn(envelope)
+        decision = fn(tool_call)
         record = {
             "id": getattr(fn, "_edictum_id", "unknown"),
-            "passed": verdict.passed,
-            "message": verdict.message,
+            "passed": decision.passed,
+            "message": decision.message,
         }
-        if verdict.metadata:
-            record["metadata"] = verdict.metadata
+        if decision.metadata:
+            record["metadata"] = decision.metadata
         evaluated.append(record)
 
-        if not verdict.passed:
-            return "denied", record["id"], verdict.message, evaluated
+        if not decision.passed:
+            return "denied", record["id"], decision.message, evaluated
 
     return "allowed", None, None, evaluated
 
 
 def _evaluate_sandbox_contracts(
     compiled: Any,
-    envelope: ToolEnvelope,
+    tool_call: ToolCall,
 ) -> tuple[str, str | None, str | None, list[dict]]:
-    """Evaluate compiled sandbox contracts against an envelope.
+    """Evaluate compiled sandbox rules against an tool_call.
 
-    Returns (verdict, contract_id, message, evaluated_records).
-    verdict is "denied" or "allowed".
+    Returns (decision, rule_id, message, evaluated_records).
+    decision is "denied" or "allowed".
     """
     from fnmatch import fnmatch
 
@@ -119,42 +119,42 @@ def _evaluate_sandbox_contracts(
 
     for fn in compiled.sandbox_contracts:
         tools = getattr(fn, "_edictum_tools", ["*"])
-        if not any(fnmatch(envelope.tool_name, p) for p in tools):
+        if not any(fnmatch(tool_call.tool_name, p) for p in tools):
             continue
 
-        verdict = fn(envelope)
+        decision = fn(tool_call)
         record = {
             "id": getattr(fn, "_edictum_id", "unknown"),
-            "passed": verdict.passed,
-            "message": verdict.message,
+            "passed": decision.passed,
+            "message": decision.message,
         }
-        if verdict.metadata:
-            record["metadata"] = verdict.metadata
+        if decision.metadata:
+            record["metadata"] = decision.metadata
         evaluated.append(record)
 
-        if not verdict.passed:
-            return "denied", record["id"], verdict.message, evaluated
+        if not decision.passed:
+            return "denied", record["id"], decision.message, evaluated
 
     return "allowed", None, None, evaluated
 
 
 def _evaluate_all(
     compiled: Any,
-    envelope: ToolEnvelope,
+    tool_call: ToolCall,
 ) -> tuple[str, str | None, str | None, list[dict]]:
-    """Evaluate preconditions and sandbox contracts against an envelope.
+    """Evaluate preconditions and sandbox rules against an tool_call.
 
-    Runs preconditions first. If all pass, runs sandbox contracts.
-    Returns (verdict, contract_id, message, evaluated_records).
-    verdict is "denied" or "allowed".
+    Runs preconditions first. If all pass, runs sandbox rules.
+    Returns (decision, rule_id, message, evaluated_records).
+    decision is "denied" or "allowed".
     """
-    verdict, contract_id, message, evaluated = _evaluate_preconditions(compiled, envelope)
-    if verdict == "allowed":
-        sb_verdict, sb_id, sb_msg, sb_evaluated = _evaluate_sandbox_contracts(compiled, envelope)
+    decision, rule_id, message, evaluated = _evaluate_preconditions(compiled, tool_call)
+    if decision == "allowed":
+        sb_verdict, sb_id, sb_msg, sb_evaluated = _evaluate_sandbox_contracts(compiled, tool_call)
         evaluated.extend(sb_evaluated)
         if sb_verdict == "denied":
-            verdict, contract_id, message = sb_verdict, sb_id, sb_msg
-    return verdict, contract_id, message, evaluated
+            decision, rule_id, message = sb_verdict, sb_id, sb_msg
+    return decision, rule_id, message, evaluated
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ def _evaluate_all(
 @click.group(invoke_without_command=True)
 @click.pass_context
 def cli(ctx: click.Context) -> None:
-    """Edictum — Runtime contracts for AI agents."""
+    """Edictum — Runtime rules for AI agents."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
@@ -189,9 +189,9 @@ def version() -> None:
 
 
 def _count_contracts(bundle_data: dict) -> dict[str, int]:
-    """Count contracts by type in a bundle."""
+    """Count rules by type in a bundle."""
     counts: dict[str, int] = {}
-    for c in bundle_data.get("contracts", []):
+    for c in bundle_data.get("rules", []):
         ct = c.get("type", "unknown")
         counts[ct] = counts.get(ct, 0) + 1
     return counts
@@ -203,7 +203,7 @@ def _composition_report_to_dict(report: Any) -> dict:
     for o in report.overridden_contracts:
         result["overrides"].append(
             {
-                "contract_id": o.contract_id,
+                "rule_id": o.rule_id,
                 "overridden_by": o.overridden_by,
                 "original_source": o.original_source,
             }
@@ -211,7 +211,7 @@ def _composition_report_to_dict(report: Any) -> dict:
     for s in report.observe_contracts:
         result["observe_contracts"].append(
             {
-                "contract_id": s.contract_id,
+                "rule_id": s.rule_id,
                 "observed_source": s.observed_source,
                 "enforced_source": s.enforced_source,
             }
@@ -223,7 +223,7 @@ def _composition_report_to_dict(report: Any) -> dict:
 @click.argument("files", nargs=-1, required=True, type=click.Path())
 @click.option("--json", "json_output", is_flag=True, default=False, help="Output results as JSON.")
 def validate(files: tuple[str, ...], json_output: bool) -> None:
-    """Validate one or more contract bundle files."""
+    """Validate one or more rule bundle files."""
     has_errors = False
     valid_bundles: list[tuple[dict, str]] = []
     json_files: list[dict] = []
@@ -256,13 +256,13 @@ def validate(files: tuple[str, ...], json_output: bool) -> None:
                 {
                     "file": path.name,
                     "valid": True,
-                    "contracts": total,
+                    "rules": total,
                     "breakdown": counts,
                 }
             )
         else:
             breakdown = ", ".join(f"{v} {k}" for k, v in sorted(counts.items()))
-            _console.print(f"[green]  {escape(path.name)}[/green] — {total} contracts ({breakdown})")
+            _console.print(f"[green]  {escape(path.name)}[/green] — {total} rules ({breakdown})")
 
         valid_bundles.append((bundle_data, path.name))
 
@@ -290,13 +290,13 @@ def validate(files: tuple[str, ...], json_output: bool) -> None:
 
         if json_output:
             json_composed = {
-                "contracts": total,
+                "rules": total,
                 "breakdown": counts,
                 **_composition_report_to_dict(composed.report),
             }
         else:
             breakdown = ", ".join(f"{v} {k}" for k, v in sorted(counts.items()))
-            _console.print(f"\n[bold]Composed:[/bold] {total} contracts ({breakdown})")
+            _console.print(f"\n[bold]Composed:[/bold] {total} rules ({breakdown})")
             _print_composition_report(composed.report)
 
     if json_output:
@@ -332,7 +332,7 @@ def check(
     principal_ticket: str | None,
     json_output: bool,
 ) -> None:
-    """Dry-run a tool call against contracts."""
+    """Dry-run a tool call against rules."""
     # Parse JSON args
     try:
         parsed_args = json.loads(tool_args)
@@ -343,14 +343,14 @@ def check(
             _err_console.print(f"[red]Invalid JSON in --args: {escape(str(e))}[/red]")
         sys.exit(2)
 
-    # Load contracts
+    # Load rules
     try:
         _, _, compiled = _load_and_compile(file)
     except EdictumConfigError as e:
         if json_output:
-            click.echo(json.dumps({"error": f"Failed to load contracts: {e}"}, indent=2))
+            click.echo(json.dumps({"error": f"Failed to load rules: {e}"}, indent=2))
         else:
-            _err_console.print(f"[red]Failed to load contracts: {escape(str(e))}[/red]")
+            _err_console.print(f"[red]Failed to load rules: {escape(str(e))}[/red]")
         sys.exit(1)
 
     # Build principal
@@ -362,31 +362,31 @@ def check(
             ticket_ref=principal_ticket,
         )
 
-    # Build envelope
-    envelope = _build_envelope(tool, parsed_args, environment, principal)
+    # Build tool_call
+    tool_call = _build_envelope(tool, parsed_args, environment, principal)
 
     # Evaluate
-    verdict, contract_id, message, evaluated = _evaluate_all(compiled, envelope)
+    decision, rule_id, message, evaluated = _evaluate_all(compiled, tool_call)
 
     n_evaluated = len(evaluated)
-    verdict_label = "deny" if verdict == "denied" else "allow"
+    verdict_label = "block" if decision == "denied" else "allow"
 
     if json_output:
         output: dict[str, Any] = {
             "tool": tool,
             "args": parsed_args,
-            "verdict": verdict_label,
+            "decision": verdict_label,
             "reason": message,
             "contracts_evaluated": n_evaluated,
             "environment": environment,
         }
-        if contract_id:
-            output["contract_id"] = contract_id
+        if rule_id:
+            output["rule_id"] = rule_id
         click.echo(json.dumps(output, indent=2))
-        sys.exit(1 if verdict == "denied" else 0)
+        sys.exit(1 if decision == "denied" else 0)
 
-    if verdict == "denied":
-        _console.print(f"[red bold]DENIED[/red bold] by contract [yellow]{escape(contract_id or '')}[/yellow]")
+    if decision == "denied":
+        _console.print(f"[red bold]DENIED[/red bold] by rule [yellow]{escape(rule_id or '')}[/yellow]")
         _console.print(f"  Message: {escape(message or '')}")
         # Show tags if available
         deny_record = evaluated[-1] if evaluated else {}
@@ -407,15 +407,15 @@ def check(
 
 
 def _contracts_by_id(bundle: dict) -> dict[str, dict]:
-    """Index contracts by their id."""
-    return {c["id"]: c for c in bundle.get("contracts", [])}
+    """Index rules by their id."""
+    return {c["id"]: c for c in bundle.get("rules", [])}
 
 
 @cli.command()
 @click.argument("files", nargs=-1, required=True, type=click.Path(exists=True))
 @click.option("--json", "json_output", is_flag=True, default=False, help="Output results as JSON.")
 def diff(files: tuple[str, ...], json_output: bool) -> None:
-    """Compare contract bundles and show changes."""
+    """Compare rule bundles and show changes."""
     if len(files) < 2:
         if json_output:
             click.echo(json.dumps({"error": "diff requires at least 2 files."}, indent=2))
@@ -542,12 +542,12 @@ def diff(files: tuple[str, ...], json_output: bool) -> None:
 @click.option("--audit-log", required=True, type=click.Path(exists=True), help="JSONL audit log.")
 @click.option("--output", default=None, type=click.Path(), help="Write detailed report as JSONL.")
 def replay(file: str, audit_log: str, output: str | None) -> None:
-    """Replay an audit log against contracts and detect verdict changes."""
-    # Load contracts
+    """Replay an audit log against rules and detect decision changes."""
+    # Load rules
     try:
         _, _, compiled = _load_and_compile(file)
     except EdictumConfigError as e:
-        _err_console.print(f"[red]Failed to load contracts: {escape(str(e))}[/red]")
+        _err_console.print(f"[red]Failed to load rules: {escape(str(e))}[/red]")
         sys.exit(1)
 
     # Read audit log
@@ -589,9 +589,9 @@ def replay(file: str, audit_log: str, output: str | None) -> None:
                 claims=p_data.get("claims", {}),
             )
 
-        # Build envelope and evaluate
-        envelope = _build_envelope(tool_name, tool_args, environment, principal)
-        new_verdict, contract_id, message, evaluated = _evaluate_all(compiled, envelope)
+        # Build tool_call and evaluate
+        tool_call = _build_envelope(tool_name, tool_args, environment, principal)
+        new_verdict, rule_id, message, evaluated = _evaluate_all(compiled, tool_call)
 
         # Map to action strings for comparison
         new_action = "call_denied" if new_verdict == "denied" else "call_allowed"
@@ -608,8 +608,8 @@ def replay(file: str, audit_log: str, output: str | None) -> None:
             "new_verdict": new_verdict,
             "changed": changed,
         }
-        if contract_id:
-            report_entry["denied_by"] = contract_id
+        if rule_id:
+            report_entry["denied_by"] = rule_id
             report_entry["message"] = message
         report_lines.append(report_entry)
 
@@ -630,7 +630,7 @@ def replay(file: str, audit_log: str, output: str | None) -> None:
             if entry["changed"]:
                 _console.print(f"  {entry['tool_name']}: {entry['original_action']} -> {entry['new_verdict']}")
                 if entry.get("denied_by"):
-                    _console.print(f"    Contract: {entry['denied_by']}")
+                    _console.print(f"    Rule: {entry['denied_by']}")
     else:
         _console.print("[green]No changes detected.[/green]")
 
@@ -643,14 +643,14 @@ def replay(file: str, audit_log: str, output: str | None) -> None:
 
 
 def _run_cases(file: str, cases: str, environment: str = "production") -> None:
-    """Run YAML test cases against contracts (preconditions only)."""
+    """Run YAML test cases against rules (preconditions only)."""
     import yaml
 
-    # Load contracts
+    # Load rules
     try:
         _, _, compiled = _load_and_compile(file)
     except EdictumConfigError as e:
-        _err_console.print(f"[red]Failed to load contracts: {escape(str(e))}[/red]")
+        _err_console.print(f"[red]Failed to load rules: {escape(str(e))}[/red]")
         sys.exit(1)
 
     # Load test cases
@@ -674,7 +674,7 @@ def _run_cases(file: str, cases: str, environment: str = "production") -> None:
     failed = 0
     total = len(test_cases)
 
-    valid_expects = {"allow", "deny"}
+    valid_expects = {"allow", "block"}
 
     for i, tc in enumerate(test_cases):
         tc_id = tc.get("id", f"case-{i + 1}")
@@ -709,34 +709,34 @@ def _run_cases(file: str, cases: str, environment: str = "production") -> None:
                 claims=principal_data.get("claims", {}),
             )
 
-        # Build envelope and evaluate
+        # Build tool_call and evaluate
         case_env = tc.get("environment", environment)
-        envelope = _build_envelope(tool, args, environment=case_env, principal=principal)
-        verdict, contract_id, message, evaluated = _evaluate_all(compiled, envelope)
+        tool_call = _build_envelope(tool, args, environment=case_env, principal=principal)
+        decision, rule_id, message, evaluated = _evaluate_all(compiled, tool_call)
 
-        # Map verdict to expected format
-        actual = "deny" if verdict == "denied" else "allow"
+        # Map decision to expected format
+        actual = "block" if decision == "denied" else "allow"
 
         # Check match_contract
         contract_match_ok = True
-        if match_contract and actual == "deny":
-            contract_match_ok = contract_id == match_contract
+        if match_contract and actual == "block":
+            contract_match_ok = rule_id == match_contract
 
         if actual == expect and contract_match_ok:
             passed += 1
             detail = f"{tool} {json.dumps(args)}"
-            verdict_label = "DENIED" if actual == "deny" else "ALLOWED"
-            contract_info = f" ({contract_id})" if contract_id else ""
+            verdict_label = "DENIED" if actual == "block" else "ALLOWED"
+            contract_info = f" ({rule_id})" if rule_id else ""
             _console.print(f"[green]  {escape(tc_id)}:[/green] {escape(detail)} -> {verdict_label}{contract_info}")
         else:
             failed += 1
             detail = f"{tool} {json.dumps(args)}"
-            actual_label = "DENIED" if actual == "deny" else "ALLOWED"
+            actual_label = "DENIED" if actual == "block" else "ALLOWED"
             expected_label = expect.upper()
             if not contract_match_ok:
                 _console.print(
                     f"[red]  {escape(tc_id)}:[/red] {escape(detail)} -> "
-                    f"expected contract {escape(match_contract)}, got {escape(contract_id or 'none')}"
+                    f"expected rule {escape(match_contract)}, got {escape(rule_id or 'none')}"
                 )
             else:
                 _console.print(
@@ -749,7 +749,7 @@ def _run_cases(file: str, cases: str, environment: str = "production") -> None:
 
 
 def _run_calls(file: str, calls_path: str, json_output: bool, environment: str = "production") -> None:
-    """Evaluate JSON tool calls against contracts using guard.evaluate_batch()."""
+    """Evaluate JSON tool calls against rules using guard.evaluate_batch()."""
     from dataclasses import asdict
 
     from edictum import Edictum
@@ -762,7 +762,7 @@ def _run_calls(file: str, calls_path: str, json_output: bool, environment: str =
     try:
         guard = Edictum.from_yaml(file, audit_sink=_NullSink(), environment=environment)
     except EdictumConfigError as e:
-        _err_console.print(f"[red]Failed to load contracts: {escape(str(e))}[/red]")
+        _err_console.print(f"[red]Failed to load rules: {escape(str(e))}[/red]")
         sys.exit(1)
 
     # Load JSON calls
@@ -783,13 +783,13 @@ def _run_calls(file: str, calls_path: str, json_output: bool, environment: str =
         for r in results:
             output.append(
                 {
-                    "verdict": r.verdict,
+                    "decision": r.decision,
                     "tool_name": r.tool_name,
                     "contracts_evaluated": r.contracts_evaluated,
                     "deny_reasons": list(r.deny_reasons),
                     "warn_reasons": list(r.warn_reasons),
                     "policy_error": r.policy_error,
-                    "contracts": [asdict(c) for c in r.contracts],
+                    "rules": [asdict(c) for c in r.rules],
                 }
             )
         _console.print(json.dumps(output, indent=2))
@@ -799,26 +799,26 @@ def _run_calls(file: str, calls_path: str, json_output: bool, environment: str =
         table = Table(show_header=True)
         table.add_column("#", style="dim", width=4)
         table.add_column("Tool")
-        table.add_column("Verdict")
+        table.add_column("Decision")
         table.add_column("Contracts", justify="right")
         table.add_column("Details")
 
         for i, r in enumerate(results, 1):
-            if r.verdict == "deny":
+            if r.decision == "block":
                 verdict_styled = "[red bold]DENY[/red bold]"
                 details = "; ".join(r.deny_reasons) if r.deny_reasons else ""
-            elif r.verdict == "warn":
+            elif r.decision == "warn":
                 verdict_styled = "[yellow bold]WARN[/yellow bold]"
                 details = "; ".join(r.warn_reasons) if r.warn_reasons else ""
             else:
                 verdict_styled = "[green bold]ALLOW[/green bold]"
-                details = "all contracts passed"
+                details = "all rules passed"
 
             table.add_row(str(i), r.tool_name, verdict_styled, str(r.contracts_evaluated), escape(details))
 
         _console.print(table)
 
-    has_deny = any(r.verdict == "deny" for r in results)
+    has_deny = any(r.decision == "block" for r in results)
     sys.exit(1 if has_deny else 0)
 
 
@@ -829,7 +829,7 @@ def _run_calls(file: str, calls_path: str, json_output: bool, environment: str =
 @click.option("--json", "json_output", is_flag=True, default=False, help="Output results as JSON.")
 @click.option("--environment", default="production", help="Environment name for evaluation.")
 def test_cmd(file: str, cases: str | None, calls: str | None, json_output: bool, environment: str) -> None:
-    """Test contracts against test cases or evaluate tool calls.
+    """Test rules against test cases or evaluate tool calls.
 
     Two modes:
       --cases: YAML test cases with expected verdicts (preconditions only).

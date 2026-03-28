@@ -82,21 +82,21 @@ class TestCopilotCliOutput:
         assert code == 0
 
     def test_format_deny(self) -> None:
-        stdout, code = self.fmt.format_output("deny", "test-contract", "Not allowed", 5)
+        stdout, code = self.fmt.format_output("block", "test-rule", "Not allowed", 5)
         result = json.loads(stdout)
-        assert result["permissionDecision"] == "deny"
-        assert "test-contract" in result["permissionDecisionReason"]
+        assert result["permissionDecision"] == "block"
+        assert "test-rule" in result["permissionDecisionReason"]
         assert "Not allowed" in result["permissionDecisionReason"]
         assert code == 0
 
     def test_format_deny_no_contract(self) -> None:
-        stdout, code = self.fmt.format_output("deny", None, "Bad command", 5)
+        stdout, code = self.fmt.format_output("block", None, "Bad command", 5)
         result = json.loads(stdout)
-        assert result["permissionDecision"] == "deny"
+        assert result["permissionDecision"] == "block"
         assert result["permissionDecisionReason"] == "Bad command"
 
-    def test_format_deny_only_contract_id(self) -> None:
-        stdout, code = self.fmt.format_output("deny", "my-contract", None, 5)
+    def test_format_deny_only_rule_id(self) -> None:
+        stdout, code = self.fmt.format_output("block", "my-rule", None, 5)
         result = json.loads(stdout)
-        assert result["permissionDecision"] == "deny"
-        assert "my-contract" in result["permissionDecisionReason"]
+        assert result["permissionDecision"] == "block"
+        assert "my-rule" in result["permissionDecisionReason"]

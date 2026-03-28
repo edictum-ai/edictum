@@ -13,7 +13,7 @@ import pytest
 httpx = pytest.importorskip("httpx")
 httpx_sse = pytest.importorskip("httpx_sse")
 
-from edictum.server.contract_source import ServerContractSource  # noqa: E402
+from edictum.server.rule_source import ServerContractSource  # noqa: E402
 
 
 class TestSSETimeoutSeparation:

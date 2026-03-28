@@ -33,13 +33,13 @@ def _skill_label(classification: RiskClassification) -> str:
     return r.skill_name
 
 
-def _finding_lines(findings: tuple[ScanFinding, ...]) -> list[str]:
-    """Format findings as indented tree lines (pre-escaped for Rich output)."""
+def _finding_lines(violations: tuple[ScanFinding, ...]) -> list[str]:
+    """Format violations as indented tree lines (pre-escaped for Rich output)."""
     from rich.markup import escape
 
     lines: list[str] = []
-    for i, f in enumerate(findings):
-        connector = "\u2514\u2500" if i == len(findings) - 1 else "\u251c\u2500"
+    for i, f in enumerate(violations):
+        connector = "\u2514\u2500" if i == len(violations) - 1 else "\u251c\u2500"
         line_info = f" (line {f.line})" if f.line else ""
         lines.append(f"   {connector} {escape(f.message)}{line_info}")
     return lines
@@ -61,7 +61,7 @@ def format_human(
     Args:
         classifications: Risk classifications for all scanned skills.
         skills_dir: Display path of the scanned directory.
-        verbose: If True, show all skills including CLEAN. Otherwise only findings.
+        verbose: If True, show all skills including CLEAN. Otherwise only violations.
 
     Returns:
         String with Rich markup for console output.
@@ -91,11 +91,11 @@ def format_human(
         label = escape(_skill_label(cls))
         lines.append(f"{icon} {styled_level}  {label}")
 
-        # Only show non-informational findings for non-CLEAN
-        display_findings = cls.findings
+        # Only show non-informational violations for non-CLEAN
+        display_findings = cls.violations
         if cls.level == RiskLevel.CLEAN and verbose:
-            # Show informational findings only
-            display_findings = tuple(f for f in cls.findings if f.message == "no contracts.yaml")
+            # Show informational violations only
+            display_findings = tuple(f for f in cls.violations if f.message == "no rules.yaml")
 
         for finding_line in _finding_lines(display_findings):
             lines.append(finding_line)  # already escaped by _finding_lines
@@ -114,7 +114,7 @@ def format_human(
     without_contracts = sum(1 for c in classifications if c.result.risk_signals.no_contracts)
     if without_contracts:
         pct = round(without_contracts / total * 100) if total else 0
-        lines.append(f"  Without contracts.yaml: {without_contracts} ({pct}%)")
+        lines.append(f"  Without rules.yaml: {without_contracts} ({pct}%)")
 
     return "\n".join(lines)
 
@@ -146,7 +146,7 @@ def format_json(
 
         entry = result_to_dict(cls.result)
         entry["risk_level"] = cls.level.value
-        entry["findings"] = [{"message": f.message, "line": f.line} for f in cls.findings]
+        entry["violations"] = [{"message": f.message, "line": f.line} for f in cls.violations]
         findings_list.append(entry)
 
     # Sort by severity
@@ -160,7 +160,7 @@ def format_json(
         "scan_date": datetime.datetime.now(datetime.UTC).isoformat(),
         "skills_dir": skills_dir,
         "total_scanned": total,
-        "findings": findings_list,
+        "violations": findings_list,
         "stats": {
             "critical": stats.get(RiskLevel.CRITICAL, 0),
             "high": stats.get(RiskLevel.HIGH, 0),

@@ -31,8 +31,8 @@ def skill() -> None:
     default="MEDIUM",
     help="Minimum risk level for non-zero exit code (default: MEDIUM).",
 )
-@click.option("--structural-only", is_flag=True, default=False, help="Only check contracts.yaml presence.")
-@click.option("--verbose", "-v", is_flag=True, default=False, help="Show all skills, not just findings.")
+@click.option("--structural-only", is_flag=True, default=False, help="Only check rules.yaml presence.")
+@click.option("--verbose", "-v", is_flag=True, default=False, help="Show all skills, not just violations.")
 @click.option("--workers", type=int, default=1, help="Parallel workers for batch scanning.")
 @click.option("--server", type=str, default=None, help="Console server URL to send results (HTTPS required).")
 @click.option("--allow-http", is_flag=True, default=False, hidden=True, help="Allow HTTP for --server.")
@@ -55,7 +55,7 @@ def scan(
     multiple skills.
 
     Exit codes:
-      0  No findings above threshold.
+      0  No violations above threshold.
       1  Findings found above threshold.
       2  Scan error.
     """
@@ -96,7 +96,7 @@ def scan(
         if output_json:
             import json
 
-            click.echo(json.dumps({"total_scanned": 0, "findings": [], "stats": {}}, indent=2))
+            click.echo(json.dumps({"total_scanned": 0, "violations": [], "stats": {}}, indent=2))
         else:
             _console.print("[dim]No skills found to scan.[/dim]")
         sys.exit(0)
@@ -104,7 +104,7 @@ def scan(
     # Classify
     classifications = [classify_risk(r) for r in results]
 
-    # Structural-only mode: just report contracts.yaml presence
+    # Structural-only mode: just report rules.yaml presence
     if structural_only:
         _output_structural_only(classifications, output_json, str(scan_path))
         without = sum(1 for c in classifications if c.result.risk_signals.no_contracts)
@@ -136,7 +136,7 @@ def _output_structural_only(
     output_json: bool,
     skills_dir: str,
 ) -> None:
-    """Output structural-only report (contracts.yaml presence)."""
+    """Output structural-only report (rules.yaml presence)."""
     from rich.markup import escape
 
     total = len(classifications)
@@ -164,8 +164,8 @@ def _output_structural_only(
         click.echo(json.dumps(output, indent=2))
     else:
         _console.print(f"[bold]Structural check:[/bold] {total} skills")
-        _console.print(f"  With contracts.yaml: {with_contracts}")
-        _console.print(f"  Without contracts.yaml: {without}")
+        _console.print(f"  With rules.yaml: {with_contracts}")
+        _console.print(f"  Without rules.yaml: {without}")
         if without and without <= 20:
             _console.print("")
             for c in classifications:

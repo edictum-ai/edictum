@@ -32,12 +32,12 @@ def _write_yaml(content: str) -> str:
 
 BASIC_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-evaluate
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-env-reads
     type: pre
     tool: read_file
@@ -45,7 +45,7 @@ contracts:
       args.path:
         contains_any: [".env", ".secret"]
     then:
-      effect: deny
+      action: block
       message: "Sensitive file denied."
       tags: [secrets]
   - id: bash-safety
@@ -55,19 +55,19 @@ contracts:
       args.command:
         matches: '\\brm\\s+-rf\\b'
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied."
       tags: [safety]
 """
 
 POST_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-post
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: pii-check
     type: post
     tool: "*"
@@ -75,19 +75,19 @@ contracts:
       output.text:
         matches: '\\b\\d{3}-\\d{2}-\\d{4}\\b'
     then:
-      effect: warn
+      action: warn
       message: "PII detected."
       tags: [pii]
 """
 
 MIXED_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-mixed
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-env-reads
     type: pre
     tool: read_file
@@ -95,7 +95,7 @@ contracts:
       args.path:
         contains_any: [".env", ".secret"]
     then:
-      effect: deny
+      action: block
       message: "Sensitive file denied."
       tags: [secrets]
   - id: pii-check
@@ -105,19 +105,19 @@ contracts:
       output.text:
         matches: '\\b\\d{3}-\\d{2}-\\d{4}\\b'
     then:
-      effect: warn
+      action: warn
       message: "PII detected."
       tags: [pii]
 """
 
 OBSERVE_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-observe
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: observed-rule
     type: pre
     tool: bash
@@ -126,19 +126,19 @@ contracts:
       args.command:
         contains: "rm"
     then:
-      effect: deny
-      message: "Would deny rm."
+      action: block
+      message: "Would block rm."
       tags: [safety]
 """
 
 OBSERVE_POST_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-observe-post
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: observed-pii
     type: post
     tool: "*"
@@ -147,19 +147,19 @@ contracts:
       output.text:
         matches: '\\b\\d{3}-\\d{2}-\\d{4}\\b'
     then:
-      effect: warn
+      action: warn
       message: "PII detected (observed)."
       tags: [pii]
 """
 
 PRINCIPAL_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-principal
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: require-ticket
     type: pre
     tool: deploy_service
@@ -167,19 +167,19 @@ contracts:
       principal.ticket_ref:
         exists: false
     then:
-      effect: deny
+      action: block
       message: "Ticket required."
       tags: [compliance]
 """
 
 TWO_PRE_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-two-pre
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: rule-a
     type: pre
     tool: bash
@@ -187,7 +187,7 @@ contracts:
       args.command:
         contains: "rm"
     then:
-      effect: deny
+      action: block
       message: "Rule A denies rm."
       tags: [safety]
   - id: rule-b
@@ -197,7 +197,7 @@ contracts:
       args.command:
         contains: "rf"
     then:
-      effect: deny
+      action: block
       message: "Rule B denies rf."
       tags: [safety]
 """
@@ -215,9 +215,9 @@ class TestEvaluate:
         guard = Edictum.from_yaml(_write_yaml(BASIC_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("send_email", {"to": "x"})
 
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
         assert result.contracts_evaluated == 0
-        assert result.contracts == []
+        assert result.rules == []
         assert result.deny_reasons == []
         assert result.warn_reasons == []
 
@@ -225,18 +225,18 @@ class TestEvaluate:
         guard = Edictum.from_yaml(_write_yaml(BASIC_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("read_file", {"path": "/app/.env"})
 
-        assert result.verdict == "deny"
+        assert result.decision == "block"
         assert len(result.deny_reasons) == 1
         assert "Sensitive file" in result.deny_reasons[0]
-        assert result.contracts[0].contract_id == "block-env-reads"
-        assert result.contracts[0].contract_type == "precondition"
-        assert result.contracts[0].passed is False
+        assert result.rules[0].rule_id == "block-env-reads"
+        assert result.rules[0].contract_type == "precondition"
+        assert result.rules[0].passed is False
 
     def test_precondition_passes(self):
         guard = Edictum.from_yaml(_write_yaml(BASIC_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("read_file", {"path": "README.md"})
 
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
         assert result.deny_reasons == []
 
     def test_exhaustive_evaluation(self):
@@ -244,37 +244,37 @@ class TestEvaluate:
         result = guard.evaluate("bash", {"command": "rm -rf /"})
 
         assert result.contracts_evaluated == 2
-        assert result.contracts[0].passed is False
-        assert result.contracts[1].passed is False
+        assert result.rules[0].passed is False
+        assert result.rules[1].passed is False
         assert len(result.deny_reasons) == 2
 
     def test_postcondition_warns_with_output(self):
         guard = Edictum.from_yaml(_write_yaml(POST_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("read_file", {"path": "x"}, output="SSN: 123-45-6789")
 
-        assert result.verdict == "warn"
+        assert result.decision == "warn"
         assert len(result.warn_reasons) >= 1
-        assert result.contracts[0].contract_type == "postcondition"
-        assert result.contracts[0].passed is False
+        assert result.rules[0].contract_type == "postcondition"
+        assert result.rules[0].passed is False
 
     def test_postcondition_skipped_without_output(self):
         guard = Edictum.from_yaml(_write_yaml(POST_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("read_file", {"path": "x"})
 
         assert result.contracts_evaluated == 0
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
     def test_output_no_postconditions(self):
         guard = Edictum.from_yaml(_write_yaml(BASIC_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("read_file", {"path": "x"}, output="safe text")
 
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
     def test_mixed_deny_and_warn(self):
         guard = Edictum.from_yaml(_write_yaml(MIXED_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("read_file", {"path": ".env"}, output="SSN: 123-45-6789")
 
-        assert result.verdict == "deny"
+        assert result.decision == "block"
         assert len(result.deny_reasons) >= 1
         assert len(result.warn_reasons) >= 1
 
@@ -282,16 +282,16 @@ class TestEvaluate:
         guard = Edictum.from_yaml(_write_yaml(BASIC_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("read_file", {})
 
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
         assert result.policy_error is False
 
     def test_principal_based_rule_denied(self):
         guard = Edictum.from_yaml(_write_yaml(PRINCIPAL_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("deploy_service", {"service": "api"})
 
-        assert result.verdict == "deny"
+        assert result.decision == "block"
         assert len(result.deny_reasons) >= 1
-        assert result.contracts[0].contract_id == "require-ticket"
+        assert result.rules[0].rule_id == "require-ticket"
 
     def test_principal_based_rule_allowed(self):
         guard = Edictum.from_yaml(_write_yaml(PRINCIPAL_BUNDLE), audit_sink=_NullSink())
@@ -301,47 +301,47 @@ class TestEvaluate:
             principal=Principal(ticket_ref="JIRA-1"),
         )
 
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
     def test_observe_mode_rule(self):
         guard = Edictum.from_yaml(_write_yaml(OBSERVE_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("bash", {"command": "rm file"})
 
-        assert result.verdict == "allow"
-        assert len(result.contracts) == 1
-        assert result.contracts[0].observed is True
-        assert result.contracts[0].passed is False
+        assert result.decision == "allow"
+        assert len(result.rules) == 1
+        assert result.rules[0].observed is True
+        assert result.rules[0].passed is False
 
     def test_observe_mode_postcondition(self):
         guard = Edictum.from_yaml(_write_yaml(OBSERVE_POST_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("read_file", {"path": "x"}, output="SSN: 123-45-6789")
 
-        assert result.verdict == "allow"
-        assert len(result.contracts) == 1
-        assert result.contracts[0].observed is True
-        assert result.contracts[0].passed is False
-        assert result.contracts[0].contract_type == "postcondition"
+        assert result.decision == "allow"
+        assert len(result.rules) == 1
+        assert result.rules[0].observed is True
+        assert result.rules[0].passed is False
+        assert result.rules[0].contract_type == "postcondition"
         assert len(result.warn_reasons) == 0
 
     def test_contract_exception(self):
         @precondition("*")
-        def broken_contract(envelope):
+        def broken_contract(tool_call):
             raise RuntimeError("boom")
 
-        guard = Edictum(contracts=[broken_contract], audit_sink=_NullSink())
+        guard = Edictum(rules=[broken_contract], audit_sink=_NullSink())
         result = guard.evaluate("any_tool", {"x": 1})
 
         assert result.policy_error is True
-        assert result.verdict == "deny"
-        assert result.contracts[0].policy_error is True
-        assert result.contracts[0].passed is False
-        assert "boom" in result.contracts[0].message
+        assert result.decision == "block"
+        assert result.rules[0].policy_error is True
+        assert result.rules[0].passed is False
+        assert "boom" in result.rules[0].message
 
     def test_environment_override(self):
         guard = Edictum.from_yaml(_write_yaml(BASIC_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("read_file", {"path": "README.md"}, environment="staging")
 
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
         assert isinstance(result, EvaluationResult)
 
     def test_frozen_results(self):
@@ -349,14 +349,14 @@ class TestEvaluate:
         result = guard.evaluate("read_file", {"path": "/app/.env"})
 
         with pytest.raises(FrozenInstanceError):
-            result.verdict = "x"
+            result.decision = "x"
 
     def test_result_type(self):
         guard = Edictum.from_yaml(_write_yaml(BASIC_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("read_file", {"path": "README.md"})
 
         assert isinstance(result, EvaluationResult)
-        assert isinstance(result.contracts, list)
+        assert isinstance(result.rules, list)
         assert isinstance(result.deny_reasons, list)
         assert isinstance(result.warn_reasons, list)
         assert isinstance(result.contracts_evaluated, int)
@@ -366,49 +366,49 @@ class TestEvaluate:
         guard = Edictum.from_yaml(_write_yaml(BASIC_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("read_file", {"path": "/app/.env"})
 
-        assert result.contracts[0].tags == ["secrets"]
+        assert result.rules[0].tags == ["secrets"]
 
     def test_bash_regex_match(self):
         guard = Edictum.from_yaml(_write_yaml(BASIC_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("bash", {"command": "rm -rf /tmp"})
 
-        assert result.verdict == "deny"
-        assert result.contracts[0].contract_id == "bash-safety"
+        assert result.decision == "block"
+        assert result.rules[0].rule_id == "bash-safety"
         assert "Destructive command" in result.deny_reasons[0]
 
     def test_bash_regex_no_match(self):
         guard = Edictum.from_yaml(_write_yaml(BASIC_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("bash", {"command": "ls -la"})
 
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
     def test_yaml_precondition_e2e(self):
         guard = Edictum.from_yaml(_write_yaml(BASIC_BUNDLE), audit_sink=_NullSink())
 
         allow_result = guard.evaluate("read_file", {"path": "safe.txt"})
-        assert allow_result.verdict == "allow"
+        assert allow_result.decision == "allow"
         assert allow_result.contracts_evaluated == 1
-        assert allow_result.contracts[0].passed is True
+        assert allow_result.rules[0].passed is True
 
         deny_result = guard.evaluate("read_file", {"path": "config/.secret"})
-        assert deny_result.verdict == "deny"
+        assert deny_result.decision == "block"
         assert deny_result.contracts_evaluated == 1
-        assert deny_result.contracts[0].contract_id == "block-env-reads"
-        assert deny_result.contracts[0].tags == ["secrets"]
+        assert deny_result.rules[0].rule_id == "block-env-reads"
+        assert deny_result.rules[0].tags == ["secrets"]
 
     def test_yaml_postcondition_e2e(self):
         guard = Edictum.from_yaml(_write_yaml(POST_BUNDLE), audit_sink=_NullSink())
 
         clean = guard.evaluate("search", {"q": "test"}, output="No results found.")
-        assert clean.verdict == "allow"
+        assert clean.decision == "allow"
         assert clean.contracts_evaluated == 1
-        assert clean.contracts[0].passed is True
+        assert clean.rules[0].passed is True
 
         flagged = guard.evaluate("search", {"q": "test"}, output="Found SSN: 999-88-7777 in record.")
-        assert flagged.verdict == "warn"
+        assert flagged.decision == "warn"
         assert flagged.contracts_evaluated == 1
         assert "PII" in flagged.warn_reasons[0]
-        assert flagged.contracts[0].tags == ["pii"]
+        assert flagged.rules[0].tags == ["pii"]
 
 
 class TestEvaluateBatch:
@@ -440,7 +440,7 @@ class TestEvaluateBatch:
         )
 
         assert len(results) == 1
-        assert results[0].verdict == "allow"
+        assert results[0].decision == "allow"
 
     def test_batch_output_dict_serialized(self):
         guard = Edictum.from_yaml(_write_yaml(POST_BUNDLE), audit_sink=_NullSink())
@@ -474,22 +474,22 @@ class TestEvaluateBatch:
         )
 
         assert len(results) == 2
-        assert results[0].verdict == "deny"
-        assert results[1].verdict == "allow"
+        assert results[0].decision == "block"
+        assert results[1].decision == "allow"
 
 
 # ---------------------------------------------------------------------------
-# Tests: ContractResult.effect for postconditions
+# Tests: RuleResult.action for postconditions
 # ---------------------------------------------------------------------------
 
 REDACT_EFFECT_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
-  name: test-effect
+  name: test-action
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: redact-secrets
     type: post
     tool: "*"
@@ -497,57 +497,57 @@ contracts:
       output.text:
         matches_any: ['sk-prod-[a-z0-9]{8}']
     then:
-      effect: redact
+      action: redact
       message: "Secrets found."
       tags: [secrets]
 """
 
 DENY_EFFECT_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
-  name: test-deny-effect
+  name: test-block-action
 defaults:
   mode: enforce
-contracts:
-  - id: deny-ferpa
+rules:
+  - id: block-ferpa
     type: post
     tool: "*"
     when:
       output.text:
         matches: '\\b(IEP|accommodation)\\b'
     then:
-      effect: deny
+      action: block
       message: "FERPA violation."
       tags: [ferpa]
 """
 
 
-class TestContractResultEffect:
-    """Tests that ContractResult.effect is populated for postconditions."""
+class TestRuleResultEffect:
+    """Tests that RuleResult.action is populated for postconditions."""
 
     def test_effect_redact_in_contract_result(self):
         guard = Edictum.from_yaml(_write_yaml(REDACT_EFFECT_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("search", {"q": "x"}, output="key: sk-prod-abcd1234")
 
-        assert len(result.contracts) == 1
-        assert result.contracts[0].effect == "redact"
-        assert result.contracts[0].contract_type == "postcondition"
-        assert result.contracts[0].passed is False
+        assert len(result.rules) == 1
+        assert result.rules[0].action == "redact"
+        assert result.rules[0].contract_type == "postcondition"
+        assert result.rules[0].passed is False
 
     def test_effect_deny_in_contract_result(self):
         guard = Edictum.from_yaml(_write_yaml(DENY_EFFECT_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("search", {"q": "x"}, output="Student has an IEP")
 
-        assert len(result.contracts) == 1
-        assert result.contracts[0].effect == "deny"
-        assert result.contracts[0].contract_type == "postcondition"
-        assert result.contracts[0].passed is False
+        assert len(result.rules) == 1
+        assert result.rules[0].action == "block"
+        assert result.rules[0].contract_type == "postcondition"
+        assert result.rules[0].passed is False
 
     def test_effect_warn_default_in_contract_result(self):
         guard = Edictum.from_yaml(_write_yaml(POST_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("search", {"q": "x"}, output="SSN: 123-45-6789")
 
-        assert len(result.contracts) == 1
-        assert result.contracts[0].effect == "warn"
-        assert result.contracts[0].contract_type == "postcondition"
+        assert len(result.rules) == 1
+        assert result.rules[0].action == "warn"
+        assert result.rules[0].contract_type == "postcondition"

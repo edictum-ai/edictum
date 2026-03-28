@@ -1,13 +1,13 @@
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
-  name: bad-effect
+  name: bad-action
 
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: bad-post
     type: post
     tool: "*"
@@ -15,5 +15,5 @@ contracts:
       output.text:
         contains: "secret"
     then:
-      effect: explode
-      message: "This should fail — explode is not a valid effect."
+      action: explode
+      message: "This should fail — explode is not a valid action."

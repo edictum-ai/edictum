@@ -1,6 +1,6 @@
 """Behavior tests for the approval_backend parameter on Edictum.
 
-Each test proves an observable effect of the approval_backend parameter:
+Each test proves an observable action of the approval_backend parameter:
 - When None (default), no approval backend is stored
 - When provided, it's stored and accessible
 - from_yaml(), from_yaml_string(), from_template() accept the parameter
@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from edictum import Edictum, EdictumDenied, Verdict, precondition
+from edictum import Edictum, EdictumDenied, Decision, precondition
 from edictum.approval import (
     ApprovalBackend,
     ApprovalDecision,
@@ -28,12 +28,12 @@ from tests.conftest import NullAuditSink
 
 MINIMAL_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-bundle
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: noop
     type: pre
     tool: "__noop__"
@@ -41,7 +41,7 @@ contracts:
       tool_name:
         equals: "__never_matches__"
     then:
-      effect: deny
+      action: block
       message: "noop"
 """
 
@@ -96,7 +96,7 @@ class TestApprovalBackendFromYamlFile:
     """from_yaml() passes approval_backend through to the constructor."""
 
     def test_from_yaml_with_backend(self, tmp_path):
-        yaml_file = tmp_path / "contracts.yaml"
+        yaml_file = tmp_path / "rules.yaml"
         yaml_file.write_text(MINIMAL_YAML)
 
         backend = LocalApprovalBackend()
@@ -147,16 +147,16 @@ class TestApprovalBackendFromMultiple:
 # ---------------------------------------------------------------------------
 
 
-def _make_approval_contract(timeout_effect: str = "deny"):
-    """Create a precondition with effect=approve and given timeout_effect."""
+def _make_approval_contract(timeout_action: str = "block"):
+    """Create a precondition with action=ask and given timeout_action."""
 
     @precondition("*")
-    def requires_approval(envelope):
-        return Verdict.fail("Requires human approval")
+    def requires_approval(tool_call):
+        return Decision.fail("Requires human approval")
 
-    requires_approval._edictum_effect = "approve"
+    requires_approval._edictum_effect = "ask"
     requires_approval._edictum_timeout = 60
-    requires_approval._edictum_timeout_effect = timeout_effect
+    requires_approval._edictum_timeout_action = timeout_action
     return requires_approval
 
 
@@ -182,14 +182,14 @@ class TestApprovalTimeoutAuditAccuracy:
 
     @pytest.mark.asyncio
     async def test_timeout_with_allow_emits_timeout_not_granted(self):
-        """When timeout_effect=allow and timeout occurs, audit says TIMEOUT not GRANTED."""
+        """When timeout_action=allow and timeout occurs, audit says TIMEOUT not GRANTED."""
         sink = NullAuditSink()
         decision = ApprovalDecision(approved=True, status=ApprovalStatus.TIMEOUT)
         approval = _make_mock_approval_backend(decision)
 
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_contract(timeout_effect="allow")],
+            rules=[_make_approval_contract(timeout_action="allow")],
             audit_sink=sink,
             backend=MemoryBackend(),
             approval_backend=approval,
@@ -203,14 +203,14 @@ class TestApprovalTimeoutAuditAccuracy:
 
     @pytest.mark.asyncio
     async def test_timeout_with_deny_emits_timeout(self):
-        """When timeout_effect=deny and timeout occurs, audit says TIMEOUT and call is denied."""
+        """When timeout_action=block and timeout occurs, audit says TIMEOUT and call is denied."""
         sink = NullAuditSink()
         decision = ApprovalDecision(approved=False, status=ApprovalStatus.TIMEOUT)
         approval = _make_mock_approval_backend(decision)
 
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_contract(timeout_effect="deny")],
+            rules=[_make_approval_contract(timeout_action="block")],
             audit_sink=sink,
             backend=MemoryBackend(),
             approval_backend=approval,
@@ -231,7 +231,7 @@ class TestApprovalTimeoutAuditAccuracy:
 
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_contract(timeout_effect="allow")],
+            rules=[_make_approval_contract(timeout_action="allow")],
             audit_sink=sink,
             backend=MemoryBackend(),
             approval_backend=approval,
@@ -252,7 +252,7 @@ class TestApprovalTimeoutAuditAccuracy:
 
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_contract(timeout_effect="deny")],
+            rules=[_make_approval_contract(timeout_action="block")],
             audit_sink=sink,
             backend=MemoryBackend(),
             approval_backend=approval,

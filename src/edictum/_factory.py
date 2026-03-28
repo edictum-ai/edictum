@@ -18,7 +18,7 @@ from edictum.storage import StorageBackend
 if TYPE_CHECKING:
     from edictum._guard import Edictum
     from edictum.approval import ApprovalBackend
-    from edictum.envelope import ToolEnvelope
+    from edictum.envelope import ToolCall
     from edictum.yaml_engine.composer import CompositionReport
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class TemplateInfo:
-    """Metadata about a discovered contract template."""
+    """Metadata about a discovered rule template."""
 
     name: str
     path: Path
@@ -52,14 +52,14 @@ def _build_guard_from_compiled(
     redaction: RedactionPolicy | None,
     backend: StorageBackend | None,
     environment: str,
-    on_deny: Callable[[ToolEnvelope, str, str | None], None] | None,
-    on_allow: Callable[[ToolEnvelope], None] | None,
+    on_deny: Callable[[ToolCall, str, str | None], None] | None,
+    on_allow: Callable[[ToolCall], None] | None,
     success_check: Callable[[str, Any], bool] | None,
     principal: Principal | None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None,
     approval_backend: ApprovalBackend | None,
 ) -> Edictum:
-    """Shared guard construction from compiled contracts and bundle data."""
+    """Shared guard construction from compiled rules and bundle data."""
     # Handle observability config
     obs_config = bundle_data.get("observability", {})
     otel_config = obs_config.get("otel", {})
@@ -97,7 +97,7 @@ def _build_guard_from_compiled(
         mode=effective_mode,
         limits=compiled.limits,
         tools=merged_tools if merged_tools else None,
-        contracts=all_contracts,
+        rules=all_contracts,
         audit_sink=audit_sink,
         redaction=redaction,
         backend=backend,
@@ -121,29 +121,29 @@ def _from_yaml(
     backend: StorageBackend | None = None,
     environment: str = "production",
     return_report: bool = False,
-    on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-    on_allow: Callable[[ToolEnvelope], None] | None = None,
+    on_deny: Callable[[ToolCall, str, str | None], None] | None = None,
+    on_allow: Callable[[ToolCall], None] | None = None,
     custom_operators: dict[str, Callable[[Any, Any], bool]] | None = None,
-    custom_selectors: dict[str, Callable[[ToolEnvelope], dict[str, Any]]] | None = None,
+    custom_selectors: dict[str, Callable[[ToolCall], dict[str, Any]]] | None = None,
     success_check: Callable[[str, Any], bool] | None = None,
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
     approval_backend: ApprovalBackend | None = None,
 ) -> Edictum | tuple[Edictum, CompositionReport]:
-    """Create an Edictum instance from one or more YAML contract bundles.
+    """Create an Edictum instance from one or more YAML rule bundles.
 
     Args:
-        *paths: One or more paths to YAML contract files. When multiple
+        *paths: One or more paths to YAML rule files. When multiple
             paths are given, bundles are composed left-to-right (later
             layers override earlier ones).
-        tools: Tool side-effect classifications. Merged with any ``tools:``
+        tools: Tool side-action classifications. Merged with any ``tools:``
             section in the YAML bundle (parameter wins on conflict).
         mode: Override the bundle's default mode (enforce/observe).
         audit_sink: Custom audit sink, or a list of sinks (auto-wrapped
             in CompositeSink).
         redaction: Custom redaction policy.
         backend: Custom storage backend.
-        environment: Environment name for envelope context.
+        environment: Environment name for tool_call context.
         return_report: If True, return ``(guard, CompositionReport)``
             instead of just the guard.
         custom_operators: Mapping of operator names to callables.
@@ -223,10 +223,10 @@ def _from_yaml_string(
     redaction: RedactionPolicy | None = None,
     backend: StorageBackend | None = None,
     environment: str = "production",
-    on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-    on_allow: Callable[[ToolEnvelope], None] | None = None,
+    on_deny: Callable[[ToolCall, str, str | None], None] | None = None,
+    on_allow: Callable[[ToolCall], None] | None = None,
     custom_operators: dict[str, Callable[[Any, Any], bool]] | None = None,
-    custom_selectors: dict[str, Callable[[ToolEnvelope], dict[str, Any]]] | None = None,
+    custom_selectors: dict[str, Callable[[ToolCall], dict[str, Any]]] | None = None,
     success_check: Callable[[str, Any], bool] | None = None,
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
@@ -284,10 +284,10 @@ def _from_template(
     redaction: RedactionPolicy | None = None,
     backend: StorageBackend | None = None,
     environment: str = "production",
-    on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-    on_allow: Callable[[ToolEnvelope], None] | None = None,
+    on_deny: Callable[[ToolCall, str, str | None], None] | None = None,
+    on_allow: Callable[[ToolCall], None] | None = None,
     custom_operators: dict[str, Callable[[Any, Any], bool]] | None = None,
-    custom_selectors: dict[str, Callable[[ToolEnvelope], dict[str, Any]]] | None = None,
+    custom_selectors: dict[str, Callable[[ToolCall], dict[str, Any]]] | None = None,
     success_check: Callable[[str, Any], bool] | None = None,
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
@@ -337,7 +337,7 @@ def _list_templates(
     cls: type[Edictum],
     template_dirs: list[str | Path] | None = None,
 ) -> list[TemplateInfo]:
-    """Discover available contract templates.
+    """Discover available rule templates.
 
     Returns templates from user-provided directories and built-in
     templates. When a user template has the same name as a built-in,
@@ -369,11 +369,11 @@ def _list_templates(
 def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
     """Create a new Edictum instance by merging multiple guards.
 
-    Concatenates preconditions, postconditions, and session contracts
+    Concatenates preconditions, postconditions, and session rules
     from all guards in order.  The first guard's audit config, mode,
     environment, and limits are used as the base.
 
-    Duplicate contract IDs are detected: first occurrence wins and
+    Duplicate rule IDs are detected: first occurrence wins and
     a warning is logged for each duplicate.
 
     Raises:
@@ -418,14 +418,14 @@ def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
             *((a, seen_regular_ids) for a in regular_attrs),
             *((a, seen_observe_ids) for a in observe_attrs),
         ):
-            for contract in getattr(guard._state, attr):
-                cid = getattr(contract, "_edictum_id", None)
+            for rule in getattr(guard._state, attr):
+                cid = getattr(rule, "_edictum_id", None)
                 if cid and cid in seen:
-                    logger.warning("Duplicate contract id '%s' in from_multiple() — first wins", cid)
+                    logger.warning("Duplicate rule id '%s' in from_multiple() — first wins", cid)
                     continue
                 if cid:
                     seen.add(cid)
-                collected[attr].append(contract)
+                collected[attr].append(rule)
 
     merged._state = _CompiledState(
         preconditions=tuple(collected["preconditions"]),

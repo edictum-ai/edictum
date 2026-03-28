@@ -38,4 +38,4 @@ class TestHookDecision:
 class TestHookResult:
     def test_values(self):
         assert HookResult.ALLOW.value == "allow"
-        assert HookResult.DENY.value == "deny"
+        assert HookResult.DENY.value == "block"

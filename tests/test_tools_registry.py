@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from edictum import Edictum, EdictumConfigError, GovernancePipeline, SideEffect, create_envelope
+from edictum import Edictum, EdictumConfigError, CheckPipeline, SideEffect, create_envelope
 from edictum.envelope import BashClassifier, ToolRegistry
 from edictum.pipeline import PostDecision
 
@@ -36,9 +36,9 @@ def _make_envelope(tool_name: str = "search", side_effect: SideEffect = SideEffe
     return create_envelope(tool_name=tool_name, tool_input={}, registry=registry)
 
 
-async def _post_execute(guard: Edictum, envelope, tool_response: str) -> PostDecision:
-    pipeline = GovernancePipeline(guard)
-    return await pipeline.post_execute(envelope, tool_response, True)
+async def _post_execute(guard: Edictum, tool_call, tool_response: str) -> PostDecision:
+    pipeline = CheckPipeline(guard)
+    return await pipeline.post_execute(tool_call, tool_response, True)
 
 
 # ---------------------------------------------------------------------------
@@ -66,13 +66,13 @@ class TestSchemaValidation:
     def test_tools_invalid_structure_rejected(self):
         yaml_content = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: bad-tools-structure
 defaults:
   mode: enforce
 tools: "not-an-object"
-contracts:
+rules:
   - id: placeholder
     type: pre
     tool: "*"
@@ -80,7 +80,7 @@ contracts:
       args.path:
         exists: true
     then:
-      effect: deny
+      action: block
       message: "Denied."
 """
         with pytest.raises(EdictumConfigError):
@@ -89,13 +89,13 @@ contracts:
     def test_tools_empty_object_allowed(self):
         yaml_content = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: empty-tools
 defaults:
   mode: enforce
 tools: {}
-contracts:
+rules:
   - id: placeholder
     type: pre
     tool: "*"
@@ -103,7 +103,7 @@ contracts:
       args.path:
         exists: true
     then:
-      effect: deny
+      action: block
       message: "Denied."
 """
         guard = Edictum.from_yaml(_write_yaml(yaml_content), audit_sink=_NullSink())
@@ -196,7 +196,7 @@ class TestFromYamlRegistry:
 
 REDACT_WITH_TOOLS = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: e2e-redact-tools
 defaults:
@@ -204,7 +204,7 @@ defaults:
 tools:
   read_config:
     side_effect: read
-contracts:
+rules:
   - id: redact-secrets
     type: post
     tool: "*"
@@ -212,61 +212,61 @@ contracts:
       output.text:
         matches: 'sk-[a-zA-Z0-9]{10,}'
     then:
-      effect: redact
+      action: redact
       message: "API key detected."
 """
 
 DENY_WITH_TOOLS = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
-  name: e2e-deny-tools
+  name: e2e-block-tools
 defaults:
   mode: enforce
 tools:
   search_db:
     side_effect: pure
-contracts:
-  - id: deny-pii
+rules:
+  - id: block-pii
     type: post
     tool: "*"
     when:
       output.text:
         matches: '\\b\\d{3}-\\d{2}-\\d{4}\\b'
     then:
-      effect: deny
+      action: block
       message: "PII detected — suppressing output."
 """
 
 
 class TestE2EToolsAndEffects:
-    """The key tests: YAML tools enable postcondition redact/deny."""
+    """The key tests: YAML tools enable postcondition redact/block."""
 
     @pytest.mark.asyncio
     async def test_yaml_tools_read_enables_redact(self):
         guard = Edictum.from_yaml(_write_yaml(REDACT_WITH_TOOLS), audit_sink=_NullSink())
-        envelope = create_envelope(
+        tool_call = create_envelope(
             tool_name="read_config",
             tool_input={},
             registry=guard.tool_registry,
         )
-        assert envelope.side_effect == SideEffect.READ
+        assert tool_call.side_effect == SideEffect.READ
 
-        post = await _post_execute(guard, envelope, "key: sk-liveABC12345xyz")
+        post = await _post_execute(guard, tool_call, "key: sk-liveABC12345xyz")
         assert post.redacted_response is not None
         assert "sk-liveABC12345xyz" not in post.redacted_response
 
     @pytest.mark.asyncio
     async def test_yaml_tools_pure_enables_deny(self):
         guard = Edictum.from_yaml(_write_yaml(DENY_WITH_TOOLS), audit_sink=_NullSink())
-        envelope = create_envelope(
+        tool_call = create_envelope(
             tool_name="search_db",
             tool_input={},
             registry=guard.tool_registry,
         )
-        assert envelope.side_effect == SideEffect.PURE
+        assert tool_call.side_effect == SideEffect.PURE
 
-        post = await _post_execute(guard, envelope, "SSN: 123-45-6789")
+        post = await _post_execute(guard, tool_call, "SSN: 123-45-6789")
         assert post.redacted_response is not None
         assert "[OUTPUT SUPPRESSED]" in post.redacted_response
 
@@ -275,7 +275,7 @@ class TestE2EToolsAndEffects:
         """Write side_effect should cause redact to fall back to warn."""
         yaml_content = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: write-fallback
 defaults:
@@ -283,7 +283,7 @@ defaults:
 tools:
   update_record:
     side_effect: write
-contracts:
+rules:
   - id: redact-secrets
     type: post
     tool: "*"
@@ -291,18 +291,18 @@ contracts:
       output.text:
         matches: 'sk-[a-zA-Z0-9]{10,}'
     then:
-      effect: redact
+      action: redact
       message: "API key detected."
 """
         guard = Edictum.from_yaml(_write_yaml(yaml_content), audit_sink=_NullSink())
-        envelope = create_envelope(
+        tool_call = create_envelope(
             tool_name="update_record",
             tool_input={},
             registry=guard.tool_registry,
         )
-        assert envelope.side_effect == SideEffect.WRITE
+        assert tool_call.side_effect == SideEffect.WRITE
 
-        post = await _post_execute(guard, envelope, "key: sk-liveABC12345xyz")
+        post = await _post_execute(guard, tool_call, "key: sk-liveABC12345xyz")
         # Falls back to warn — no redaction applied
         assert post.redacted_response is None
         assert not post.postconditions_passed
@@ -312,12 +312,12 @@ contracts:
         """Without tools section, unregistered tool defaults to IRREVERSIBLE → warn."""
         yaml_content = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: no-tools
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: redact-secrets
     type: post
     tool: "*"
@@ -325,18 +325,18 @@ contracts:
       output.text:
         matches: 'sk-[a-zA-Z0-9]{10,}'
     then:
-      effect: redact
+      action: redact
       message: "API key detected."
 """
         guard = Edictum.from_yaml(_write_yaml(yaml_content), audit_sink=_NullSink())
-        envelope = create_envelope(
+        tool_call = create_envelope(
             tool_name="some_tool",
             tool_input={},
             registry=guard.tool_registry,
         )
-        assert envelope.side_effect == SideEffect.IRREVERSIBLE
+        assert tool_call.side_effect == SideEffect.IRREVERSIBLE
 
-        post = await _post_execute(guard, envelope, "key: sk-liveABC12345xyz")
+        post = await _post_execute(guard, tool_call, "key: sk-liveABC12345xyz")
         # Falls back to warn — no redaction
         assert post.redacted_response is None
         assert not post.postconditions_passed
@@ -365,12 +365,12 @@ class TestRunIntegration:
         """Without tools section, redact falls back — original result returned."""
         yaml_content = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: no-tools-run
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: redact-secrets
     type: post
     tool: "*"
@@ -378,7 +378,7 @@ contracts:
       output.text:
         matches: 'sk-[a-zA-Z0-9]{10,}'
     then:
-      effect: redact
+      action: redact
       message: "API key detected."
 """
         guard = Edictum.from_yaml(_write_yaml(yaml_content), audit_sink=_NullSink())
@@ -403,12 +403,12 @@ class TestPostRegister:
     async def test_post_register_after_from_yaml_enables_redact(self):
         yaml_content = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: post-register
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: redact-secrets
     type: post
     tool: "*"
@@ -416,7 +416,7 @@ contracts:
       output.text:
         matches: 'sk-[a-zA-Z0-9]{10,}'
     then:
-      effect: redact
+      action: redact
       message: "API key detected."
 """
         guard = Edictum.from_yaml(_write_yaml(yaml_content), audit_sink=_NullSink())
@@ -424,14 +424,14 @@ contracts:
         # Register after construction
         guard.tool_registry.register("my_reader", side_effect=SideEffect.READ)
 
-        envelope = create_envelope(
+        tool_call = create_envelope(
             tool_name="my_reader",
             tool_input={},
             registry=guard.tool_registry,
         )
-        assert envelope.side_effect == SideEffect.READ
+        assert tool_call.side_effect == SideEffect.READ
 
-        post = await _post_execute(guard, envelope, "key: sk-liveABC12345xyz")
+        post = await _post_execute(guard, tool_call, "key: sk-liveABC12345xyz")
         assert post.redacted_response is not None
         assert "sk-liveABC12345xyz" not in post.redacted_response
 
@@ -449,7 +449,7 @@ class TestEdgeCases:
         """BashClassifier still applies for bash tools regardless of YAML registry."""
         yaml_content = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: bash-override
 defaults:
@@ -457,7 +457,7 @@ defaults:
 tools:
   bash:
     side_effect: read
-contracts:
+rules:
   - id: redact-secrets
     type: post
     tool: "*"
@@ -465,7 +465,7 @@ contracts:
       output.text:
         matches: 'sk-[a-zA-Z0-9]{10,}'
     then:
-      effect: redact
+      action: redact
       message: "API key detected."
 """
         guard = Edictum.from_yaml(_write_yaml(yaml_content), audit_sink=_NullSink())
@@ -479,19 +479,19 @@ contracts:
 
     @pytest.mark.asyncio
     async def test_wildcard_contract_specific_tool_registry(self):
-        """tool: '*' contract works with specific tool in registry."""
+        """tool: '*' rule works with specific tool in registry."""
         guard = Edictum.from_yaml(
             FIXTURES / "valid_tools_and_redact.yaml",
             audit_sink=_NullSink(),
         )
 
         # read_config is registered as 'read' → redact works
-        envelope = create_envelope(
+        tool_call = create_envelope(
             tool_name="read_config",
             tool_input={},
             registry=guard.tool_registry,
         )
-        post = await _post_execute(guard, envelope, "found: sk-liveABCDEFGHIJ")
+        post = await _post_execute(guard, tool_call, "found: sk-liveABCDEFGHIJ")
         assert post.redacted_response is not None
         assert "sk-liveABCDEFGHIJ" not in post.redacted_response
 

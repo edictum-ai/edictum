@@ -1,4 +1,4 @@
-"""Condition Evaluator — resolve selectors and apply operators against ToolEnvelope."""
+"""Condition Evaluator — resolve selectors and apply operators against ToolCall."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 import re
 from typing import Any
 
-from edictum.envelope import ToolEnvelope
+from edictum.envelope import ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -24,29 +24,29 @@ BUILTIN_SELECTOR_PREFIXES: frozenset[str] = frozenset(
 
 def evaluate_expression(
     expr: dict,
-    envelope: ToolEnvelope,
+    tool_call: ToolCall,
     output_text: str | None = None,
     *,
     custom_operators: dict[str, Any] | None = None,
     custom_selectors: dict[str, Any] | None = None,
 ) -> bool | _PolicyError:
-    """Evaluate a boolean expression tree against an envelope.
+    """Evaluate a boolean expression tree against an tool_call.
 
     Returns True if the expression matches, False if it does not.
     Returns a _PolicyError instance if a type mismatch or evaluation
-    error occurs (caller should treat as deny/warn + policy_error).
+    error occurs (caller should treat as block/warn + policy_error).
 
-    Missing fields always evaluate to False (contract doesn't fire).
+    Missing fields always evaluate to False (rule doesn't fire).
     """
     if "all" in expr:
-        return _eval_all(expr["all"], envelope, output_text, custom_operators, custom_selectors)
+        return _eval_all(expr["all"], tool_call, output_text, custom_operators, custom_selectors)
     if "any" in expr:
-        return _eval_any(expr["any"], envelope, output_text, custom_operators, custom_selectors)
+        return _eval_any(expr["any"], tool_call, output_text, custom_operators, custom_selectors)
     if "not" in expr:
-        return _eval_not(expr["not"], envelope, output_text, custom_operators, custom_selectors)
+        return _eval_not(expr["not"], tool_call, output_text, custom_operators, custom_selectors)
 
     # Leaf node: exactly one selector key
-    return _eval_leaf(expr, envelope, output_text, custom_operators, custom_selectors)
+    return _eval_leaf(expr, tool_call, output_text, custom_operators, custom_selectors)
 
 
 class _PolicyError:
@@ -58,19 +58,19 @@ class _PolicyError:
         self.message = message
 
     def __bool__(self) -> bool:
-        return True  # Errors trigger the contract (fail-closed)
+        return True  # Errors trigger the rule (fail-closed)
 
 
 def _eval_all(
     exprs: list[dict],
-    envelope: ToolEnvelope,
+    tool_call: ToolCall,
     output_text: str | None,
     custom_operators: dict[str, Any] | None,
     custom_selectors: dict[str, Any] | None,
 ) -> bool | _PolicyError:
     for expr in exprs:
         result = evaluate_expression(
-            expr, envelope, output_text, custom_operators=custom_operators, custom_selectors=custom_selectors
+            expr, tool_call, output_text, custom_operators=custom_operators, custom_selectors=custom_selectors
         )
         if isinstance(result, _PolicyError):
             return result
@@ -81,14 +81,14 @@ def _eval_all(
 
 def _eval_any(
     exprs: list[dict],
-    envelope: ToolEnvelope,
+    tool_call: ToolCall,
     output_text: str | None,
     custom_operators: dict[str, Any] | None,
     custom_selectors: dict[str, Any] | None,
 ) -> bool | _PolicyError:
     for expr in exprs:
         result = evaluate_expression(
-            expr, envelope, output_text, custom_operators=custom_operators, custom_selectors=custom_selectors
+            expr, tool_call, output_text, custom_operators=custom_operators, custom_selectors=custom_selectors
         )
         if isinstance(result, _PolicyError):
             return result
@@ -99,13 +99,13 @@ def _eval_any(
 
 def _eval_not(
     expr: dict,
-    envelope: ToolEnvelope,
+    tool_call: ToolCall,
     output_text: str | None,
     custom_operators: dict[str, Any] | None,
     custom_selectors: dict[str, Any] | None,
 ) -> bool | _PolicyError:
     result = evaluate_expression(
-        expr, envelope, output_text, custom_operators=custom_operators, custom_selectors=custom_selectors
+        expr, tool_call, output_text, custom_operators=custom_operators, custom_selectors=custom_selectors
     )
     if isinstance(result, _PolicyError):
         return result
@@ -114,7 +114,7 @@ def _eval_not(
 
 def _eval_leaf(
     leaf: dict,
-    envelope: ToolEnvelope,
+    tool_call: ToolCall,
     output_text: str | None,
     custom_operators: dict[str, Any] | None,
     custom_selectors: dict[str, Any] | None,
@@ -124,7 +124,7 @@ def _eval_leaf(
     operator_block = leaf[selector]
 
     # Resolve the field value
-    value = _resolve_selector(selector, envelope, output_text, custom_selectors)
+    value = _resolve_selector(selector, tool_call, output_text, custom_selectors)
 
     # Apply the single operator
     op_name = next(iter(operator_block))
@@ -153,39 +153,39 @@ def _coerce_env_value(raw: str) -> str | bool | int | float:
 
 def _resolve_selector(
     selector: str,
-    envelope: ToolEnvelope,
+    tool_call: ToolCall,
     output_text: str | None,
     custom_selectors: dict[str, Any] | None = None,
 ) -> Any:
-    """Resolve a dotted selector path to a value from the envelope.
+    """Resolve a dotted selector path to a value from the tool_call.
 
     Returns _MISSING if the field is not found at any level.
     """
     if selector == "environment":
-        return envelope.environment
+        return tool_call.environment
 
     if selector == "tool.name":
-        return envelope.tool_name
+        return tool_call.tool_name
 
     if selector.startswith("args."):
-        return _resolve_nested(selector[5:], envelope.args)
+        return _resolve_nested(selector[5:], tool_call.args)
 
     if selector.startswith("principal."):
-        if envelope.principal is None:
+        if tool_call.principal is None:
             return _MISSING
         rest = selector[10:]
         if rest == "user_id":
-            return envelope.principal.user_id
+            return tool_call.principal.user_id
         if rest == "service_id":
-            return envelope.principal.service_id
+            return tool_call.principal.service_id
         if rest == "org_id":
-            return envelope.principal.org_id
+            return tool_call.principal.org_id
         if rest == "role":
-            return envelope.principal.role
+            return tool_call.principal.role
         if rest == "ticket_ref":
-            return envelope.principal.ticket_ref
+            return tool_call.principal.ticket_ref
         if rest.startswith("claims."):
-            return _resolve_nested(rest[7:], envelope.principal.claims)
+            return _resolve_nested(rest[7:], tool_call.principal.claims)
         return _MISSING
 
     if selector == "output.text":
@@ -203,7 +203,7 @@ def _resolve_selector(
         return _coerce_env_value(raw)
 
     if selector.startswith("metadata."):
-        return _resolve_nested(selector[9:], envelope.metadata)
+        return _resolve_nested(selector[9:], tool_call.metadata)
 
     # Custom selectors: match prefix before first dot
     if custom_selectors:
@@ -212,7 +212,7 @@ def _resolve_selector(
             prefix = selector[:dot_pos]
             if prefix in custom_selectors:
                 resolver = custom_selectors[prefix]
-                data = resolver(envelope)
+                data = resolver(tool_call)
                 rest = selector[dot_pos + 1 :]
                 return _resolve_nested(rest, data)
 

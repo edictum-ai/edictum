@@ -1,5 +1,5 @@
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: file-agent
@@ -8,7 +8,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: block-sensitive-reads
     type: pre
     tool: read_file
@@ -16,7 +16,7 @@ contracts:
       args.path:
         contains_any: [".env", ".secret", "kubeconfig", "credentials", ".pem", "id_rsa"]
     then:
-      effect: deny
+      action: block
       message: "Sensitive file '{args.path}' denied."
       tags: [secrets, dlp]
 
@@ -29,7 +29,7 @@ contracts:
         - args.command: { matches: '\\bmkfs\\b' }
         - args.command: { contains: '> /dev/' }
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied: '{args.command}'."
       tags: [destructive, safety]
 
@@ -40,6 +40,6 @@ contracts:
       args.path:
         starts_with: /
     then:
-      effect: deny
+      action: block
       message: "Write to absolute path '{args.path}' denied. Use relative paths."
       tags: [write-scope]

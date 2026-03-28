@@ -31,21 +31,21 @@ from edictum.audit import (
     StdoutAuditSink,
 )
 from edictum.builtins import deny_sensitive_reads
-from edictum.contracts import Verdict, postcondition, precondition, session_contract
+from edictum.rules import Decision, postcondition, precondition, session_contract
 from edictum.envelope import (
     BashClassifier,
     Principal,
     SideEffect,
-    ToolEnvelope,
+    ToolCall,
     ToolRegistry,
     create_envelope,
 )
-from edictum.evaluation import ContractResult, EvaluationResult
+from edictum.evaluation import RuleResult, EvaluationResult
 from edictum.findings import Finding, PostCallResult
 from edictum.hooks import HookDecision, HookResult
 from edictum.limits import OperationLimits
 from edictum.otel import configure_otel, get_tracer, has_otel  # noqa: F401 — get_tracer re-exported for backward compat
-from edictum.pipeline import GovernancePipeline, PostDecision, PreDecision
+from edictum.pipeline import CheckPipeline, PostDecision, PreDecision
 from edictum.session import Session
 from edictum.storage import MemoryBackend, StorageBackend
 from edictum.telemetry import GovernanceTelemetry
@@ -64,14 +64,14 @@ __all__ = [
     "EdictumToolError",
     "SideEffect",
     "Principal",
-    "ToolEnvelope",
+    "ToolCall",
     "create_envelope",
     "ToolRegistry",
     "BashClassifier",
     "HookDecision",
     "HookRegistration",
     "HookResult",
-    "Verdict",
+    "Decision",
     "precondition",
     "postcondition",
     "session_contract",
@@ -89,7 +89,7 @@ __all__ = [
     "StdoutAuditSink",
     "RedactionPolicy",
     "GovernanceTelemetry",
-    "GovernancePipeline",
+    "CheckPipeline",
     "PreDecision",
     "PostDecision",
     "deny_sensitive_reads",
@@ -98,7 +98,7 @@ __all__ = [
     "Finding",
     "PostCallResult",
     "EvaluationResult",
-    "ContractResult",
+    "RuleResult",
     "CompositionReport",
     "TemplateInfo",
 ]

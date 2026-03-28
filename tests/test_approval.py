@@ -39,7 +39,7 @@ class TestApprovalRequestFrozen:
             message="msg",
             timeout=60,
         )
-        assert req.timeout_effect == "deny"
+        assert req.timeout_action == "block"
         assert req.principal is None
         assert req.metadata == {}
         assert req.created_at is not None
@@ -110,11 +110,11 @@ class TestLocalApprovalBackendRequestApproval:
             "Tool",
             {"a": 1},
             "msg",
-            timeout_effect="allow",
+            timeout_action="allow",
             principal={"role": "admin"},
             metadata={"ticket": "T-123"},
         )
-        assert req.timeout_effect == "allow"
+        assert req.timeout_action == "allow"
         assert req.principal == {"role": "admin"}
         assert req.metadata == {"ticket": "T-123"}
 
@@ -124,7 +124,7 @@ class TestLocalApprovalBackendTimeout:
 
     async def test_timeout_deny(self):
         backend = LocalApprovalBackend()
-        req = await backend.request_approval("Tool", {}, "msg", timeout=1, timeout_effect="deny")
+        req = await backend.request_approval("Tool", {}, "msg", timeout=1, timeout_action="block")
 
         def _block(approval_id):
             import time
@@ -138,7 +138,7 @@ class TestLocalApprovalBackendTimeout:
 
     async def test_timeout_allow(self):
         backend = LocalApprovalBackend()
-        req = await backend.request_approval("Tool", {}, "msg", timeout=1, timeout_effect="allow")
+        req = await backend.request_approval("Tool", {}, "msg", timeout=1, timeout_action="allow")
 
         def _block(approval_id):
             import time

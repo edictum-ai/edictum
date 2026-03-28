@@ -185,19 +185,19 @@ class TestSuccessCheckFromYamlString:
     async def test_from_yaml_string_forwards_success_check(self):
         yaml_content = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-bundle
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: dummy
     type: pre
     tool: noop
     when:
       tool_name: { equals: noop }
     then:
-      effect: deny
+      action: block
       message: "no-op"
 """
 

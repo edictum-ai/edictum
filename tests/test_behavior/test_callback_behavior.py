@@ -9,7 +9,7 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from edictum import Edictum, Verdict, postcondition, precondition
+from edictum import Edictum, Decision, postcondition, precondition
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
 
@@ -18,12 +18,12 @@ def _make_warn_guard():
     """Create a guard with a postcondition that always warns."""
 
     @postcondition("TestTool")
-    def detect_issue(envelope, result):
-        return Verdict.fail("issue detected")
+    def detect_issue(tool_call, result):
+        return Decision.fail("issue detected")
 
     return Edictum(
         environment="test",
-        contracts=[detect_issue],
+        rules=[detect_issue],
         audit_sink=NullAuditSink(),
         backend=MemoryBackend(),
     )
@@ -69,12 +69,12 @@ class TestCallbackInvocationCount:
         from edictum.adapters.crewai import CrewAIAdapter
 
         @postcondition("testtool")
-        def detect_issue(envelope, result):
-            return Verdict.fail("issue detected")
+        def detect_issue(tool_call, result):
+            return Decision.fail("issue detected")
 
         guard = Edictum(
             environment="test",
-            contracts=[detect_issue],
+            rules=[detect_issue],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
         )
@@ -144,17 +144,17 @@ class TestCrewAIDenyReturnValue:
         assert "budget exceeded" in result, f"_deny() lost the reason. Got: {result!r}"
 
     async def test_deny_propagates_through_before_hook(self):
-        """_before_hook() must return the denial reason string on deny."""
+        """_before_hook() must return the denial reason string on block."""
         from edictum import precondition
         from edictum.adapters.crewai import CrewAIAdapter
 
         @precondition("*")
-        def block_all(envelope):
-            return Verdict.fail("budget exceeded")
+        def block_all(tool_call):
+            return Decision.fail("budget exceeded")
 
         guard = Edictum(
             environment="test",
-            contracts=[block_all],
+            rules=[block_all],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
         )
@@ -162,7 +162,7 @@ class TestCrewAIDenyReturnValue:
         ctx = SimpleNamespace(tool_name="TestTool", tool_input={}, agent=None, task=None)
         result = await adapter._before_hook(ctx)
 
-        assert isinstance(result, str), f"_before_hook returned {type(result).__name__} on deny, expected str"
+        assert isinstance(result, str), f"_before_hook returned {type(result).__name__} on block, expected str"
         assert "budget exceeded" in result, f"Denial reason lost. Got: {result!r}"
 
 
@@ -170,7 +170,7 @@ class TestCallbackArguments:
     """Callbacks must receive correct arguments."""
 
     async def test_callback_receives_result_and_findings(self):
-        """on_postcondition_warn must receive (result, findings)."""
+        """on_postcondition_warn must receive (result, violations)."""
         from edictum.adapters.crewai import CrewAIAdapter
 
         guard = _make_warn_guard()
@@ -192,19 +192,19 @@ class TestCallbackArguments:
 
         assert callback.call_count >= 1
         args = callback.call_args
-        assert len(args[0]) == 2, f"Callback received {len(args[0])} args, expected 2 (result, findings)"
+        assert len(args[0]) == 2, f"Callback received {len(args[0])} args, expected 2 (result, violations)"
 
 
 def _make_deny_guard(**kwargs):
     """Create a guard with a precondition that always denies."""
 
     @precondition("*")
-    def block_all(envelope):
-        return Verdict.fail("budget exceeded")
+    def block_all(tool_call):
+        return Decision.fail("budget exceeded")
 
     return Edictum(
         environment="test",
-        contracts=[block_all],
+        rules=[block_all],
         audit_sink=NullAuditSink(),
         backend=MemoryBackend(),
         **kwargs,
@@ -212,10 +212,10 @@ def _make_deny_guard(**kwargs):
 
 
 def _make_allow_guard(**kwargs):
-    """Create a guard with no contracts (everything allowed)."""
+    """Create a guard with no rules (everything allowed)."""
     return Edictum(
         environment="test",
-        contracts=[],
+        rules=[],
         audit_sink=NullAuditSink(),
         backend=MemoryBackend(),
         **kwargs,
@@ -239,7 +239,7 @@ class TestOnDenyCallback:
         assert callback.call_count == 1, f"on_deny called {callback.call_count} times, expected exactly 1."
 
     async def test_on_deny_receives_correct_args(self):
-        """on_deny receives (envelope, reason_string, contract_name)."""
+        """on_deny receives (tool_call, reason_string, contract_name)."""
         from edictum.adapters.crewai import CrewAIAdapter
 
         callback = MagicMock()
@@ -251,8 +251,8 @@ class TestOnDenyCallback:
 
         args = callback.call_args[0]
         assert len(args) == 3, f"on_deny received {len(args)} args, expected 3"
-        envelope, reason, contract_name = args
-        assert envelope.tool_name == "TestTool"
+        tool_call, reason, contract_name = args
+        assert tool_call.tool_name == "TestTool"
         assert "budget exceeded" in reason
         assert contract_name == "block_all"
 
@@ -261,7 +261,7 @@ class TestOnAllowCallback:
     """on_allow must fire exactly once when all checks pass."""
 
     async def test_on_allow_fires_exactly_once(self):
-        """on_allow fires once when no contracts deny."""
+        """on_allow fires once when no rules block."""
         from edictum.adapters.crewai import CrewAIAdapter
 
         callback = MagicMock()
@@ -274,7 +274,7 @@ class TestOnAllowCallback:
         assert callback.call_count == 1, f"on_allow called {callback.call_count} times, expected exactly 1."
 
     async def test_on_allow_receives_envelope(self):
-        """on_allow receives the ToolEnvelope as its sole argument."""
+        """on_allow receives the ToolCall as its sole argument."""
         from edictum.adapters.crewai import CrewAIAdapter
 
         callback = MagicMock()
@@ -293,7 +293,7 @@ class TestOnDenyNotInObserveMode:
     """on_deny must NOT fire in observe mode (denials are observe-mode only)."""
 
     async def test_on_deny_skipped_in_observe_mode(self):
-        """Observe mode logs would-deny but must not invoke on_deny."""
+        """Observe mode logs would-block but must not invoke on_deny."""
         from edictum.adapters.crewai import CrewAIAdapter
 
         callback = MagicMock()
@@ -313,7 +313,7 @@ class TestOnDenyCallbackError:
         """A failing on_deny callback must not prevent denial from propagating."""
         from edictum.adapters.crewai import CrewAIAdapter
 
-        def bad_callback(envelope, reason, contract_name):
+        def bad_callback(tool_call, reason, contract_name):
             raise RuntimeError("callback exploded")
 
         guard = _make_deny_guard(on_deny=bad_callback)
@@ -330,7 +330,7 @@ class TestOnDenyCallbackError:
         """A failing on_allow callback must not prevent the allow from proceeding."""
         from edictum.adapters.crewai import CrewAIAdapter
 
-        def bad_callback(envelope):
+        def bad_callback(tool_call):
             raise RuntimeError("callback exploded")
 
         guard = _make_allow_guard(on_allow=bad_callback)

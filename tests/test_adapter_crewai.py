@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from edictum import Edictum, Verdict, precondition
+from edictum import Edictum, Decision, precondition
 from edictum.adapters.crewai import CrewAIAdapter
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
@@ -53,11 +53,11 @@ class TestCrewAIAdapter:
 
     async def test_deny_returns_correct_format(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied")
+        def always_deny(tool_call):
+            return Decision.fail("denied")
 
         sink = NullAuditSink()
-        guard = make_guard(contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(rules=[always_deny], audit_sink=sink)
         adapter = CrewAIAdapter(guard)
         result = await adapter._before_hook(_make_before_context())
         assert isinstance(result, str) and "DENIED" in result
@@ -82,10 +82,10 @@ class TestCrewAIAdapter:
 
     async def test_deny_clears_pending(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("no")
+        def always_deny(tool_call):
+            return Decision.fail("no")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = CrewAIAdapter(guard)
 
         await adapter._before_hook(_make_before_context())
@@ -111,11 +111,11 @@ class TestCrewAIAdapter:
 
     async def test_observe_mode_would_deny(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("would be denied")
+        def always_deny(tool_call):
+            return Decision.fail("would be denied")
 
         sink = NullAuditSink()
-        guard = make_guard(mode="observe", contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
         adapter = CrewAIAdapter(guard)
 
         result = await adapter._before_hook(_make_before_context())
@@ -307,7 +307,7 @@ class TestCrewAIAsyncBridge:
             context = _make_before_context(tool_name="Test Tool")
             result = captured_before(context)
 
-            # Should allow (None) — no denying contracts
+            # Should allow (None) — no denying rules
             assert result is None
         finally:
             if orig_crewai is not None:

@@ -16,7 +16,7 @@ from edictum.storage import StorageBackend
 
 if TYPE_CHECKING:
     from edictum._guard import Edictum
-    from edictum.envelope import ToolEnvelope
+    from edictum.envelope import ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,8 @@ async def _from_server(
     approval_backend: ApprovalBackend | None = None,
     storage_backend: StorageBackend | None = None,
     mode: str = "enforce",
-    on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-    on_allow: Callable[[ToolEnvelope], None] | None = None,
+    on_deny: Callable[[ToolCall, str, str | None], None] | None = None,
+    on_allow: Callable[[ToolCall], None] | None = None,
     success_check: Callable[[str, Any], bool] | None = None,
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
@@ -51,7 +51,7 @@ async def _from_server(
     """Create an Edictum instance wired to a remote edictum-server.
 
     Auto-configures all server components (audit, approval, session,
-    contract source) from a single URL and API key.
+    rule source) from a single URL and API key.
 
     Args:
         url: Base URL of the edictum-server.
@@ -92,7 +92,7 @@ async def _from_server(
     from edictum.server.audit_sink import ServerAuditSink
     from edictum.server.backend import ServerBackend
     from edictum.server.client import EdictumServerClient
-    from edictum.server.contract_source import ServerContractSource
+    from edictum.server.rule_source import ServerContractSource
     from edictum.yaml_engine.compiler import compile_contracts
     from edictum.yaml_engine.loader import load_bundle_string
 
@@ -131,7 +131,7 @@ async def _from_server(
             bundle_yaml = base64.b64decode(yaml_b64) if yaml_b64 else b""
         except Exception as exc:
             await client.close()
-            raise EdictumConfigError(f"Failed to fetch contracts from server: {exc}") from exc
+            raise EdictumConfigError(f"Failed to fetch rules from server: {exc}") from exc
 
         if verify_signatures:
             from edictum.server.verification import BundleVerificationError, verify_bundle_signature
@@ -158,7 +158,7 @@ async def _from_server(
             compiled = compile_contracts(bundle_data)
         except Exception as exc:
             await client.close()
-            raise EdictumConfigError(f"Failed to parse server contracts: {exc}") from exc
+            raise EdictumConfigError(f"Failed to parse server rules: {exc}") from exc
 
         policy_version = str(bundle_hash)
         effective_mode = mode or compiled.default_mode
@@ -172,7 +172,7 @@ async def _from_server(
             mode=effective_mode,
             limits=compiled.limits,
             tools=yaml_tools if yaml_tools else None,
-            contracts=all_contracts,
+            rules=all_contracts,
             audit_sink=effective_sink,
             backend=effective_backend,
             policy_version=policy_version,
@@ -189,7 +189,7 @@ async def _from_server(
             mode=mode,
             limits=None,
             tools=None,
-            contracts=[],
+            rules=[],
             audit_sink=effective_sink,
             backend=effective_backend,
             policy_version=None,
@@ -203,7 +203,7 @@ async def _from_server(
         guard._assignment_ready = asyncio.Event()
 
     guard._server_client = client
-    guard._contract_source = ServerContractSource(client)
+    guard._rule_source = ServerContractSource(client)
     guard._sse_task = None  # asyncio.Task | None, set by _start_sse_watcher
     guard._verify_signatures = verify_signatures
     guard._signing_public_key = signing_public_key
@@ -229,8 +229,8 @@ async def _from_server(
 
 
 async def _start_sse_watcher(self: Edictum) -> None:
-    """Start a background task that watches for SSE contract updates."""
-    source = getattr(self, "_contract_source", None)
+    """Start a background task that watches for SSE rule updates."""
+    source = getattr(self, "_rule_source", None)
     if source is None:
         return
 
@@ -279,7 +279,7 @@ async def _start_sse_watcher(self: Edictum) -> None:
                     if ready_event is not None and not ready_event.is_set():
                         ready_event.set()
                 except Exception:
-                    logger.warning("Failed to reload contracts from SSE update, keeping existing contracts")
+                    logger.warning("Failed to reload rules from SSE update, keeping existing rules")
         except asyncio.CancelledError:
             return
         except Exception:
@@ -299,7 +299,7 @@ async def _stop_sse_watcher(self: Edictum) -> None:
             pass
         self._sse_task = None
 
-    source = getattr(self, "_contract_source", None)
+    source = getattr(self, "_rule_source", None)
     if source is not None:
         await source.close()
 

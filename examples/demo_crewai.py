@@ -86,7 +86,7 @@ def run_without_guard(client: OpenAI) -> None:
 
 async def run_with_guard(client: OpenAI) -> None:
     """Run the same agent, governed by Edictum via the CrewAI adapter."""
-    from contracts import ALL_CONTRACTS
+    from rules import ALL_CONTRACTS
 
     from edictum import Edictum, FileAuditSink
     from edictum.adapters.crewai import CrewAIAdapter
@@ -100,7 +100,7 @@ async def run_with_guard(client: OpenAI) -> None:
     guard = Edictum(
         environment="demo",
         mode="enforce",
-        contracts=ALL_CONTRACTS,
+        rules=ALL_CONTRACTS,
         tools=EDICTUM_TOOLS_CONFIG,
         audit_sink=FileAuditSink(audit_path),
     )

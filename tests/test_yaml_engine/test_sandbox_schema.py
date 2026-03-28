@@ -1,4 +1,4 @@
-"""Schema validation tests for sandbox contracts."""
+"""Schema validation tests for sandbox rules."""
 
 from __future__ import annotations
 
@@ -18,82 +18,82 @@ class TestSandboxSchemaValid:
     def test_sandbox_with_within(self):
         _load("""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tool: read_file
     within: [/workspace]
-    outside: deny
+    outside: block
     message: "Denied"
 """)
 
     def test_sandbox_with_tools_array(self):
         _load("""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tools: [read_file, write_file]
     within: [/workspace]
-    outside: deny
+    outside: block
     message: "Denied"
 """)
 
     def test_sandbox_with_allows_commands(self):
         _load("""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: exec-sandbox
     type: sandbox
     tool: exec
     allows:
       commands: [ls, cat, git]
-    outside: deny
+    outside: block
     message: "Denied"
 """)
 
     def test_sandbox_with_allows_domains(self):
         _load("""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: web-sandbox
     type: sandbox
     tool: web_fetch
     allows:
       domains: [github.com, '*.googleapis.com']
-    outside: deny
+    outside: block
     message: "Denied"
 """)
 
     def test_sandbox_with_not_within_and_not_allows(self):
         _load("""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: full-sandbox
     type: sandbox
     tools: [read_file, exec, web_fetch]
@@ -104,28 +104,28 @@ contracts:
       domains: ['*']
     not_allows:
       domains: [evil.com]
-    outside: approve
+    outside: ask
     message: "Sandbox violation"
     timeout: 120
-    timeout_effect: deny
+    timeout_action: block
 """)
 
     def test_sandbox_with_observe_mode(self):
         _load("""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: sandbox-observe
     type: sandbox
     mode: observe
     tool: read_file
     within: [/safe]
-    outside: deny
-    message: "Would deny"
+    outside: block
+    message: "Would block"
 """)
 
 
@@ -136,16 +136,16 @@ class TestSandboxSchemaInvalid:
         with pytest.raises(Exception):
             _load("""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: bad-sandbox
     type: sandbox
     within: [/workspace]
-    outside: deny
+    outside: block
     message: "Denied"
 """)
 
@@ -153,16 +153,16 @@ contracts:
         with pytest.raises(Exception):
             _load("""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: bad-sandbox
     type: sandbox
     tool: read_file
-    outside: deny
+    outside: block
     message: "Denied"
 """)
 
@@ -170,12 +170,12 @@ contracts:
         with pytest.raises(Exception):
             _load("""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: bad-sandbox
     type: sandbox
     tool: read_file
@@ -189,19 +189,19 @@ contracts:
         with pytest.raises(Exception):
             _load("""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: bad-sandbox
     type: sandbox
     tool: read_file
     not_within: [/workspace/.git]
     allows:
       commands: [ls]
-    outside: deny
+    outside: block
     message: "Denied"
 """)
 
@@ -210,18 +210,18 @@ contracts:
         with pytest.raises(Exception):
             _load("""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: bad-sandbox
     type: sandbox
     tool: read_file
     within: [/workspace]
     not_allows:
       domains: [evil.com]
-    outside: deny
+    outside: block
     message: "Denied"
 """)

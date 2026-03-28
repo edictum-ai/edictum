@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from edictum.audit import AuditAction, AuditEvent
 from edictum.envelope import Principal, create_envelope
 from edictum.findings import Finding, PostCallResult, build_findings
-from edictum.pipeline import GovernancePipeline
+from edictum.pipeline import CheckPipeline
 from edictum.session import Session
 
 logger = logging.getLogger(__name__)
@@ -25,11 +25,11 @@ class AgnoAdapter:
     """Translate Edictum pipeline decisions into Agno tool_hook format.
 
     The adapter does NOT contain governance logic -- that lives in
-    GovernancePipeline. The adapter only:
+    CheckPipeline. The adapter only:
     1. Creates envelopes from Agno hook input
-    2. Manages pending state (envelope + span) between pre/post
+    2. Manages pending state (tool_call + span) between pre/post
     3. Translates PreDecision/PostDecision into Agno hook output format
-    4. Handles observe mode (deny -> allow conversion)
+    4. Handles observe mode (block -> allow conversion)
 
     Agno tool_hooks use a wrap-around pattern: a single function receives
     (function_name, function_call, arguments) and must call function_call
@@ -44,7 +44,7 @@ class AgnoAdapter:
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
     ):
         self._guard = guard
-        self._pipeline = GovernancePipeline(guard)
+        self._pipeline = CheckPipeline(guard)
         self._session_id = session_id or str(uuid.uuid4())
         self._session = Session(self._session_id, guard.backend)
         self._call_index = 0
@@ -74,7 +74,7 @@ class AgnoAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and returns
+                detect issues. Receives (original_result, violations) and returns
                 the (possibly transformed) result.
 
         Returns a function matching:
@@ -137,15 +137,15 @@ class AgnoAdapter:
         on_warn = getattr(self, "_on_postcondition_warn", None)
         if not post_result.postconditions_passed and on_warn:
             try:
-                return on_warn(post_result.result, post_result.findings)
+                return on_warn(post_result.result, post_result.violations)
             except Exception:
                 logger.exception("on_postcondition_warn callback raised")
 
         return post_result.result
 
     async def _pre(self, tool_name: str, tool_input: dict, call_id: str) -> dict | str:
-        """Pre-execution governance. Returns {} on allow, denial string on deny."""
-        envelope = create_envelope(
+        """Pre-execution governance. Returns {} on allow, denial string on block."""
+        tool_call = create_envelope(
             tool_name=tool_name,
             tool_input=tool_input,
             run_id=self._session_id,
@@ -161,27 +161,27 @@ class AgnoAdapter:
         await self._session.increment_attempts()
 
         # Start OTel span
-        span = self._guard.telemetry.start_tool_span(envelope)
+        span = self._guard.telemetry.start_tool_span(tool_call)
 
         try:
             # Run pipeline
-            decision = await self._pipeline.pre_execute(envelope, self._session)
+            decision = await self._pipeline.pre_execute(tool_call, self._session)
 
-            # Handle observe mode: convert deny to allow with warning
-            if self._guard.mode == "observe" and decision.action == "deny":
-                await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
+            # Handle observe mode: convert block to allow with warning
+            if self._guard.mode == "observe" and decision.action == "block":
+                await self._emit_audit_pre(tool_call, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
                 span.set_attribute("governance.would_deny_reason", decision.reason)
-                self._pending[call_id] = (envelope, span)
+                self._pending[call_id] = (tool_call, span)
                 return {}  # allow through
 
-            # Handle deny
-            if decision.action == "deny":
-                await self._emit_audit_pre(envelope, decision)
-                self._guard.telemetry.record_denial(envelope, decision.reason)
+            # Handle block
+            if decision.action == "block":
+                await self._emit_audit_pre(tool_call, decision)
+                self._guard.telemetry.record_denial(tool_call, decision.reason)
                 if self._guard._on_deny:
                     try:
-                        self._guard._on_deny(envelope, decision.reason or "", decision.decision_name)
+                        self._guard._on_deny(tool_call, decision.reason or "", decision.decision_name)
                     except Exception:
                         logger.exception("on_deny callback raised")
                 span.set_attribute("governance.action", "denied")
@@ -190,21 +190,21 @@ class AgnoAdapter:
                 self._pending.pop(call_id, None)
                 return self._deny(decision.reason)
 
-            # Handle per-contract observed denials
+            # Handle per-rule observed denials
             if decision.observed:
                 for cr in decision.contracts_evaluated:
                     if cr.get("observed") and not cr.get("passed"):
                         await self._guard.audit_sink.emit(
                             AuditEvent(
                                 action=AuditAction.CALL_WOULD_DENY,
-                                run_id=envelope.run_id,
-                                call_id=envelope.call_id,
-                                call_index=envelope.call_index,
-                                tool_name=envelope.tool_name,
-                                tool_args=self._guard.redaction.redact_args(envelope.args),
-                                side_effect=envelope.side_effect.value,
-                                environment=envelope.environment,
-                                principal=asdict(envelope.principal) if envelope.principal else None,
+                                run_id=tool_call.run_id,
+                                call_id=tool_call.call_id,
+                                call_index=tool_call.call_index,
+                                tool_name=tool_call.tool_name,
+                                tool_args=self._guard.redaction.redact_args(tool_call.args),
+                                side_effect=tool_call.side_effect.value,
+                                environment=tool_call.environment,
+                                principal=asdict(tool_call.principal) if tool_call.principal else None,
                                 decision_source="precondition",
                                 decision_name=cr["name"],
                                 reason=cr["message"],
@@ -215,14 +215,14 @@ class AgnoAdapter:
                         )
 
             # Handle allow
-            await self._emit_audit_pre(envelope, decision)
+            await self._emit_audit_pre(tool_call, decision)
             if self._guard._on_allow:
                 try:
-                    self._guard._on_allow(envelope)
+                    self._guard._on_allow(tool_call)
                 except Exception:
                     logger.exception("on_allow callback raised")
             span.set_attribute("governance.action", "allowed")
-            self._pending[call_id] = (envelope, span)
+            self._pending[call_id] = (tool_call, span)
             return {}
 
         except Exception:
@@ -233,41 +233,41 @@ class AgnoAdapter:
     async def _post(
         self, call_id: str, tool_response: Any = None, *, tool_success: bool | None = None
     ) -> PostCallResult:
-        """Post-execution governance. Returns PostCallResult with findings."""
+        """Post-execution governance. Returns PostCallResult with violations."""
         pending = self._pending.pop(call_id, None)
         if not pending:
             return PostCallResult(result=tool_response)
 
-        envelope, span = pending
+        tool_call, span = pending
 
         try:
             # Derive tool_success from response if not explicitly provided
             if tool_success is None:
-                tool_success = self._check_tool_success(envelope.tool_name, tool_response)
+                tool_success = self._check_tool_success(tool_call.tool_name, tool_response)
 
             # Run pipeline
-            post_decision = await self._pipeline.post_execute(envelope, tool_response, tool_success)
+            post_decision = await self._pipeline.post_execute(tool_call, tool_response, tool_success)
 
             effective_response = (
                 post_decision.redacted_response if post_decision.redacted_response is not None else tool_response
             )
 
             # Record in session
-            await self._session.record_execution(envelope.tool_name, success=tool_success)
+            await self._session.record_execution(tool_call.tool_name, success=tool_success)
 
             # Emit audit
             action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
             await self._guard.audit_sink.emit(
                 AuditEvent(
                     action=action,
-                    run_id=envelope.run_id,
-                    call_id=envelope.call_id,
-                    call_index=envelope.call_index,
-                    tool_name=envelope.tool_name,
-                    tool_args=self._guard.redaction.redact_args(envelope.args),
-                    side_effect=envelope.side_effect.value,
-                    environment=envelope.environment,
-                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    run_id=tool_call.run_id,
+                    call_id=tool_call.call_id,
+                    call_index=tool_call.call_index,
+                    tool_name=tool_call.tool_name,
+                    tool_args=self._guard.redaction.redact_args(tool_call.args),
+                    side_effect=tool_call.side_effect.value,
+                    environment=tool_call.environment,
+                    principal=asdict(tool_call.principal) if tool_call.principal else None,
                     tool_success=tool_success,
                     postconditions_passed=post_decision.postconditions_passed,
                     contracts_evaluated=post_decision.contracts_evaluated,
@@ -289,28 +289,28 @@ class AgnoAdapter:
         finally:
             span.end()
 
-        findings = build_findings(post_decision)
+        violations = build_findings(post_decision)
         return PostCallResult(
             result=effective_response,
             postconditions_passed=post_decision.postconditions_passed,
-            findings=findings,
+            violations=violations,
         )
 
-    async def _emit_audit_pre(self, envelope, decision, audit_action=None):
+    async def _emit_audit_pre(self, tool_call, decision, audit_action=None):
         if audit_action is None:
-            audit_action = AuditAction.CALL_DENIED if decision.action == "deny" else AuditAction.CALL_ALLOWED
+            audit_action = AuditAction.CALL_DENIED if decision.action == "block" else AuditAction.CALL_ALLOWED
 
         await self._guard.audit_sink.emit(
             AuditEvent(
                 action=audit_action,
-                run_id=envelope.run_id,
-                call_id=envelope.call_id,
-                call_index=envelope.call_index,
-                tool_name=envelope.tool_name,
-                tool_args=self._guard.redaction.redact_args(envelope.args),
-                side_effect=envelope.side_effect.value,
-                environment=envelope.environment,
-                principal=asdict(envelope.principal) if envelope.principal else None,
+                run_id=tool_call.run_id,
+                call_id=tool_call.call_id,
+                call_index=tool_call.call_index,
+                tool_name=tool_call.tool_name,
+                tool_args=self._guard.redaction.redact_args(tool_call.args),
+                side_effect=tool_call.side_effect.value,
+                environment=tool_call.environment,
+                principal=asdict(tool_call.principal) if tool_call.principal else None,
                 decision_source=decision.decision_source,
                 decision_name=decision.decision_name,
                 reason=decision.reason,

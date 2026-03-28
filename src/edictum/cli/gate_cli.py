@@ -44,11 +44,11 @@ _ASSISTANT_INFO: list[tuple[str, str, str]] = [
 @click.option("--server", default=None, help="Console server URL.")
 @click.option("--api-key", default=None, help="Console API key.")
 @click.option(
-    "--contracts",
+    "--rules",
     "custom_contracts",
     default=None,
     type=click.Path(exists=True),
-    help="Your own ContractBundle YAML.",
+    help="Your own Ruleset YAML.",
 )
 @click.option("--non-interactive", is_flag=True, default=False, help="Skip prompts, use defaults.")
 def gate_init(server: str | None, api_key: str | None, custom_contracts: str | None, non_interactive: bool) -> None:
@@ -92,7 +92,7 @@ def gate_init(server: str | None, api_key: str | None, custom_contracts: str | N
         "# Edictum Gate configuration",
         "# Docs: https://edictum.ai/docs/gate",
         "",
-        "contracts:",
+        "rules:",
         f"  - {_yaml_quote(contract_path)}",
         "",
     ]
@@ -132,11 +132,11 @@ def gate_init(server: str | None, api_key: str | None, custom_contracts: str | N
     else:
         _console.print("  1. Run [cyan]edictum gate install <assistant>[/cyan] to register a hook.")
     _console.print("  2. Run [cyan]edictum gate audit[/cyan] to see what's being caught.")
-    _console.print(f"  3. Edit [cyan]{contract_path}[/cyan] to customize your contracts.")
+    _console.print(f"  3. Edit [cyan]{contract_path}[/cyan] to customize your rules.")
     _console.print(
         "  4. When ready, change [bold]mode: observe[/bold] to [bold]mode: enforce[/bold] to start blocking."
     )
-    _console.print("\n  Write your own contracts: [dim]https://edictum.ai/docs/gate/contracts[/dim]")
+    _console.print("\n  Write your own rules: [dim]https://edictum.ai/docs/gate/rules[/dim]")
     _console.print("")
 
 
@@ -215,13 +215,13 @@ def _init_console(server: str, api_key: str | None, non_interactive: bool) -> tu
 
 
 def _init_contracts(gate_dir: Path, custom_contracts: str | None, non_interactive: bool) -> Path:
-    """Set up contracts — custom or default. Returns the contract file path."""
-    contracts_dir = gate_dir / "contracts"
+    """Set up rules — custom or default. Returns the rule file path."""
+    contracts_dir = gate_dir / "rules"
     contracts_dir.mkdir(parents=True, exist_ok=True)
     template_dst = contracts_dir / "base.yaml"
 
     if custom_contracts:
-        # User provided their own contracts
+        # User provided their own rules
         shutil.copy2(custom_contracts, str(template_dst))
         _console.print(f"  [green]Copied[/green] {custom_contracts} -> {template_dst}")
         return template_dst
@@ -229,14 +229,14 @@ def _init_contracts(gate_dir: Path, custom_contracts: str | None, non_interactiv
     if non_interactive:
         choice = "1"
     else:
-        _console.print("  [bold][1][/bold] Use default contracts (observe mode — logs without blocking)")
+        _console.print("  [bold][1][/bold] Use default rules (observe mode — logs without blocking)")
         _console.print("      Covers: secret file access, destructive commands, git safety,")
         _console.print("      system modifications, package installations.")
-        _console.print("  [bold][2][/bold] Provide your own ContractBundle path\n")
+        _console.print("  [bold][2][/bold] Provide your own Ruleset path\n")
         choice = click.prompt("  Choose", type=click.Choice(["1", "2"]), default="1")
 
     if choice == "2":
-        custom_path = click.prompt("  Path to your ContractBundle YAML", type=click.Path(exists=True))
+        custom_path = click.prompt("  Path to your Ruleset YAML", type=click.Path(exists=True))
         shutil.copy2(custom_path, str(template_dst))
         _console.print(f"  [green]Copied[/green] {custom_path} -> {template_dst}")
     else:
@@ -247,8 +247,8 @@ def _init_contracts(gate_dir: Path, custom_contracts: str | None, non_interactiv
             _console.print("  Mode: [cyan]observe[/cyan] (logs what would be denied, does not block)")
         else:
             minimal = (
-                "apiVersion: edictum/v1\nkind: ContractBundle\n\n"
-                "metadata:\n  name: base\n  description: Base gate contracts\n\n"
+                "apiVersion: edictum/v1\nkind: Ruleset\n\n"
+                "metadata:\n  name: base\n  description: Base gate rules\n\n"
                 "defaults:\n  mode: observe\n\ncontracts: []\n"
             )
             template_dst.write_text(minimal)
@@ -305,10 +305,10 @@ def _init_assistants(non_interactive: bool) -> list[str]:
     type=click.Choice(["claude-code", "copilot", "cursor", "gemini", "opencode", "raw"]),
     help="Output format (default: claude-code).",
 )
-@click.option("--contracts", "contracts_path", default=None, type=click.Path(), help="Override contract path.")
+@click.option("--rules", "contracts_path", default=None, type=click.Path(), help="Override rule path.")
 @click.option("--json", "json_flag", is_flag=True, default=False, help="Force JSON output.")
 def gate_check(format_name: str, contracts_path: str | None, json_flag: bool) -> None:
-    """Evaluate a tool call from stdin against contracts."""
+    """Evaluate a tool call from stdin against rules."""
     from edictum.gate.check import run_check
     from edictum.gate.config import GateConfig, load_gate_config
 
@@ -316,7 +316,7 @@ def gate_check(format_name: str, contracts_path: str | None, json_flag: bool) ->
 
     if contracts_path:
         config = GateConfig(
-            contracts=(contracts_path,),
+            rules=(contracts_path,),
             console=config.console,
             audit=config.audit,
             redaction=config.redaction,
@@ -343,7 +343,7 @@ def gate_install(assistant: str) -> None:
 
     if not DEFAULT_CONFIG_PATH.exists():
         _console.print("[yellow]Gate not initialized.[/yellow] Run [cyan]edictum gate init[/cyan] first.")
-        _console.print("  This sets up your contracts and configuration.\n")
+        _console.print("  This sets up your rules and configuration.\n")
         if click.confirm("  Run gate init now?"):
             ctx = click.get_current_context()
             ctx.invoke(gate_init, server=None, api_key=None, custom_contracts=None, non_interactive=False)
@@ -379,7 +379,7 @@ def gate_status() -> None:
     _console.print(f"[bold]Edictum Gate[/bold] v{__version__}")
 
     # Contracts
-    for cp in config.contracts:
+    for cp in config.rules:
         p = Path(cp)
         if p.exists():
             import hashlib
@@ -389,8 +389,8 @@ def gate_status() -> None:
                 from edictum.yaml_engine.loader import load_bundle
 
                 bundle, _ = load_bundle(cp)
-                count = len(bundle.get("contracts", []))
-                _console.print(f"  Contracts: {cp} ({count} contracts, SHA256: {h}...)")
+                count = len(bundle.get("rules", []))
+                _console.print(f"  Contracts: {cp} ({count} rules, SHA256: {h}...)")
             except Exception:
                 _console.print(f"  Contracts: {cp} (SHA256: {h}...)")
         else:
@@ -466,15 +466,15 @@ def gate_status() -> None:
 @gate.command("audit")
 @click.option("--limit", default=20, help="Number of recent events to show.")
 @click.option("--tool", default=None, help="Filter by tool name.")
-@click.option("--verdict", default=None, type=click.Choice(["allow", "deny"]), help="Filter by verdict.")
-def gate_audit(limit: int, tool: str | None, verdict: str | None) -> None:
+@click.option("--decision", default=None, type=click.Choice(["allow", "block"]), help="Filter by decision.")
+def gate_audit(limit: int, tool: str | None, decision: str | None) -> None:
     """Show recent audit events from the local write-ahead log."""
     from edictum.gate.audit_buffer import AuditBuffer
     from edictum.gate.config import load_gate_config
 
     config = load_gate_config()
     buffer = AuditBuffer(config.audit, config.redaction)
-    events = buffer.read_recent(limit=limit, tool=tool, verdict=verdict)
+    events = buffer.read_recent(limit=limit, tool=tool, decision=decision)
 
     if not events:
         _console.print("[dim]No audit events found.[/dim]")
@@ -490,7 +490,7 @@ def gate_audit(limit: int, tool: str | None, verdict: str | None) -> None:
         if wide:
             table.add_column("User", no_wrap=True)
             table.add_column("Assistant", no_wrap=True)
-        table.add_column("Verdict", no_wrap=True)
+        table.add_column("Decision", no_wrap=True)
         table.add_column("Tool", no_wrap=True)
         table.add_column("Detail")
 
@@ -502,12 +502,12 @@ def gate_audit(limit: int, tool: str | None, verdict: str | None) -> None:
             ts_raw = e.get("timestamp", "")
             # Wide: full datetime, narrow: just time
             ts = ts_raw[:19].replace("T", " ") if wide else ts_raw[11:19]
-            # Support both new (action) and old (verdict) field names
-            action = e.get("action", e.get("verdict", ""))
+            # Support both new (action) and old (decision) field names
+            action = e.get("action", e.get("decision", ""))
             tool_name = e.get("tool_name", "")
             user = e.get("user", "")
             assistant = e.get("assistant", "")
-            contract = e.get("decision_name", e.get("contract_id", ""))
+            rule = e.get("decision_name", e.get("rule_id", ""))
             reason = e.get("reason", "")
             preview_len = min(detail_width, 80)
             # Support both new (tool_args dict) and old (args_preview string)
@@ -518,18 +518,18 @@ def gate_audit(limit: int, tool: str | None, verdict: str | None) -> None:
                 args = escape(str(e.get("args_preview", ""))[:preview_len])
 
             if action == "call_would_deny":
-                verdict_styled = "[yellow]would deny[/yellow]"
-            elif action in ("call_denied", "deny"):
-                verdict_styled = "[red]deny[/red]"
+                verdict_styled = "[yellow]would block[/yellow]"
+            elif action in ("call_denied", "block"):
+                verdict_styled = "[red]block[/red]"
             elif action in ("call_allowed", "allow"):
                 verdict_styled = "[green]allow[/green]"
             else:
                 verdict_styled = f"[dim]{action}[/dim]"
 
-            # Detail: contract+reason for denials, truncated args for allows
-            is_denial = action in ("call_denied", "call_would_deny", "deny")
-            if is_denial and contract:
-                detail = contract
+            # Detail: rule+reason for denials, truncated args for allows
+            is_denial = action in ("call_denied", "call_would_deny", "block")
+            if is_denial and rule:
+                detail = rule
                 if reason:
                     detail += f" — {reason}"
             else:

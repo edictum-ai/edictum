@@ -36,32 +36,32 @@ class TestExtractPathsNormalization:
 
     def test_traversal_resolved(self):
         """Paths with .. segments are resolved before extraction."""
-        envelope = create_envelope("read_file", {"path": "/tmp/../etc/shadow"})
-        paths = _extract_paths(envelope)
+        tool_call = create_envelope("read_file", {"path": "/tmp/../etc/shadow"})
+        paths = _extract_paths(tool_call)
         assert paths == [os.path.realpath("/etc/shadow")]
 
     def test_dot_segments_collapsed(self):
         """Redundant . segments are collapsed."""
-        envelope = create_envelope("read_file", {"path": "/tmp/./foo/../bar"})
-        paths = _extract_paths(envelope)
+        tool_call = create_envelope("read_file", {"path": "/tmp/./foo/../bar"})
+        paths = _extract_paths(tool_call)
         assert paths == [os.path.realpath("/tmp/bar")]
 
     def test_double_slash_collapsed(self):
         """Double slashes are collapsed."""
-        envelope = create_envelope("read_file", {"path": "/tmp//foo//bar"})
-        paths = _extract_paths(envelope)
+        tool_call = create_envelope("read_file", {"path": "/tmp//foo//bar"})
+        paths = _extract_paths(tool_call)
         assert paths == [os.path.realpath("/tmp/foo/bar")]
 
     def test_workspace_breakout_resolved(self):
         """Workspace-rooted traversal is resolved."""
-        envelope = create_envelope("read_file", {"path": "/root/.nanobot/workspace/../../.ssh/id_rsa"})
-        paths = _extract_paths(envelope)
+        tool_call = create_envelope("read_file", {"path": "/root/.nanobot/workspace/../../.ssh/id_rsa"})
+        paths = _extract_paths(tool_call)
         assert paths == [os.path.realpath("/root/.ssh/id_rsa")]
 
     def test_command_path_tokens_normalized(self):
         """Path tokens in commands are also resolved."""
-        envelope = create_envelope("exec", {"command": "cat /tmp/../etc/shadow"})
-        paths = _extract_paths(envelope)
+        tool_call = create_envelope("exec", {"command": "cat /tmp/../etc/shadow"})
+        paths = _extract_paths(tool_call)
         assert os.path.realpath("/etc/shadow") in paths
 
     def test_clean_paths_unchanged(self):
@@ -76,17 +76,17 @@ class TestExtractPathsNormalization:
 
 WITHIN_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: traversal-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tools: [read_file]
     within: [/tmp]
-    outside: deny
+    outside: block
     message: "Denied"
 """
 
@@ -98,25 +98,25 @@ class TestSandboxWithinTraversal:
         """/tmp/../etc/shadow resolves to /etc/shadow -- must be denied."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("read_file", {"path": "/tmp/../etc/shadow"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_traversal_double_dotdot(self):
         """/tmp/./../../etc/passwd -- multiple traversal segments."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("read_file", {"path": "/tmp/./../../etc/passwd"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_clean_path_still_allowed(self):
         """Normal path within boundary still passes."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("read_file", {"path": "/tmp/myfile.txt"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
     def test_direct_outside_path_still_denied(self):
         """Direct /etc/shadow (no traversal) is still denied."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("read_file", {"path": "/etc/shadow"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
 
 # --- Sandbox not_within bypass ---
@@ -124,18 +124,18 @@ class TestSandboxWithinTraversal:
 
 NOT_WITHIN_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: not-within-traversal
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tools: [read_file]
     within: [/workspace]
     not_within: [/workspace/.git]
-    outside: deny
+    outside: block
     message: "Denied"
 """
 
@@ -147,13 +147,13 @@ class TestSandboxNotWithinTraversal:
         """Traversal that resolves into .git is denied."""
         guard = _guard(NOT_WITHIN_YAML)
         result = guard.evaluate("read_file", {"path": "/workspace/foo/../../workspace/.git/config"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_direct_excluded_still_denied(self):
         """Direct access to .git is still denied."""
         guard = _guard(NOT_WITHIN_YAML)
         result = guard.evaluate("read_file", {"path": "/workspace/.git/config"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
 
 # --- Exec sandbox path traversal ---
@@ -161,19 +161,19 @@ class TestSandboxNotWithinTraversal:
 
 EXEC_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: exec-traversal
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: exec-sandbox
     type: sandbox
     tools: [exec]
     allows:
       commands: [cat]
     within: [/tmp]
-    outside: deny
+    outside: block
     message: "Denied"
 """
 
@@ -185,13 +185,13 @@ class TestExecSandboxTraversal:
         """cat /tmp/../etc/shadow -- path escapes within via traversal."""
         guard = _guard(EXEC_YAML)
         result = guard.evaluate("exec", {"command": "cat /tmp/../etc/shadow"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_exec_clean_path_allowed(self):
         """cat /tmp/ok.txt -- clean path within boundary."""
         guard = _guard(EXEC_YAML)
         result = guard.evaluate("exec", {"command": "cat /tmp/ok.txt"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
 
 # --- Red team fixture traversal vectors ---
@@ -202,56 +202,56 @@ class TestRedTeamTraversalVectors:
 
     YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: red-team-vectors
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tools: [read_file]
     within:
       - /root/.nanobot/workspace
       - /tmp
-    outside: deny
+    outside: block
     message: "Denied"
 """
 
     def test_tmp_etc_shadow(self):
         guard = _guard(self.YAML)
         result = guard.evaluate("read_file", {"path": "/tmp/../etc/shadow"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_workspace_ssh_breakout(self):
         guard = _guard(self.YAML)
         result = guard.evaluate("read_file", {"path": "/root/.nanobot/workspace/../../.ssh/id_rsa"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_tmp_proc_environ(self):
         guard = _guard(self.YAML)
         result = guard.evaluate("read_file", {"path": "/tmp/../proc/1/environ"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_double_traversal_etc_passwd(self):
         guard = _guard(self.YAML)
         result = guard.evaluate("read_file", {"path": "/tmp/./../../etc/passwd"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_workspace_config_breakout(self):
         guard = _guard(self.YAML)
         result = guard.evaluate("read_file", {"path": "/root/.nanobot/workspace/../config.json"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_direct_etc_shadow_still_denied(self):
         guard = _guard(self.YAML)
         result = guard.evaluate("read_file", {"path": "/etc/shadow"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_clean_workspace_path_still_allowed(self):
         guard = _guard(self.YAML)
         result = guard.evaluate("read_file", {"path": "/root/.nanobot/workspace/README.md"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
 
 @pytest.mark.security
@@ -272,23 +272,23 @@ class TestSymlinkSandboxEscape:
 
         yaml_str = f"""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: symlink-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tools: [read_file]
     within: ["{allowed}"]
-    outside: deny
+    outside: block
     message: "Denied"
 """
         guard = _guard(yaml_str)
         # Access through symlink: workspace/escape/creds.txt
         result = guard.evaluate("read_file", {"path": str(escape_link / "creds.txt")})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_symlink_chain_resolved(self, tmp_path):
         """Chained symlinks resolved: a -> b -> outside."""
@@ -305,22 +305,22 @@ contracts:
 
         yaml_str = f"""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: chain-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tools: [read_file]
     within: ["{allowed}"]
-    outside: deny
+    outside: block
     message: "Denied"
 """
         guard = _guard(yaml_str)
         result = guard.evaluate("read_file", {"path": str(a_link / "data.txt")})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_realpath_still_allows_normal_paths(self, tmp_path):
         """Regular file inside within dir is still allowed."""
@@ -330,22 +330,22 @@ contracts:
 
         yaml_str = f"""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: normal-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tools: [read_file]
     within: ["{allowed}"]
-    outside: deny
+    outside: block
     message: "Denied"
 """
         guard = _guard(yaml_str)
         result = guard.evaluate("read_file", {"path": str(allowed / "readme.txt")})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
     def test_realpath_still_blocks_dotdot_traversal(self, tmp_path):
         """Existing .. traversal protection still works."""
@@ -354,22 +354,22 @@ contracts:
 
         yaml_str = f"""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: dotdot-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tools: [read_file]
     within: ["{allowed}"]
-    outside: deny
+    outside: block
     message: "Denied"
 """
         guard = _guard(yaml_str)
         result = guard.evaluate("read_file", {"path": str(allowed / ".." / "etc" / "passwd")})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_nonexistent_path_handled(self, tmp_path):
         """Non-existent path doesn't crash -- realpath normalizes it."""
@@ -378,20 +378,20 @@ contracts:
 
         yaml_str = f"""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: nonexistent-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tools: [read_file]
     within: ["{allowed}"]
-    outside: deny
+    outside: block
     message: "Denied"
 """
         guard = _guard(yaml_str)
         # Non-existent path within workspace -- should not crash, still allowed
         result = guard.evaluate("read_file", {"path": str(allowed / "nonexistent" / "file.txt")})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"

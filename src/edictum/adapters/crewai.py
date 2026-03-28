@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from edictum.audit import AuditAction, AuditEvent
 from edictum.envelope import Principal, create_envelope
 from edictum.findings import Finding, PostCallResult, build_findings
-from edictum.pipeline import GovernancePipeline
+from edictum.pipeline import CheckPipeline
 from edictum.session import Session
 
 logger = logging.getLogger(__name__)
@@ -25,11 +25,11 @@ class CrewAIAdapter:
     """Translate Edictum pipeline decisions into CrewAI hook format.
 
     The adapter does NOT contain governance logic -- that lives in
-    GovernancePipeline. The adapter only:
+    CheckPipeline. The adapter only:
     1. Creates envelopes from CrewAI hook context
-    2. Manages pending state (envelope + span) between before/after hooks
+    2. Manages pending state (tool_call + span) between before/after hooks
     3. Translates PreDecision/PostDecision into CrewAI hook responses
-    4. Handles observe mode (deny -> allow conversion)
+    4. Handles observe mode (block -> allow conversion)
 
     CrewAI is sequential, so a single-pending slot correlates before/after.
     """
@@ -42,7 +42,7 @@ class CrewAIAdapter:
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
     ):
         self._guard = guard
-        self._pipeline = GovernancePipeline(guard)
+        self._pipeline = CheckPipeline(guard)
         self._session_id = session_id or str(uuid.uuid4())
         self._session = Session(self._session_id, guard.backend)
         self._call_index = 0
@@ -67,7 +67,7 @@ class CrewAIAdapter:
 
     @staticmethod
     def _normalize_tool_name(name: str) -> str:
-        """Normalize CrewAI tool names to match contract tool names.
+        """Normalize CrewAI tool names to match rule tool names.
 
         Lowercases and replaces spaces, hyphens, and other non-alphanumeric
         separators with underscores, then collapses consecutive underscores.
@@ -92,7 +92,7 @@ class CrewAIAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and is called
+                detect issues. Receives (original_result, violations) and is called
                 for side effects (CrewAI controls the tool result flow).
 
         Imports CrewAI hook registration lazily to avoid hard dependency.
@@ -152,14 +152,14 @@ class CrewAIAdapter:
     async def _before_hook(self, context: Any) -> str | None:
         """Handle a before-tool-call event from CrewAI.
 
-        Returns None to allow, 'DENIED: {reason}' string to deny.
+        Returns None to allow, 'DENIED: {reason}' string to block.
         """
         tool_name: str = context.tool_name
         tool_input: dict = context.tool_input
         call_id = str(uuid.uuid4())
 
-        # Create envelope
-        envelope = create_envelope(
+        # Create tool_call
+        tool_call = create_envelope(
             tool_name=tool_name,
             tool_input=tool_input,
             run_id=self._session_id,
@@ -175,28 +175,28 @@ class CrewAIAdapter:
         await self._session.increment_attempts()
 
         # Start OTel span
-        span = self._guard.telemetry.start_tool_span(envelope)
+        span = self._guard.telemetry.start_tool_span(tool_call)
 
         # Run pipeline
         try:
-            decision = await self._pipeline.pre_execute(envelope, self._session)
+            decision = await self._pipeline.pre_execute(tool_call, self._session)
 
-            # Handle observe mode: convert deny to allow with warning
-            if self._guard.mode == "observe" and decision.action == "deny":
-                await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
+            # Handle observe mode: convert block to allow with warning
+            if self._guard.mode == "observe" and decision.action == "block":
+                await self._emit_audit_pre(tool_call, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
                 span.set_attribute("governance.would_deny_reason", decision.reason)
-                self._pending_envelope = envelope
+                self._pending_envelope = tool_call
                 self._pending_span = span
                 return None  # allow through
 
-            # Handle deny
-            if decision.action == "deny":
-                await self._emit_audit_pre(envelope, decision)
-                self._guard.telemetry.record_denial(envelope, decision.reason)
+            # Handle block
+            if decision.action == "block":
+                await self._emit_audit_pre(tool_call, decision)
+                self._guard.telemetry.record_denial(tool_call, decision.reason)
                 if self._guard._on_deny:
                     try:
-                        self._guard._on_deny(envelope, decision.reason or "", decision.decision_name)
+                        self._guard._on_deny(tool_call, decision.reason or "", decision.decision_name)
                     except Exception:
                         logger.exception("on_deny callback raised")
                 span.set_attribute("governance.action", "denied")
@@ -206,21 +206,21 @@ class CrewAIAdapter:
                 self._pending_span = None
                 return self._deny(decision.reason)
 
-            # Handle per-contract observed denials
+            # Handle per-rule observed denials
             if decision.observed:
                 for cr in decision.contracts_evaluated:
                     if cr.get("observed") and not cr.get("passed"):
                         await self._guard.audit_sink.emit(
                             AuditEvent(
                                 action=AuditAction.CALL_WOULD_DENY,
-                                run_id=envelope.run_id,
-                                call_id=envelope.call_id,
-                                call_index=envelope.call_index,
-                                tool_name=envelope.tool_name,
-                                tool_args=self._guard.redaction.redact_args(envelope.args),
-                                side_effect=envelope.side_effect.value,
-                                environment=envelope.environment,
-                                principal=asdict(envelope.principal) if envelope.principal else None,
+                                run_id=tool_call.run_id,
+                                call_id=tool_call.call_id,
+                                call_index=tool_call.call_index,
+                                tool_name=tool_call.tool_name,
+                                tool_args=self._guard.redaction.redact_args(tool_call.args),
+                                side_effect=tool_call.side_effect.value,
+                                environment=tool_call.environment,
+                                principal=asdict(tool_call.principal) if tool_call.principal else None,
                                 decision_source="precondition",
                                 decision_name=cr["name"],
                                 reason=cr["message"],
@@ -231,14 +231,14 @@ class CrewAIAdapter:
                         )
 
             # Handle allow
-            await self._emit_audit_pre(envelope, decision)
+            await self._emit_audit_pre(tool_call, decision)
             if self._guard._on_allow:
                 try:
-                    self._guard._on_allow(envelope)
+                    self._guard._on_allow(tool_call)
                 except Exception:
                     logger.exception("on_allow callback raised")
             span.set_attribute("governance.action", "allowed")
-            self._pending_envelope = envelope
+            self._pending_envelope = tool_call
             self._pending_span = span
             return None
         except Exception:
@@ -249,10 +249,10 @@ class CrewAIAdapter:
     async def _after_hook(self, context: Any) -> PostCallResult | None:
         """Handle an after-tool-call event from CrewAI. Returns PostCallResult."""
         # Use single-pending slot (sequential execution model)
-        envelope = self._pending_envelope
+        tool_call = self._pending_envelope
         span = self._pending_span
 
-        if envelope is None or span is None:
+        if tool_call is None or span is None:
             return None
 
         # Clear pending state
@@ -262,31 +262,31 @@ class CrewAIAdapter:
         try:
             # Derive tool_success from context
             tool_result = getattr(context, "tool_result", None)
-            tool_success = self._check_tool_success(envelope.tool_name, tool_result)
+            tool_success = self._check_tool_success(tool_call.tool_name, tool_result)
 
             # Run pipeline
-            post_decision = await self._pipeline.post_execute(envelope, tool_result, tool_success)
+            post_decision = await self._pipeline.post_execute(tool_call, tool_result, tool_success)
 
             effective_response = (
                 post_decision.redacted_response if post_decision.redacted_response is not None else tool_result
             )
 
             # Record in session
-            await self._session.record_execution(envelope.tool_name, success=tool_success)
+            await self._session.record_execution(tool_call.tool_name, success=tool_success)
 
             # Emit audit
             action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
             await self._guard.audit_sink.emit(
                 AuditEvent(
                     action=action,
-                    run_id=envelope.run_id,
-                    call_id=envelope.call_id,
-                    call_index=envelope.call_index,
-                    tool_name=envelope.tool_name,
-                    tool_args=self._guard.redaction.redact_args(envelope.args),
-                    side_effect=envelope.side_effect.value,
-                    environment=envelope.environment,
-                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    run_id=tool_call.run_id,
+                    call_id=tool_call.call_id,
+                    call_index=tool_call.call_index,
+                    tool_name=tool_call.tool_name,
+                    tool_args=self._guard.redaction.redact_args(tool_call.args),
+                    side_effect=tool_call.side_effect.value,
+                    environment=tool_call.environment,
+                    principal=asdict(tool_call.principal) if tool_call.principal else None,
                     tool_success=tool_success,
                     postconditions_passed=post_decision.postconditions_passed,
                     contracts_evaluated=post_decision.contracts_evaluated,
@@ -308,39 +308,39 @@ class CrewAIAdapter:
         finally:
             span.end()
 
-        # Build findings
-        findings = build_findings(post_decision)
+        # Build violations
+        violations = build_findings(post_decision)
         post_result = PostCallResult(
             result=effective_response,
             postconditions_passed=post_decision.postconditions_passed,
-            findings=findings,
+            violations=violations,
         )
 
         # Call callback for side effects
         on_warn = getattr(self, "_on_postcondition_warn", None)
         if not post_result.postconditions_passed and on_warn:
             try:
-                on_warn(post_result.result, post_result.findings)
+                on_warn(post_result.result, post_result.violations)
             except Exception:
                 logger.exception("on_postcondition_warn callback raised")
 
         return post_result
 
-    async def _emit_audit_pre(self, envelope: Any, decision: Any, audit_action: AuditAction | None = None) -> None:
+    async def _emit_audit_pre(self, tool_call: Any, decision: Any, audit_action: AuditAction | None = None) -> None:
         if audit_action is None:
-            audit_action = AuditAction.CALL_DENIED if decision.action == "deny" else AuditAction.CALL_ALLOWED
+            audit_action = AuditAction.CALL_DENIED if decision.action == "block" else AuditAction.CALL_ALLOWED
 
         await self._guard.audit_sink.emit(
             AuditEvent(
                 action=audit_action,
-                run_id=envelope.run_id,
-                call_id=envelope.call_id,
-                call_index=envelope.call_index,
-                tool_name=envelope.tool_name,
-                tool_args=self._guard.redaction.redact_args(envelope.args),
-                side_effect=envelope.side_effect.value,
-                environment=envelope.environment,
-                principal=asdict(envelope.principal) if envelope.principal else None,
+                run_id=tool_call.run_id,
+                call_id=tool_call.call_id,
+                call_index=tool_call.call_index,
+                tool_name=tool_call.tool_name,
+                tool_args=self._guard.redaction.redact_args(tool_call.args),
+                side_effect=tool_call.side_effect.value,
+                environment=tool_call.environment,
+                principal=asdict(tool_call.principal) if tool_call.principal else None,
                 decision_source=decision.decision_source,
                 decision_name=decision.decision_name,
                 reason=decision.reason,

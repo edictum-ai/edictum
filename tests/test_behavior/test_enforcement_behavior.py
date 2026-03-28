@@ -1,14 +1,14 @@
 """Behavior tests for enforcement paths.
 
 When the pipeline denies a tool call, the adapter must actually prevent execution.
-Tests that deny decisions are enforced end-to-end, not silently swallowed.
+Tests that block decisions are enforced end-to-end, not silently swallowed.
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-from edictum import Edictum, Verdict, postcondition, precondition
+from edictum import Edictum, Decision, postcondition, precondition
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -16,12 +16,12 @@ from tests.conftest import NullAuditSink
 
 def _make_deny_guard(**extra):
     @precondition("*")
-    def always_deny(envelope):
-        return Verdict.fail("contract violation: access denied")
+    def always_deny(tool_call):
+        return Decision.fail("rule violation: access denied")
 
     defaults = {
         "environment": "test",
-        "contracts": [always_deny],
+        "rules": [always_deny],
         "audit_sink": NullAuditSink(),
         "backend": MemoryBackend(),
     }
@@ -30,10 +30,10 @@ def _make_deny_guard(**extra):
 
 
 class TestPreconditionDenyEnforcement:
-    """Precondition deny must propagate through every adapter."""
+    """Precondition block must propagate through every adapter."""
 
     async def test_crewai_deny_returns_reason_string(self):
-        """CrewAI _before_hook must return a 'DENIED: ...' string on deny."""
+        """CrewAI _before_hook must return a 'DENIED: ...' string on block."""
         from edictum.adapters.crewai import CrewAIAdapter
 
         guard = _make_deny_guard()
@@ -41,11 +41,11 @@ class TestPreconditionDenyEnforcement:
         ctx = SimpleNamespace(tool_name="TestTool", tool_input={}, agent=None, task=None)
         result = await adapter._before_hook(ctx)
         assert isinstance(result, str) and "DENIED" in result, (
-            f"CrewAI must return 'DENIED: ...' string on deny (not {type(result).__name__})"
+            f"CrewAI must return 'DENIED: ...' string on block (not {type(result).__name__})"
         )
 
     async def test_openai_deny_returns_denied_string(self):
-        """OpenAI _pre must return a DENIED: string on deny."""
+        """OpenAI _pre must return a DENIED: string on block."""
         from edictum.adapters.openai_agents import OpenAIAgentsAdapter
 
         guard = _make_deny_guard()
@@ -65,25 +65,25 @@ class TestPreconditionDenyEnforcement:
         request = MagicMock()
         request.tool_call = {"name": "TestTool", "args": {}, "id": "tc-1"}
         result = await adapter._pre_tool_call(request)
-        assert result is not None, "LangChain must not return None on deny"
+        assert result is not None, "LangChain must not return None on block"
 
 
 class TestPostconditionDenyEnforcement:
-    """Postcondition effect=deny must not silently degrade to warn."""
+    """Postcondition action=block must not silently degrade to warn."""
 
     async def test_postcondition_deny_is_reflected_in_post_result(self):
-        """When a postcondition has effect=deny, post result must indicate failure."""
+        """When a postcondition has action=block, post result must indicate failure."""
 
         @postcondition("TestTool")
-        def deny_output(envelope, result):
-            return Verdict.fail("output contains violation")
+        def deny_output(tool_call, result):
+            return Decision.fail("output contains violation")
 
-        deny_output._edictum_effect = "deny"
+        deny_output._edictum_effect = "block"
 
         sink = NullAuditSink()
         guard = Edictum(
             environment="test",
-            contracts=[deny_output],
+            rules=[deny_output],
             audit_sink=sink,
             backend=MemoryBackend(),
         )
@@ -99,24 +99,24 @@ class TestPostconditionDenyEnforcement:
         post_result = await adapter._post("call-1", "violation data")
         assert post_result is not None
         assert post_result.postconditions_passed is False, (
-            "Postcondition with effect=deny must report postconditions_passed=False"
+            "Postcondition with action=block must report postconditions_passed=False"
         )
 
     async def test_postcondition_deny_output_guardrail_rejects(self):
-        """Output guardrail must return reject (not allow) when postcondition has effect=deny."""
+        """Output guardrail must return reject (not allow) when postcondition has action=block."""
         import sys
         from types import ModuleType
 
         @postcondition("TestTool")
-        def deny_output(envelope, result):
-            return Verdict.fail("output contains violation")
+        def deny_output(tool_call, result):
+            return Decision.fail("output contains violation")
 
-        deny_output._edictum_effect = "deny"
+        deny_output._edictum_effect = "block"
 
         guard = Edictum(
             environment="test",
             tools={"TestTool": {"side_effect": "pure"}},
-            contracts=[deny_output],
+            rules=[deny_output],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
         )
@@ -172,7 +172,7 @@ class TestPostconditionDenyEnforcement:
             result = await output_gr.guardrail_function(mock_data)
 
             assert result.action == "reject", (
-                f"Output guardrail must reject when postcondition has effect=deny, but got action={result.action!r}"
+                f"Output guardrail must reject when postcondition has action=block, but got action={result.action!r}"
             )
         finally:
             if orig_agents is not None:
@@ -186,7 +186,7 @@ class TestPostconditionDenyEnforcement:
 
 
 class TestObserveModeEnforcement:
-    """Observe mode must convert deny to allow, not silently skip contracts."""
+    """Observe mode must convert block to allow, not silently skip rules."""
 
     async def test_observe_mode_logs_would_deny(self):
         """In observe mode, denied calls must emit CALL_WOULD_DENY audit events."""

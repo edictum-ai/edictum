@@ -1,4 +1,4 @@
-"""Core Edictum class — construction, contract registry, and method delegation."""
+"""Core Edictum class — construction, rule registry, and method delegation."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from edictum.audit import (
     CompositeSink,
     RedactionPolicy,
 )
-from edictum.envelope import Principal, SideEffect, ToolEnvelope, ToolRegistry
+from edictum.envelope import Principal, SideEffect, ToolCall, ToolRegistry
 from edictum.limits import OperationLimits
 from edictum.otel import get_tracer
 from edictum.storage import MemoryBackend, StorageBackend
@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class _CompiledState:
-    """Immutable snapshot of compiled contracts.
+    """Immutable snapshot of compiled rules.
 
-    All contract lists are tuples (immutable). The entire state is
+    All rule lists are tuples (immutable). The entire state is
     replaced atomically via a single reference assignment in reload(),
     ensuring concurrent evaluations never see a mix of old and new
-    contracts.
+    rules.
     """
 
     preconditions: tuple = ()
@@ -69,14 +69,14 @@ class Edictum:
         mode: str = "enforce",
         limits: OperationLimits | None = None,
         tools: dict[str, dict] | None = None,
-        contracts: list | None = None,
+        rules: list | None = None,
         hooks: list | None = None,
         audit_sink: AuditSink | list[AuditSink] | None = None,
         redaction: RedactionPolicy | None = None,
         backend: StorageBackend | None = None,
         policy_version: str | None = None,
-        on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-        on_allow: Callable[[ToolEnvelope], None] | None = None,
+        on_deny: Callable[[ToolCall, str, str | None], None] | None = None,
+        on_allow: Callable[[ToolCall], None] | None = None,
         success_check: Callable[[str, Any], bool] | None = None,
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
@@ -112,7 +112,7 @@ class Edictum:
                     idempotent=config.get("idempotent", False),
                 )
 
-        # Classify contracts into mutable local lists during construction
+        # Classify rules into mutable local lists during construction
         pre: list = []
         post: list = []
         session: list = []
@@ -122,7 +122,7 @@ class Edictum:
         s_session: list = []
         s_sandbox: list = []
 
-        for item in contracts or []:
+        for item in rules or []:
             contract_type = getattr(item, "_edictum_type", None)
             is_observe = getattr(item, "_edictum_observe", False)
 
@@ -144,7 +144,7 @@ class Edictum:
             elif contract_type == "sandbox":
                 sandbox.append(item)
 
-        # Freeze all contract state into a single immutable snapshot.
+        # Freeze all rule state into a single immutable snapshot.
         # Concurrent evaluations read self._state; reload() replaces it
         # via a single reference assignment (atomic under CPython's GIL
         # and safe under asyncio cooperative scheduling).
@@ -182,7 +182,7 @@ class Edictum:
 
     @property
     def limits(self) -> OperationLimits:
-        """Operation limits for the current contract set."""
+        """Operation limits for the current rule set."""
         return self._state.limits
 
     @limits.setter
@@ -191,7 +191,7 @@ class Edictum:
 
     @property
     def policy_version(self) -> str | None:
-        """SHA256 hash identifying the active contract bundle."""
+        """SHA256 hash identifying the active rule bundle."""
         return self._state.policy_version
 
     @policy_version.setter
@@ -199,13 +199,13 @@ class Edictum:
         self._state = replace(self._state, policy_version=value)
 
     async def reload(self, contracts_yaml: bytes | str) -> None:
-        """Atomically replace all contracts from a YAML bundle.
+        """Atomically replace all rules from a YAML bundle.
 
         Builds a complete ``_CompiledState``, then swaps via a single
         reference assignment. Concurrent evaluations see either
-        fully-old or fully-new contracts, never a mix.
+        fully-old or fully-new rules, never a mix.
 
-        On failure, existing contracts are preserved (fail-closed).
+        On failure, existing rules are preserved (fail-closed).
         """
         from edictum.yaml_engine.compiler import compile_contracts
         from edictum.yaml_engine.loader import load_bundle_string
@@ -213,7 +213,7 @@ class Edictum:
         bundle_data, bundle_hash = load_bundle_string(contracts_yaml)
         compiled = compile_contracts(bundle_data)
 
-        # Sort compiled contracts into enforced vs observe-mode lists,
+        # Sort compiled rules into enforced vs observe-mode lists,
         # mirroring the classification that __init__() does at construction time.
         # Build the full state before touching self._state for atomicity.
         all_contracts = (
@@ -227,26 +227,26 @@ class Edictum:
         observe_post: list = []
         observe_session: list = []
         observe_sandbox: list = []
-        for contract in all_contracts:
-            ctype = getattr(contract, "_edictum_type", None)
-            is_observe = getattr(contract, "_edictum_observe", False)
+        for rule in all_contracts:
+            ctype = getattr(rule, "_edictum_type", None)
+            is_observe = getattr(rule, "_edictum_observe", False)
             if is_observe:
                 if ctype == "precondition":
-                    observe_pre.append(contract)
+                    observe_pre.append(rule)
                 elif ctype == "postcondition":
-                    observe_post.append(contract)
+                    observe_post.append(rule)
                 elif ctype == "session_contract":
-                    observe_session.append(contract)
+                    observe_session.append(rule)
                 elif ctype == "sandbox":
-                    observe_sandbox.append(contract)
+                    observe_sandbox.append(rule)
             elif ctype == "precondition":
-                pre.append(contract)
+                pre.append(rule)
             elif ctype == "postcondition":
-                post.append(contract)
+                post.append(rule)
             elif ctype == "session_contract":
-                session.append(contract)
+                session.append(rule)
             elif ctype == "sandbox":
-                sandbox.append(contract)
+                sandbox.append(rule)
 
         new_state = _CompiledState(
             preconditions=tuple(pre),
@@ -262,7 +262,7 @@ class Edictum:
         )
 
         # Atomic swap — single reference assignment guarantees concurrent
-        # evaluations see a consistent contract set.
+        # evaluations see a consistent rule set.
         self._state = new_state
 
         # Update tool registry (safe: individual dict updates)
@@ -293,52 +293,52 @@ class Edictum:
             else:
                 self._after_hooks.append(item)
 
-    def get_hooks(self, phase: str, envelope: ToolEnvelope) -> list[HookRegistration]:
+    def get_hooks(self, phase: str, tool_call: ToolCall) -> list[HookRegistration]:
         hooks = self._before_hooks if phase == "before" else self._after_hooks
-        return [h for h in hooks if h.tool == "*" or fnmatch(envelope.tool_name, h.tool)]
+        return [h for h in hooks if h.tool == "*" or fnmatch(tool_call.tool_name, h.tool)]
 
     @staticmethod
-    def _filter_by_tool(contracts: list, envelope: ToolEnvelope) -> list:
+    def _filter_by_tool(rules: list, tool_call: ToolCall) -> list:
         result = []
-        for p in contracts:
+        for p in rules:
             tool = getattr(p, "_edictum_tool", "*")
             when = getattr(p, "_edictum_when", None)
-            if tool != "*" and not fnmatch(envelope.tool_name, tool):
+            if tool != "*" and not fnmatch(tool_call.tool_name, tool):
                 continue
-            if when and not when(envelope):
+            if when and not when(tool_call):
                 continue
             result.append(p)
         return result
 
     @staticmethod
-    def _filter_sandbox(contracts: list, envelope: ToolEnvelope) -> list:
+    def _filter_sandbox(rules: list, tool_call: ToolCall) -> list:
         result = []
-        for s in contracts:
+        for s in rules:
             tools = getattr(s, "_edictum_tools", ["*"])
-            if any(fnmatch(envelope.tool_name, p) for p in tools):
+            if any(fnmatch(tool_call.tool_name, p) for p in tools):
                 result.append(s)
         return result
 
-    def get_preconditions(self, envelope: ToolEnvelope) -> list:
-        return self._filter_by_tool(self._state.preconditions, envelope)
+    def get_preconditions(self, tool_call: ToolCall) -> list:
+        return self._filter_by_tool(self._state.preconditions, tool_call)
 
-    def get_postconditions(self, envelope: ToolEnvelope) -> list:
-        return self._filter_by_tool(self._state.postconditions, envelope)
+    def get_postconditions(self, tool_call: ToolCall) -> list:
+        return self._filter_by_tool(self._state.postconditions, tool_call)
 
     def get_session_contracts(self) -> list:
         return list(self._state.session_contracts)
 
-    def get_observe_preconditions(self, envelope: ToolEnvelope) -> list:
-        return self._filter_by_tool(self._state.observe_preconditions, envelope)
+    def get_observe_preconditions(self, tool_call: ToolCall) -> list:
+        return self._filter_by_tool(self._state.observe_preconditions, tool_call)
 
-    def get_observe_postconditions(self, envelope: ToolEnvelope) -> list:
-        return self._filter_by_tool(self._state.observe_postconditions, envelope)
+    def get_observe_postconditions(self, tool_call: ToolCall) -> list:
+        return self._filter_by_tool(self._state.observe_postconditions, tool_call)
 
-    def get_sandbox_contracts(self, envelope: ToolEnvelope) -> list:
-        return self._filter_sandbox(self._state.sandbox_contracts, envelope)
+    def get_sandbox_contracts(self, tool_call: ToolCall) -> list:
+        return self._filter_sandbox(self._state.sandbox_contracts, tool_call)
 
-    def get_observe_sandbox_contracts(self, envelope: ToolEnvelope) -> list:
-        return self._filter_sandbox(self._state.observe_sandbox_contracts, envelope)
+    def get_observe_sandbox_contracts(self, tool_call: ToolCall) -> list:
+        return self._filter_sandbox(self._state.observe_sandbox_contracts, tool_call)
 
     def get_observe_session_contracts(self) -> list:
         return list(self._state.observe_session_contracts)
@@ -356,16 +356,16 @@ class Edictum:
         backend: StorageBackend | None = None,
         environment: str = "production",
         return_report: bool = False,
-        on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-        on_allow: Callable[[ToolEnvelope], None] | None = None,
+        on_deny: Callable[[ToolCall, str, str | None], None] | None = None,
+        on_allow: Callable[[ToolCall], None] | None = None,
         custom_operators: dict[str, Callable[[Any, Any], bool]] | None = None,
-        custom_selectors: dict[str, Callable[[ToolEnvelope], dict[str, Any]]] | None = None,
+        custom_selectors: dict[str, Callable[[ToolCall], dict[str, Any]]] | None = None,
         success_check: Callable[[str, Any], bool] | None = None,
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
         approval_backend: ApprovalBackend | None = None,
     ) -> Edictum | tuple[Edictum, CompositionReport]:
-        """Create an Edictum instance from one or more YAML contract bundles."""
+        """Create an Edictum instance from one or more YAML rule bundles."""
         from edictum._factory import _from_yaml
 
         return _from_yaml(
@@ -399,10 +399,10 @@ class Edictum:
         redaction: RedactionPolicy | None = None,
         backend: StorageBackend | None = None,
         environment: str = "production",
-        on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-        on_allow: Callable[[ToolEnvelope], None] | None = None,
+        on_deny: Callable[[ToolCall, str, str | None], None] | None = None,
+        on_allow: Callable[[ToolCall], None] | None = None,
         custom_operators: dict[str, Callable[[Any, Any], bool]] | None = None,
-        custom_selectors: dict[str, Callable[[ToolEnvelope], dict[str, Any]]] | None = None,
+        custom_selectors: dict[str, Callable[[ToolCall], dict[str, Any]]] | None = None,
         success_check: Callable[[str, Any], bool] | None = None,
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
@@ -442,10 +442,10 @@ class Edictum:
         redaction: RedactionPolicy | None = None,
         backend: StorageBackend | None = None,
         environment: str = "production",
-        on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-        on_allow: Callable[[ToolEnvelope], None] | None = None,
+        on_deny: Callable[[ToolCall, str, str | None], None] | None = None,
+        on_allow: Callable[[ToolCall], None] | None = None,
         custom_operators: dict[str, Callable[[Any, Any], bool]] | None = None,
-        custom_selectors: dict[str, Callable[[ToolEnvelope], dict[str, Any]]] | None = None,
+        custom_selectors: dict[str, Callable[[ToolCall], dict[str, Any]]] | None = None,
         success_check: Callable[[str, Any], bool] | None = None,
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
@@ -479,7 +479,7 @@ class Edictum:
         cls,
         template_dirs: list[str | Path] | None = None,
     ) -> list[TemplateInfo]:
-        """Discover available contract templates."""
+        """Discover available rule templates."""
         from edictum._factory import _list_templates
 
         return _list_templates(cls, template_dirs)
@@ -505,8 +505,8 @@ class Edictum:
         approval_backend: ApprovalBackend | None = None,
         storage_backend: StorageBackend | None = None,
         mode: str = "enforce",
-        on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-        on_allow: Callable[[ToolEnvelope], None] | None = None,
+        on_deny: Callable[[ToolCall, str, str | None], None] | None = None,
+        on_allow: Callable[[ToolCall], None] | None = None,
         success_check: Callable[[str, Any], bool] | None = None,
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
@@ -571,7 +571,7 @@ class Edictum:
         output: str | None = None,
         environment: str | None = None,
     ) -> EvaluationResult:
-        """Dry-run evaluation of a tool call against all matching contracts."""
+        """Dry-run evaluation of a tool call against all matching rules."""
         from edictum._dry_run import _evaluate
 
         return _evaluate(
@@ -596,7 +596,7 @@ class Edictum:
         await _close(self)
 
     async def _start_sse_watcher(self) -> None:
-        """Start a background task that watches for SSE contract updates."""
+        """Start a background task that watches for SSE rule updates."""
         from edictum._server_factory import _start_sse_watcher
 
         await _start_sse_watcher(self)

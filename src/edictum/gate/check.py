@@ -1,4 +1,4 @@
-"""Gate check — stdin -> ToolEnvelope -> evaluate -> stdout."""
+"""Gate check — stdin -> ToolCall -> evaluate -> stdout."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ def run_check(
     config: Any,
     cwd: str,
 ) -> tuple[str, int]:
-    """Core gate check: parse stdin, evaluate contracts, return (stdout_json, exit_code).
+    """Core gate check: parse stdin, evaluate rules, return (stdout_json, exit_code).
 
     Args:
         stdin_data: Raw JSON string from stdin.
@@ -109,7 +109,7 @@ def run_check(
         if getattr(config, "fail_open", False):
             return format_handler.format_output("allow", None, None, 0)
         reason = f"Gate internal error: {exc}"
-        return format_handler.format_output("deny", None, reason, 0)
+        return format_handler.format_output("block", None, reason, 0)
 
 
 def _run_check_inner(
@@ -123,16 +123,16 @@ def _run_check_inner(
     """Inner check logic, separated so exceptions propagate to run_check."""
     # Size check
     if len(stdin_data) > _MAX_STDIN_SIZE:
-        return format_handler.format_output("deny", None, "Denied: stdin payload too large", 0)
+        return format_handler.format_output("block", None, "Denied: stdin payload too large", 0)
 
     # Parse JSON
     try:
         parsed = json.loads(stdin_data)
     except (json.JSONDecodeError, ValueError):
-        return format_handler.format_output("deny", None, "Denied: invalid JSON in stdin", 0)
+        return format_handler.format_output("block", None, "Denied: invalid JSON in stdin", 0)
 
     if not isinstance(parsed, dict):
-        return format_handler.format_output("deny", None, "Denied: stdin must be a JSON object", 0)
+        return format_handler.format_output("block", None, "Denied: stdin must be a JSON object", 0)
 
     # Auto-detect Cursor when hook is registered as claude-code but stdin
     # contains Cursor-specific fields (cursor_version, workspace_roots).
@@ -148,72 +148,72 @@ def _run_check_inner(
     try:
         tool_name, tool_input, parsed_cwd = format_handler.parse_stdin(parsed)
     except Exception:
-        return format_handler.format_output("deny", None, "Denied: failed to parse stdin", 0)
+        return format_handler.format_output("block", None, "Denied: failed to parse stdin", 0)
 
     effective_cwd = parsed_cwd or cwd
 
     # Validate tool_name
     if not tool_name or not isinstance(tool_name, str):
-        return format_handler.format_output("deny", None, "Denied: missing or invalid tool_name", 0)
+        return format_handler.format_output("block", None, "Denied: missing or invalid tool_name", 0)
 
     # Reject control characters in tool_name
     if any(ord(c) < 32 or c == "\x7f" for c in tool_name):
-        return format_handler.format_output("deny", None, "Denied: invalid characters in tool_name", 0)
+        return format_handler.format_output("block", None, "Denied: invalid characters in tool_name", 0)
 
     if not isinstance(tool_input, dict):
-        return format_handler.format_output("deny", None, "Denied: tool_input must be a JSON object", 0)
+        return format_handler.format_output("block", None, "Denied: tool_input must be a JSON object", 0)
 
     # Resolve category
     category = resolve_category(tool_name)
 
-    # Load and evaluate contracts
+    # Load and evaluate rules
     from edictum import Edictum, EdictumConfigError
 
-    contract_paths = list(getattr(config, "contracts", ()))
+    contract_paths = list(getattr(config, "rules", ()))
     fail_open = getattr(config, "fail_open", False)
 
     if not contract_paths:
         if fail_open:
             return format_handler.format_output("allow", None, None, 0)
-        return format_handler.format_output("deny", None, "Denied: no contract paths configured", 0)
+        return format_handler.format_output("block", None, "Denied: no rule paths configured", 0)
 
     # Filter to existing paths
     existing_paths = [p for p in contract_paths if os.path.exists(p)]
     if not existing_paths:
         if fail_open:
             return format_handler.format_output("allow", None, None, 0)
-        return format_handler.format_output("deny", None, "Denied: no contract files found", 0)
+        return format_handler.format_output("block", None, "Denied: no rule files found", 0)
 
     try:
         guard = Edictum.from_yaml(*existing_paths)
     except (EdictumConfigError, Exception):
         if getattr(config, "fail_open", False):
             return format_handler.format_output("allow", None, None, 0)
-        return format_handler.format_output("deny", None, "Denied: failed to load contracts", 0)
+        return format_handler.format_output("block", None, "Denied: failed to load rules", 0)
 
-    # Write contract manifest for Console coverage reporting
+    # Write rule manifest for Console coverage reporting
     _write_contract_manifest(existing_paths, guard, config)
 
     # Evaluate
     result = guard.evaluate(tool_name, tool_input)
 
-    raw_verdict = result.verdict  # "allow", "deny", or "warn"
+    raw_verdict = result.decision  # "allow", "block", or "warn"
 
-    # Gate is binary: allow or deny
-    if raw_verdict == "deny":
-        verdict = "deny"
+    # Gate is binary: allow or block
+    if raw_verdict == "block":
+        decision = "block"
     else:
-        verdict = "allow"  # "allow" and "warn" both pass through
+        decision = "allow"  # "allow" and "warn" both pass through
 
-    # Derive mode and decision info from contract results
+    # Derive mode and decision info from rule results
     mode = "enforce"
-    contract_id = None
+    rule_id = None
     reason = None
     decision_source = None
-    if result.contracts:
-        for c in result.contracts:
+    if result.rules:
+        for c in result.rules:
             if not c.passed:
-                contract_id = c.contract_id
+                rule_id = c.rule_id
                 reason = c.message
                 decision_source = f"yaml_{c.contract_type}"
                 if c.observed:
@@ -221,18 +221,18 @@ def _run_check_inner(
                 break
 
     # Scope enforcement (programmatic, not YAML)
-    if verdict == "allow" and tool_name in _SCOPE_TOOLS:
+    if decision == "allow" and tool_name in _SCOPE_TOOLS:
         file_path = tool_input.get("file_path") or tool_input.get("filePath") or tool_input.get("path")
         scope_allowlist = getattr(config, "scope_allowlist", ())
         is_within, scope_reason = _check_scope(file_path, effective_cwd, scope_allowlist)
         if not is_within:
             # Scope enforcement respects the guard's default mode.
-            # In observe mode, scope logs (would-deny) but does not block.
-            # Self-protection contracts have explicit mode: enforce and fire
+            # In observe mode, scope logs (would-block) but does not block.
+            # Self-protection rules have explicit mode: enforce and fire
             # before scope reaches this point, so they always block.
-            verdict = "deny"
+            decision = "block"
             mode = guard.mode
-            contract_id = "gate-scope-enforcement"
+            rule_id = "gate-scope-enforcement"
             reason = scope_reason
             decision_source = "gate_scope"
 
@@ -256,9 +256,9 @@ def _run_check_inner(
         tool_name=tool_name,
         tool_input=tool_input,
         category=category,
-        verdict=verdict,
+        decision=decision,
         mode=mode,
-        contract_id=contract_id,
+        rule_id=rule_id,
         decision_source=decision_source,
         reason=reason,
         cwd=effective_cwd,
@@ -269,9 +269,9 @@ def _run_check_inner(
         policy_version=guard.policy_version,
     )
 
-    # Observe mode: audit records would-deny, but the assistant is told allow
-    output_verdict = "allow" if (verdict == "deny" and mode == "observe") else verdict
-    return format_handler.format_output(output_verdict, contract_id, reason, result.contracts_evaluated)
+    # Observe mode: audit records would-block, but the assistant is told allow
+    output_verdict = "allow" if (decision == "block" and mode == "observe") else decision
+    return format_handler.format_output(output_verdict, rule_id, reason, result.contracts_evaluated)
 
 
 def _write_contract_manifest(
@@ -279,9 +279,9 @@ def _write_contract_manifest(
     guard: Any,
     config: Any,
 ) -> None:
-    """Write contract manifest for Console coverage reporting.
+    """Write rule manifest for Console coverage reporting.
 
-    Creates a lightweight JSON file with contract IDs, tools, types, and modes.
+    Creates a lightweight JSON file with rule IDs, tools, types, and modes.
     flush_to_console() reads this and includes it as agent_manifest in the sync
     payload so Console can populate the coverage dashboard.
 
@@ -309,7 +309,7 @@ def _write_contract_manifest(
             except (json.JSONDecodeError, OSError):
                 pass
 
-        # Extract contract metadata from YAML files
+        # Extract rule metadata from YAML files
         import yaml
 
         contracts_meta: list[dict] = []
@@ -320,7 +320,7 @@ def _write_contract_manifest(
                 if not isinstance(bundle, dict):
                     continue
                 defaults_mode = bundle.get("defaults", {}).get("mode", "enforce")
-                for c in bundle.get("contracts", []):
+                for c in bundle.get("rules", []):
                     tool = c.get("tool", c.get("tools", "*"))
                     if isinstance(tool, list):
                         tool = ", ".join(tool)
@@ -337,7 +337,7 @@ def _write_contract_manifest(
 
         manifest = {
             "policy_version": policy_version,
-            "contracts": contracts_meta,
+            "rules": contracts_meta,
         }
         # NOTE: Not atomic — a crash mid-write leaves a partial file. This is
         # acceptable because the read path catches JSONDecodeError and the manifest
@@ -352,9 +352,9 @@ def _write_audit(
     tool_name: str,
     tool_input: dict,
     category: str,
-    verdict: str,
+    decision: str,
     mode: str,
-    contract_id: str | None,
+    rule_id: str | None,
     decision_source: str | None,
     reason: str | None,
     cwd: str,
@@ -378,9 +378,9 @@ def _write_audit(
             tool_name=tool_name,
             tool_input=tool_input,
             category=category,
-            verdict=verdict,
+            decision=decision,
             mode=mode,
-            contract_id=contract_id,
+            rule_id=rule_id,
             decision_source=decision_source,
             reason=reason,
             cwd=cwd,
@@ -409,7 +409,7 @@ def main() -> None:
         choices=["claude-code", "copilot", "cursor", "gemini", "opencode", "raw"],
         help="Output format (default: claude-code)",
     )
-    parser.add_argument("--contracts", dest="contracts_path", default=None, help="Override contract path")
+    parser.add_argument("--rules", dest="contracts_path", default=None, help="Override rule path")
     args = parser.parse_args()
 
     from edictum.gate.config import GateConfig, load_gate_config
@@ -418,7 +418,7 @@ def main() -> None:
 
     if args.contracts_path:
         config = GateConfig(
-            contracts=(args.contracts_path,),
+            rules=(args.contracts_path,),
             console=config.console,
             audit=config.audit,
             redaction=config.redaction,

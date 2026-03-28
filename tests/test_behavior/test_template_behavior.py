@@ -8,20 +8,20 @@ from edictum import Edictum, EdictumConfigError, EdictumDenied, TemplateInfo
 
 CUSTOM_TEMPLATE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: support-agent
   description: "Custom template for support agents."
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-ticket-leak
     type: pre
     tool: send_message
     when:
       args.body: { contains: "TICKET-" }
     then:
-      effect: deny
+      action: block
       message: "Ticket references must not be in customer messages."
 """
 
@@ -79,7 +79,7 @@ class TestFromTemplateSearchOrder:
 
     def test_user_dir_overrides_builtin(self, override_dir):
         guard = Edictum.from_template("file-agent", template_dirs=[override_dir])
-        # The override template has 1 contract, the built-in has 3
+        # The override template has 1 rule, the built-in has 3
         assert len(guard._state.preconditions) == 1
 
     def test_builtin_used_as_fallback(self, custom_dir):
@@ -95,13 +95,13 @@ class TestFromTemplateSearchOrder:
 
         # Same name in both dirs, different content
         (dir_a / "my-agent.yaml").write_text(CUSTOM_TEMPLATE.replace("support-agent", "my-agent"))
-        alt_yaml = CUSTOM_TEMPLATE.replace("support-agent", "my-agent").replace("block-ticket-leak", "alt-contract")
+        alt_yaml = CUSTOM_TEMPLATE.replace("support-agent", "my-agent").replace("block-ticket-leak", "alt-rule")
         (dir_b / "my-agent.yaml").write_text(alt_yaml)
 
         guard = Edictum.from_template("my-agent", template_dirs=[dir_a, dir_b])
         # Should load from dir_a (first in list)
-        contract_id = getattr(guard._state.preconditions[0], "_edictum_id", None)
-        assert contract_id == "block-ticket-leak"
+        rule_id = getattr(guard._state.preconditions[0], "_edictum_id", None)
+        assert rule_id == "block-ticket-leak"
 
 
 class TestFromTemplateErrorMessage:

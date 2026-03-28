@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from edictum import Edictum, create_envelope
-from edictum.pipeline import GovernancePipeline
+from edictum.pipeline import CheckPipeline
 from edictum.server.backend import ServerBackend
 from edictum.server.client import EdictumServerError
 from edictum.session import Session
@@ -247,11 +247,11 @@ class TestPipelineBatchIntegration:
             backend=backend,
         )
         session = Session("s1", backend)
-        envelope = create_envelope("Bash", {"command": "ls"})
+        tool_call = create_envelope("Bash", {"command": "ls"})
 
         with patch.object(session, "batch_get_counters", wraps=session.batch_get_counters) as mock_batch:
-            pipeline = GovernancePipeline(guard)
-            decision = await pipeline.pre_execute(envelope, session)
+            pipeline = CheckPipeline(guard)
+            decision = await pipeline.pre_execute(tool_call, session)
 
             # batch_get_counters should have been called once
             mock_batch.assert_called_once()
@@ -267,11 +267,11 @@ class TestPipelineBatchIntegration:
         )
         guard.limits.max_calls_per_tool["Bash"] = 5
         session = Session("s1", backend)
-        envelope = create_envelope("Bash", {"command": "ls"})
+        tool_call = create_envelope("Bash", {"command": "ls"})
 
         with patch.object(session, "batch_get_counters", wraps=session.batch_get_counters) as mock_batch:
-            pipeline = GovernancePipeline(guard)
-            await pipeline.pre_execute(envelope, session)
+            pipeline = CheckPipeline(guard)
+            await pipeline.pre_execute(tool_call, session)
 
             mock_batch.assert_called_once_with(include_tool="Bash")
 
@@ -283,10 +283,10 @@ class TestPipelineBatchIntegration:
             backend=backend,
         )
         session = Session("s1", backend)
-        envelope = create_envelope("Bash", {"command": "ls"})
+        tool_call = create_envelope("Bash", {"command": "ls"})
 
         with patch.object(session, "batch_get_counters", wraps=session.batch_get_counters) as mock_batch:
-            pipeline = GovernancePipeline(guard)
-            await pipeline.pre_execute(envelope, session)
+            pipeline = CheckPipeline(guard)
+            await pipeline.pre_execute(tool_call, session)
 
             mock_batch.assert_called_once_with(include_tool=None)

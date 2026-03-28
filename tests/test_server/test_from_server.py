@@ -13,20 +13,20 @@ from edictum import Edictum, EdictumConfigError
 # Minimal valid YAML bundle for testing
 VALID_BUNDLE_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-bundle
 defaults:
   mode: enforce
-contracts:
-  - id: deny-rm
+rules:
+  - id: block-rm
     type: pre
     tool: bash
     when:
       args.command:
         contains: "rm -rf"
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied."
 """
 
@@ -64,7 +64,7 @@ def _server_patches():
         patch("edictum.server.audit_sink.ServerAuditSink"),
         patch("edictum.server.approval_backend.ServerApprovalBackend"),
         patch("edictum.server.backend.ServerBackend"),
-        patch("edictum.server.contract_source.ServerContractSource"),
+        patch("edictum.server.rule_source.ServerContractSource"),
     )
 
 
@@ -163,7 +163,7 @@ class TestFromServer:
             client = _make_client_mock(side_effect=ConnectionError("unreachable"))
             mock_cls.return_value = client
 
-            with pytest.raises(EdictumConfigError, match="Failed to fetch contracts"):
+            with pytest.raises(EdictumConfigError, match="Failed to fetch rules"):
                 await Edictum.from_server(
                     "https://unreachable.example.com",
                     "key",
@@ -180,7 +180,7 @@ class TestFromServer:
             client = _make_client_mock(response={"yaml_bytes": _b64_yaml("not: valid: yaml: [")})
             mock_cls.return_value = client
 
-            with pytest.raises(EdictumConfigError, match="Failed to parse server contracts"):
+            with pytest.raises(EdictumConfigError, match="Failed to parse server rules"):
                 await Edictum.from_server(
                     "https://example.com",
                     "key",

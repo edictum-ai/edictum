@@ -90,7 +90,7 @@ async def run_with_guard(client: OpenAI) -> None:
     The OpenAI Agents SDK uses input/output guardrails. Here we call
     _pre(name, args, call_id) -> str | None and _post(call_id, result).
     """
-    from contracts import ALL_CONTRACTS
+    from rules import ALL_CONTRACTS
 
     from edictum import Edictum, FileAuditSink
     from edictum.adapters.openai_agents import OpenAIAgentsAdapter
@@ -104,7 +104,7 @@ async def run_with_guard(client: OpenAI) -> None:
     guard = Edictum(
         environment="demo",
         mode="enforce",
-        contracts=ALL_CONTRACTS,
+        rules=ALL_CONTRACTS,
         tools=EDICTUM_TOOLS_CONFIG,
         audit_sink=FileAuditSink(audit_path),
     )

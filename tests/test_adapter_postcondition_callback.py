@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
-from edictum import Edictum, Verdict, postcondition
+from edictum import Edictum, Decision, postcondition
 from edictum.adapters.langchain import LangChainAdapter
 from edictum.findings import Finding, PostCallResult
 from edictum.storage import MemoryBackend
@@ -52,17 +52,17 @@ class TestPostToolCallReturnsPostCallResult:
 
         assert isinstance(result, PostCallResult)
         assert result.postconditions_passed is True
-        assert result.findings == []
+        assert result.violations == []
         assert result.result == "ok"
 
     async def test_returns_postcallresult_with_findings_on_failure(self):
         @postcondition("TestTool")
-        def detect_pii(envelope, result):
+        def detect_pii(tool_call, result):
             if "SSN" in str(result):
-                return Verdict.fail("PII detected: SSN pattern found")
-            return Verdict.pass_()
+                return Decision.fail("PII detected: SSN pattern found")
+            return Decision.pass_()
 
-        guard = make_guard(contracts=[detect_pii])
+        guard = make_guard(rules=[detect_pii])
         adapter = LangChainAdapter(guard)
         request = _make_request()
 
@@ -71,10 +71,10 @@ class TestPostToolCallReturnsPostCallResult:
 
         assert isinstance(post_result, PostCallResult)
         assert post_result.postconditions_passed is False
-        assert len(post_result.findings) == 1
-        assert post_result.findings[0].type == "pii_detected"
-        assert post_result.findings[0].contract_id == "detect_pii"
-        assert "PII detected" in post_result.findings[0].message
+        assert len(post_result.violations) == 1
+        assert post_result.violations[0].type == "pii_detected"
+        assert post_result.violations[0].rule_id == "detect_pii"
+        assert "PII detected" in post_result.violations[0].message
 
     async def test_returns_postcallresult_when_no_pending(self):
         guard = make_guard()
@@ -106,14 +106,14 @@ class TestPostconditionCallback:
         assert result.content == "ok"
 
     async def test_callback_called_when_postconditions_warn(self):
-        """Callback should be invoked with result and findings when postconditions warn."""
+        """Callback should be invoked with result and violations when postconditions warn."""
 
         @postcondition("TestTool")
-        def detect_pii(envelope, result):
-            return Verdict.fail("SSN pattern found in output")
+        def detect_pii(tool_call, result):
+            return Decision.fail("SSN pattern found in output")
 
         callback = MagicMock(return_value="[REDACTED]")
-        guard = make_guard(contracts=[detect_pii])
+        guard = make_guard(rules=[detect_pii])
         adapter = LangChainAdapter(guard)
         wrapper = adapter.as_async_tool_wrapper(on_postcondition_warn=callback)
         request = _make_request()
@@ -128,18 +128,18 @@ class TestPostconditionCallback:
         # Verify callback args
         call_args = callback.call_args
         assert call_args[0][0] == "Patient SSN: 123-45-6789"  # original result
-        findings = call_args[0][1]
-        assert len(findings) == 1
-        assert isinstance(findings[0], Finding)
+        violations = call_args[0][1]
+        assert len(violations) == 1
+        assert isinstance(violations[0], Finding)
 
     async def test_no_callback_returns_original_result(self):
         """Without callback, postcondition warnings are logged but result unchanged."""
 
         @postcondition("TestTool")
-        def detect_pii(envelope, result):
-            return Verdict.fail("SSN found")
+        def detect_pii(tool_call, result):
+            return Decision.fail("SSN found")
 
-        guard = make_guard(contracts=[detect_pii])
+        guard = make_guard(rules=[detect_pii])
         adapter = LangChainAdapter(guard)
         wrapper = adapter.as_async_tool_wrapper()  # no callback
         request = _make_request()
@@ -154,16 +154,16 @@ class TestPostconditionCallback:
         """Callback should receive Finding objects with correct attributes."""
 
         @postcondition("TestTool")
-        def detect_pii(envelope, result):
-            return Verdict.fail("PII detected: SSN pattern")
+        def detect_pii(tool_call, result):
+            return Decision.fail("PII detected: SSN pattern")
 
         received_findings = []
 
-        def capture_callback(result, findings):
-            received_findings.extend(findings)
+        def capture_callback(result, violations):
+            received_findings.extend(violations)
             return result
 
-        guard = make_guard(contracts=[detect_pii])
+        guard = make_guard(rules=[detect_pii])
         adapter = LangChainAdapter(guard)
         wrapper = adapter.as_async_tool_wrapper(on_postcondition_warn=capture_callback)
         request = _make_request()
@@ -176,7 +176,7 @@ class TestPostconditionCallback:
         assert len(received_findings) == 1
         f = received_findings[0]
         assert isinstance(f, Finding)
-        assert f.contract_id == "detect_pii"
+        assert f.rule_id == "detect_pii"
         assert f.field == "output"
         assert "PII detected" in f.message
 
@@ -184,13 +184,13 @@ class TestPostconditionCallback:
         """Callback can return a completely different result."""
 
         @postcondition("TestTool")
-        def detect_issue(envelope, result):
-            return Verdict.fail("bad output")
+        def detect_issue(tool_call, result):
+            return Decision.fail("bad output")
 
-        def replace_result(result, findings):
-            return {"redacted": True, "finding_count": len(findings)}
+        def replace_result(result, violations):
+            return {"redacted": True, "finding_count": len(violations)}
 
-        guard = make_guard(contracts=[detect_issue])
+        guard = make_guard(rules=[detect_issue])
         adapter = LangChainAdapter(guard)
         wrapper = adapter.as_async_tool_wrapper(on_postcondition_warn=replace_result)
         request = _make_request()
@@ -202,23 +202,23 @@ class TestPostconditionCallback:
         assert result == {"redacted": True, "finding_count": 1}
 
     async def test_multiple_findings(self):
-        """Multiple failing postconditions produce multiple findings."""
+        """Multiple failing postconditions produce multiple violations."""
 
         @postcondition("TestTool")
-        def detect_pii(envelope, result):
-            return Verdict.fail("SSN found in patient data")
+        def detect_pii(tool_call, result):
+            return Decision.fail("SSN found in patient data")
 
         @postcondition("TestTool")
-        def detect_secret(envelope, result):
-            return Verdict.fail("API token exposed in output")
+        def detect_secret(tool_call, result):
+            return Decision.fail("API token exposed in output")
 
         received = []
 
-        def capture(result, findings):
-            received.extend(findings)
+        def capture(result, violations):
+            received.extend(violations)
             return "[REDACTED]"
 
-        guard = make_guard(contracts=[detect_pii, detect_secret])
+        guard = make_guard(rules=[detect_pii, detect_secret])
         adapter = LangChainAdapter(guard)
         wrapper = adapter.as_async_tool_wrapper(on_postcondition_warn=capture)
         request = _make_request()
@@ -236,11 +236,11 @@ class TestSyncToolWrapperCallback:
 
     async def test_sync_wrapper_callback_invoked(self):
         @postcondition("TestTool")
-        def detect_issue(envelope, result):
-            return Verdict.fail("issue found")
+        def detect_issue(tool_call, result):
+            return Decision.fail("issue found")
 
         callback = MagicMock(return_value="[FIXED]")
-        guard = make_guard(contracts=[detect_issue])
+        guard = make_guard(rules=[detect_issue])
         adapter = LangChainAdapter(guard)
         wrapper = adapter.as_tool_wrapper(on_postcondition_warn=callback)
         request = _make_request()
@@ -273,13 +273,13 @@ class TestCallbackExceptionSafety:
         """If callback raises, original result is returned unchanged."""
 
         @postcondition("TestTool")
-        def detect_issue(envelope, result):
-            return Verdict.fail("issue found")
+        def detect_issue(tool_call, result):
+            return Decision.fail("issue found")
 
-        def exploding_callback(result, findings):
+        def exploding_callback(result, violations):
             raise RuntimeError("callback exploded")
 
-        guard = make_guard(contracts=[detect_issue])
+        guard = make_guard(rules=[detect_issue])
         adapter = LangChainAdapter(guard)
         wrapper = adapter.as_async_tool_wrapper(on_postcondition_warn=exploding_callback)
         request = _make_request()
@@ -294,13 +294,13 @@ class TestCallbackExceptionSafety:
         """Sync wrapper: callback exception returns original result."""
 
         @postcondition("TestTool")
-        def detect_issue(envelope, result):
-            return Verdict.fail("issue found")
+        def detect_issue(tool_call, result):
+            return Decision.fail("issue found")
 
-        def exploding_callback(result, findings):
+        def exploding_callback(result, violations):
             raise ValueError("boom")
 
-        guard = make_guard(contracts=[detect_issue])
+        guard = make_guard(rules=[detect_issue])
         adapter = LangChainAdapter(guard)
         wrapper = adapter.as_tool_wrapper(on_postcondition_warn=exploding_callback)
         request = _make_request()
@@ -318,7 +318,7 @@ class TestFindingsImportableFromEdictum:
     def test_finding_importable(self):
         from edictum import Finding
 
-        f = Finding(type="test", contract_id="c", field="f", message="m")
+        f = Finding(type="test", rule_id="c", field="f", message="m")
         assert f.type == "test"
 
     def test_postcallresult_importable(self):

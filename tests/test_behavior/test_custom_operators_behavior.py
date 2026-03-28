@@ -15,66 +15,66 @@ from edictum import Edictum, EdictumConfigError, EdictumDenied
 
 YAML_IBAN_CHECK = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: iban-check
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: reject-invalid-iban
     type: pre
     tool: wire_transfer
     when:
       args.destination_account: { is_invalid_iban: true }
     then:
-      effect: deny
+      action: block
       message: "Invalid IBAN: {args.destination_account}"
 """
 
 YAML_POST_PII = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: pii-check
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: detect-pii
     type: post
     tool: lookup_customer
     when:
       output.text: { has_pii_pattern: true }
     then:
-      effect: warn
+      action: warn
       message: "PII detected in output"
 """
 
 YAML_UNKNOWN_OP = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: unknown-op
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: uses-unknown
     type: pre
     tool: some_tool
     when:
       args.value: { totally_unknown_op: true }
     then:
-      effect: deny
+      action: block
       message: "Should not compile"
 """
 
 YAML_ALL_COMBINATOR = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: combinator-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: all-combined
     type: pre
     tool: deploy
@@ -83,18 +83,18 @@ contracts:
         - args.region: { is_restricted_region: true }
         - args.service: { contains: "prod" }
     then:
-      effect: deny
+      action: block
       message: "Cannot deploy to restricted region in prod"
 """
 
 YAML_ANY_COMBINATOR = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: any-combinator
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: any-combined
     type: pre
     tool: execute
@@ -103,61 +103,61 @@ contracts:
         - args.cmd: { is_dangerous_command: true }
         - args.cmd: { contains: "rm -rf" }
     then:
-      effect: deny
+      action: block
       message: "Dangerous command denied"
 """
 
 YAML_DISALLOWED_HOST = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: host-check
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: disallowed-host
     type: pre
     tool: api_call
     when:
       args.url: { is_disallowed_host: true }
     then:
-      effect: deny
+      action: block
       message: "Host not allowed"
 """
 
 YAML_MISSING_FIELD = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: missing-field
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: check-missing
     type: pre
     tool: some_tool
     when:
       args.nonexistent_field: { custom_check: true }
     then:
-      effect: deny
+      action: block
       message: "Should not fire for missing fields"
 """
 
 YAML_MULTI_CUSTOM = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: multi-custom
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: check-cidr
     type: pre
     tool: connect
     when:
       args.ip: { is_private_cidr: true }
     then:
-      effect: deny
+      action: block
       message: "Private CIDR denied"
   - id: check-semver
     type: pre
@@ -165,7 +165,7 @@ contracts:
     when:
       args.version: { is_prerelease: true }
     then:
-      effect: deny
+      action: block
       message: "Pre-release version denied"
 """
 
@@ -178,7 +178,7 @@ _IBAN_RE = re.compile(r"^[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z0-9]?){0,16}$")
 
 
 def _is_invalid_iban(field_value: str, op_value: bool) -> bool:
-    """Returns True when the IBAN is invalid (the deny condition)."""
+    """Returns True when the IBAN is invalid (the block condition)."""
     valid = bool(_IBAN_RE.match(field_value))
     return (not valid) == op_value
 
@@ -224,7 +224,7 @@ def _is_prerelease(field_value: str, op_value: bool) -> bool:
 
 
 class TestCustomOperatorDeniesMatching:
-    """Custom operator returns True for the deny condition and the call is denied."""
+    """Custom operator returns True for the block condition and the call is denied."""
 
     @pytest.mark.asyncio
     async def test_invalid_iban_denied(self):
@@ -252,7 +252,7 @@ class TestCustomOperatorDeniesMatching:
 
 
 class TestCustomOperatorPostcondition:
-    """Custom operator works in postcondition contracts."""
+    """Custom operator works in postcondition rules."""
 
     @pytest.mark.asyncio
     async def test_pii_in_output_warns(self):
@@ -266,7 +266,7 @@ class TestCustomOperatorPostcondition:
             return "Customer SSN: 123-45-6789"
 
         result = await guard.run("lookup_customer", {}, _tool_with_pii)
-        # Warn effect does not raise, but postcondition fires
+        # Warn action does not raise, but postcondition fires
         assert result is not None
 
     @pytest.mark.asyncio
@@ -289,7 +289,7 @@ class TestFromYamlFilePath:
 
     @pytest.mark.asyncio
     async def test_from_yaml_with_custom_operators(self, tmp_path):
-        yaml_file = tmp_path / "contracts.yaml"
+        yaml_file = tmp_path / "rules.yaml"
         yaml_file.write_text(YAML_IBAN_CHECK)
 
         guard = Edictum.from_yaml(
@@ -581,7 +581,7 @@ class TestCustomOperatorTypeError:
             custom_operators={"is_invalid_iban": _bad_op},
         )
         result = guard.evaluate("wire_transfer", {"destination_account": "X"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
         assert result.policy_error is True
 
 
@@ -594,7 +594,7 @@ class TestDryRunEvaluation:
             custom_operators={"is_invalid_iban": _is_invalid_iban},
         )
         result = guard.evaluate("wire_transfer", {"destination_account": "INVALID"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_evaluate_allows_with_custom_op(self):
         guard = Edictum.from_yaml_string(
@@ -602,7 +602,7 @@ class TestDryRunEvaluation:
             custom_operators={"is_invalid_iban": _is_invalid_iban},
         )
         result = guard.evaluate("wire_transfer", {"destination_account": "DE89370400440532013000"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
     def test_evaluate_post_with_custom_op(self):
         guard = Edictum.from_yaml_string(
@@ -610,7 +610,7 @@ class TestDryRunEvaluation:
             custom_operators={"has_pii_pattern": _has_pii_pattern},
         )
         result = guard.evaluate("lookup_customer", {}, output="SSN: 123-45-6789")
-        assert result.verdict == "warn"
+        assert result.decision == "warn"
 
 
 class TestMultipleCustomOperators:

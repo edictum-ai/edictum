@@ -14,14 +14,14 @@ class TestContractCache:
         assert not cache.is_valid("/nonexistent/file.yaml")
 
     def test_cache_hit_after_update(self, tmp_path: Path) -> None:
-        yaml_file = tmp_path / "contracts.yaml"
+        yaml_file = tmp_path / "rules.yaml"
         yaml_file.write_text("test content")
         cache = ContractCache(cache_path=tmp_path / "cache.json")
         cache.update(str(yaml_file))
         assert cache.is_valid(str(yaml_file))
 
     def test_cache_invalidation_on_content_change(self, tmp_path: Path) -> None:
-        yaml_file = tmp_path / "contracts.yaml"
+        yaml_file = tmp_path / "rules.yaml"
         yaml_file.write_text("original content")
         # Disable TTL so is_valid always does full hash check, not mtime-only.
         # Without this, sub-second writes on fast filesystems keep the same
@@ -43,7 +43,7 @@ class TestContractCache:
         assert not cache.is_valid("/some/path")
 
     def test_atomic_write(self, tmp_path: Path) -> None:
-        yaml_file = tmp_path / "contracts.yaml"
+        yaml_file = tmp_path / "rules.yaml"
         yaml_file.write_text("content")
         cache = ContractCache(cache_path=tmp_path / "cache.json")
         cache.update(str(yaml_file))
@@ -72,7 +72,7 @@ class TestContractCache:
         assert not cache.get_all_valid([str(f1), "/nonexistent.yaml"])
 
     def test_cache_creates_parent_dirs(self, tmp_path: Path) -> None:
-        yaml_file = tmp_path / "contracts.yaml"
+        yaml_file = tmp_path / "rules.yaml"
         yaml_file.write_text("content")
         cache_path = tmp_path / "deep" / "nested" / "cache.json"
         cache = ContractCache(cache_path=cache_path)

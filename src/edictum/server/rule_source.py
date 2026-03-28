@@ -1,4 +1,4 @@
-"""SSE client for receiving contract bundle updates from edictum-server."""
+"""SSE client for receiving rule bundle updates from edictum-server."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _STABLE_CONNECTION_SECS = 30.0
 
 
 class ServerContractSource:
-    """Receives contract bundle updates from edictum-server via SSE.
+    """Receives rule bundle updates from edictum-server via SSE.
 
     Subscribes to /api/v1/stream and yields updated bundles.
     Implements auto-reconnect with exponential backoff.
@@ -42,7 +42,7 @@ class ServerContractSource:
         self._closed = False
 
     async def watch(self) -> AsyncIterator[dict]:
-        """Yield contract bundles as they arrive via SSE.
+        """Yield rule bundles as they arrive via SSE.
 
         Passes ``env``, ``bundle_name``, and ``policy_version`` as query
         params so the server can filter events and detect drift.

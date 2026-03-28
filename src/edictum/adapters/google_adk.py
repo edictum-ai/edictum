@@ -12,7 +12,7 @@ from edictum.approval import ApprovalStatus
 from edictum.audit import AuditAction, AuditEvent
 from edictum.envelope import Principal, create_envelope
 from edictum.findings import Finding, PostCallResult, build_findings
-from edictum.pipeline import GovernancePipeline
+from edictum.pipeline import CheckPipeline
 from edictum.session import Session
 
 logger = logging.getLogger(__name__)
@@ -25,11 +25,11 @@ class GoogleADKAdapter:
     """Translate Edictum pipeline decisions into Google ADK plugin/callback format.
 
     The adapter does NOT contain governance logic -- that lives in
-    GovernancePipeline. The adapter only:
+    CheckPipeline. The adapter only:
     1. Creates envelopes from ADK tool callback data
-    2. Manages pending state (envelope + span) between before/after
+    2. Manages pending state (tool_call + span) between before/after
     3. Translates PreDecision/PostDecision into ADK return format
-    4. Handles observe mode (deny -> allow conversion)
+    4. Handles observe mode (block -> allow conversion)
 
     Two integration paths:
 
@@ -50,7 +50,7 @@ class GoogleADKAdapter:
         on_postcondition_warn: Callable[[Any, list[Finding]], Any] | None = None,
     ):
         self._guard = guard
-        self._pipeline = GovernancePipeline(guard)
+        self._pipeline = CheckPipeline(guard)
         self._session_id = session_id or str(uuid.uuid4())
         self._session = Session(self._session_id, guard.backend)
         self._call_index = 0
@@ -112,7 +112,7 @@ class GoogleADKAdapter:
             if agent_name:
                 metadata["adk_agent_name"] = agent_name
 
-        envelope = create_envelope(
+        tool_call = create_envelope(
             tool_name=tool_name,
             tool_input=tool_input,
             run_id=self._session_id,
@@ -130,27 +130,27 @@ class GoogleADKAdapter:
 
         # Start OTel span — invariant: span is ALWAYS ended.
         # Either stored in _pending (ended later by _post/_emit_error_audit)
-        # or ended explicitly on deny/error. The outer except handles crashes.
-        span = self._guard.telemetry.start_tool_span(envelope)
+        # or ended explicitly on block/error. The outer except handles crashes.
+        span = self._guard.telemetry.start_tool_span(tool_call)
 
         try:
-            decision = await self._pipeline.pre_execute(envelope, self._session)
+            decision = await self._pipeline.pre_execute(tool_call, self._session)
 
-            # Handle observe mode: convert deny to allow with warning
-            if self._guard.mode == "observe" and decision.action == "deny":
-                await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
+            # Handle observe mode: convert block to allow with warning
+            if self._guard.mode == "observe" and decision.action == "block":
+                await self._emit_audit_pre(tool_call, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
                 span.set_attribute("governance.would_deny_reason", decision.reason)
-                self._pending[call_id] = (envelope, span)
+                self._pending[call_id] = (tool_call, span)
                 return None  # allow through
 
-            # Handle deny
-            if decision.action == "deny":
-                await self._emit_audit_pre(envelope, decision)
-                self._guard.telemetry.record_denial(envelope, decision.reason)
+            # Handle block
+            if decision.action == "block":
+                await self._emit_audit_pre(tool_call, decision)
+                self._guard.telemetry.record_denial(tool_call, decision.reason)
                 if self._guard._on_deny:
                     try:
-                        self._guard._on_deny(envelope, decision.reason or "", decision.decision_name)
+                        self._guard._on_deny(tool_call, decision.reason or "", decision.decision_name)
                     except Exception:
                         logger.exception("on_deny callback raised")
                 span.set_attribute("governance.action", "denied")
@@ -160,28 +160,28 @@ class GoogleADKAdapter:
 
             # Handle pending_approval
             if decision.action == "pending_approval":
-                result = await self._handle_approval(envelope, decision, span)
+                result = await self._handle_approval(tool_call, decision, span)
                 if result is not None:
                     return result  # span ended inside _handle_approval
                 # Approved -- fall through to allow
-                self._pending[call_id] = (envelope, span)
+                self._pending[call_id] = (tool_call, span)
                 return None
 
-            # Handle per-contract observed denials
+            # Handle per-rule observed denials
             if decision.observed:
                 for cr in decision.contracts_evaluated:
                     if cr.get("observed") and not cr.get("passed"):
                         await self._guard.audit_sink.emit(
                             AuditEvent(
                                 action=AuditAction.CALL_WOULD_DENY,
-                                run_id=envelope.run_id,
-                                call_id=envelope.call_id,
-                                call_index=envelope.call_index,
-                                tool_name=envelope.tool_name,
-                                tool_args=self._guard.redaction.redact_args(envelope.args),
-                                side_effect=envelope.side_effect.value,
-                                environment=envelope.environment,
-                                principal=asdict(envelope.principal) if envelope.principal else None,
+                                run_id=tool_call.run_id,
+                                call_id=tool_call.call_id,
+                                call_index=tool_call.call_index,
+                                tool_name=tool_call.tool_name,
+                                tool_args=self._guard.redaction.redact_args(tool_call.args),
+                                side_effect=tool_call.side_effect.value,
+                                environment=tool_call.environment,
+                                principal=asdict(tool_call.principal) if tool_call.principal else None,
                                 decision_source="precondition",
                                 decision_name=cr["name"],
                                 reason=cr["message"],
@@ -192,14 +192,14 @@ class GoogleADKAdapter:
                         )
 
             # Handle allow
-            await self._emit_audit_pre(envelope, decision)
+            await self._emit_audit_pre(tool_call, decision)
             if self._guard._on_allow:
                 try:
-                    self._guard._on_allow(envelope)
+                    self._guard._on_allow(tool_call)
                 except Exception:
                     logger.exception("on_allow callback raised")
             span.set_attribute("governance.action", "allowed")
-            self._pending[call_id] = (envelope, span)
+            self._pending[call_id] = (tool_call, span)
             return None
         except Exception:
             if call_id not in self._pending:
@@ -207,7 +207,7 @@ class GoogleADKAdapter:
             raise
 
     async def _post(self, call_id: str, tool_response: Any = None) -> PostCallResult:
-        """Run post-execution governance. Returns PostCallResult with findings.
+        """Run post-execution governance. Returns PostCallResult with violations.
 
         Exposed for direct testing without framework imports.
         """
@@ -215,35 +215,35 @@ class GoogleADKAdapter:
         if not pending:
             return PostCallResult(result=tool_response)
 
-        envelope, span = pending
+        tool_call, span = pending
 
         try:
             # Derive tool_success from response
-            tool_success = self._check_tool_success(envelope.tool_name, tool_response)
+            tool_success = self._check_tool_success(tool_call.tool_name, tool_response)
 
             # Run pipeline
-            post_decision = await self._pipeline.post_execute(envelope, tool_response, tool_success)
+            post_decision = await self._pipeline.post_execute(tool_call, tool_response, tool_success)
 
             effective_response = (
                 post_decision.redacted_response if post_decision.redacted_response is not None else tool_response
             )
 
             # Record in session
-            await self._session.record_execution(envelope.tool_name, success=tool_success)
+            await self._session.record_execution(tool_call.tool_name, success=tool_success)
 
             # Emit audit
             action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
             await self._guard.audit_sink.emit(
                 AuditEvent(
                     action=action,
-                    run_id=envelope.run_id,
-                    call_id=envelope.call_id,
-                    call_index=envelope.call_index,
-                    tool_name=envelope.tool_name,
-                    tool_args=self._guard.redaction.redact_args(envelope.args),
-                    side_effect=envelope.side_effect.value,
-                    environment=envelope.environment,
-                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    run_id=tool_call.run_id,
+                    call_id=tool_call.call_id,
+                    call_index=tool_call.call_index,
+                    tool_name=tool_call.tool_name,
+                    tool_args=self._guard.redaction.redact_args(tool_call.args),
+                    side_effect=tool_call.side_effect.value,
+                    environment=tool_call.environment,
+                    principal=asdict(tool_call.principal) if tool_call.principal else None,
                     tool_success=tool_success,
                     postconditions_passed=post_decision.postconditions_passed,
                     contracts_evaluated=post_decision.contracts_evaluated,
@@ -266,11 +266,11 @@ class GoogleADKAdapter:
         finally:
             span.end()
 
-        findings = build_findings(post_decision)
+        violations = build_findings(post_decision)
         post_result = PostCallResult(
             result=effective_response,
             postconditions_passed=post_decision.postconditions_passed,
-            findings=findings,
+            violations=violations,
             output_suppressed=post_decision.output_suppressed,
         )
 
@@ -278,7 +278,7 @@ class GoogleADKAdapter:
         on_warn = getattr(self, "_on_postcondition_warn", None)
         if not post_result.postconditions_passed and on_warn:
             try:
-                on_warn(post_result.result, post_result.findings)
+                on_warn(post_result.result, post_result.violations)
             except Exception:
                 logger.exception("on_postcondition_warn callback raised")
 
@@ -305,21 +305,21 @@ class GoogleADKAdapter:
                 return False
         return True
 
-    async def _emit_audit_pre(self, envelope: Any, decision: Any, audit_action: AuditAction | None = None) -> None:
+    async def _emit_audit_pre(self, tool_call: Any, decision: Any, audit_action: AuditAction | None = None) -> None:
         if audit_action is None:
-            audit_action = AuditAction.CALL_DENIED if decision.action == "deny" else AuditAction.CALL_ALLOWED
+            audit_action = AuditAction.CALL_DENIED if decision.action == "block" else AuditAction.CALL_ALLOWED
 
         await self._guard.audit_sink.emit(
             AuditEvent(
                 action=audit_action,
-                run_id=envelope.run_id,
-                call_id=envelope.call_id,
-                call_index=envelope.call_index,
-                tool_name=envelope.tool_name,
-                tool_args=self._guard.redaction.redact_args(envelope.args),
-                side_effect=envelope.side_effect.value,
-                environment=envelope.environment,
-                principal=asdict(envelope.principal) if envelope.principal else None,
+                run_id=tool_call.run_id,
+                call_id=tool_call.call_id,
+                call_index=tool_call.call_index,
+                tool_name=tool_call.tool_name,
+                tool_args=self._guard.redaction.redact_args(tool_call.args),
+                side_effect=tool_call.side_effect.value,
+                environment=tool_call.environment,
+                principal=asdict(tool_call.principal) if tool_call.principal else None,
                 decision_source=decision.decision_source,
                 decision_name=decision.decision_name,
                 reason=decision.reason,
@@ -338,20 +338,20 @@ class GoogleADKAdapter:
         pending = self._pending.pop(call_id, None) if call_id else None
         if not pending:
             return
-        envelope, span = pending
+        tool_call, span = pending
         try:
-            await self._session.record_execution(envelope.tool_name, success=False)
+            await self._session.record_execution(tool_call.tool_name, success=False)
             await self._guard.audit_sink.emit(
                 AuditEvent(
                     action=AuditAction.CALL_FAILED,
-                    run_id=envelope.run_id,
-                    call_id=envelope.call_id,
-                    call_index=envelope.call_index,
-                    tool_name=envelope.tool_name,
-                    tool_args=self._guard.redaction.redact_args(envelope.args),
-                    side_effect=envelope.side_effect.value,
-                    environment=envelope.environment,
-                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    run_id=tool_call.run_id,
+                    call_id=tool_call.call_id,
+                    call_index=tool_call.call_index,
+                    tool_name=tool_call.tool_name,
+                    tool_args=self._guard.redaction.redact_args(tool_call.args),
+                    side_effect=tool_call.side_effect.value,
+                    environment=tool_call.environment,
+                    principal=asdict(tool_call.principal) if tool_call.principal else None,
                     tool_success=False,
                     error=str(error),
                     session_attempt_count=await self._session.attempt_count(),
@@ -366,15 +366,15 @@ class GoogleADKAdapter:
         finally:
             span.end()
 
-    async def _handle_approval(self, envelope: Any, decision: Any, span: Any) -> dict | None:
+    async def _handle_approval(self, tool_call: Any, decision: Any, span: Any) -> dict | None:
         """Handle pending_approval decisions. Returns denial dict or None to proceed."""
         if self._guard._approval_backend is None:
             reason = "Approval required but no approval backend configured"
-            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_DENIED)
-            self._guard.telemetry.record_denial(envelope, reason)
+            await self._emit_audit_pre(tool_call, decision, audit_action=AuditAction.CALL_DENIED)
+            self._guard.telemetry.record_denial(tool_call, reason)
             if self._guard._on_deny:
                 try:
-                    self._guard._on_deny(envelope, reason, decision.decision_name)
+                    self._guard._on_deny(tool_call, reason, decision.decision_name)
                 except Exception:
                     logger.exception("on_deny callback raised")
             span.set_attribute("governance.action", "denied")
@@ -384,17 +384,17 @@ class GoogleADKAdapter:
 
         # Exceptions from backend calls propagate to _pre()'s outer except,
         # which ends the span uniformly.
-        principal_dict = asdict(envelope.principal) if envelope.principal else None
+        principal_dict = asdict(tool_call.principal) if tool_call.principal else None
         approval_request = await self._guard._approval_backend.request_approval(
-            tool_name=envelope.tool_name,
-            tool_args=envelope.args,
+            tool_name=tool_call.tool_name,
+            tool_args=tool_call.args,
             message=decision.approval_message or decision.reason or "",
             timeout=decision.approval_timeout,
-            timeout_effect=decision.approval_timeout_effect,
+            timeout_action=decision.approval_timeout_action,
             principal=principal_dict,
         )
 
-        await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_REQUESTED)
+        await self._emit_audit_pre(tool_call, decision, audit_action=AuditAction.CALL_APPROVAL_REQUESTED)
 
         approval_decision = await self._guard._approval_backend.wait_for_decision(
             approval_id=approval_request.approval_id,
@@ -403,18 +403,18 @@ class GoogleADKAdapter:
 
         approved = approval_decision.approved
         if not approved and approval_decision.status == ApprovalStatus.TIMEOUT:
-            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_TIMEOUT)
-            if decision.approval_timeout_effect == "allow":
+            await self._emit_audit_pre(tool_call, decision, audit_action=AuditAction.CALL_APPROVAL_TIMEOUT)
+            if decision.approval_timeout_action == "allow":
                 approved = True
         elif approval_decision.approved:
-            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_GRANTED)
+            await self._emit_audit_pre(tool_call, decision, audit_action=AuditAction.CALL_APPROVAL_GRANTED)
         else:
-            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_DENIED)
+            await self._emit_audit_pre(tool_call, decision, audit_action=AuditAction.CALL_APPROVAL_DENIED)
 
         if approved:
             if self._guard._on_allow:
                 try:
-                    self._guard._on_allow(envelope)
+                    self._guard._on_allow(tool_call)
                 except Exception:
                     logger.exception("on_allow callback raised")
             span.set_attribute("governance.action", "approved")
@@ -423,10 +423,10 @@ class GoogleADKAdapter:
         reason = approval_decision.reason or decision.reason or "Approval denied"
         if not approved and approval_decision.status == ApprovalStatus.TIMEOUT:
             reason = f"Approval timed out: {reason}"
-        self._guard.telemetry.record_denial(envelope, reason)
+        self._guard.telemetry.record_denial(tool_call, reason)
         if self._guard._on_deny:
             try:
-                self._guard._on_deny(envelope, reason, decision.decision_name)
+                self._guard._on_deny(tool_call, reason, decision.decision_name)
             except Exception:
                 logger.exception("on_deny callback raised")
         span.set_attribute("governance.action", "denied")
@@ -445,7 +445,7 @@ class GoogleADKAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and is called
+                detect issues. Receives (original_result, violations) and is called
                 for side effects. Overrides the constructor value if provided.
 
         Note:
@@ -510,7 +510,7 @@ class GoogleADKAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and is called
+                detect issues. Receives (original_result, violations) and is called
                 for side effects.
 
         Returns:

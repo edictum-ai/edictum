@@ -1,4 +1,4 @@
-"""Tests for the YAML contract compiler."""
+"""Tests for the YAML rule compiler."""
 
 from __future__ import annotations
 
@@ -42,31 +42,31 @@ class TestCompilePreConditions:
         bundle = _load_and_compile("valid_bundle.yaml")
         fn = bundle.preconditions[0]
         env = _envelope(args={"path": "/home/user/.env"})
-        verdict = fn(env)
-        assert not verdict.passed
-        assert "denied" in verdict.message.lower() or ".env" in verdict.message
+        decision = fn(env)
+        assert not decision.passed
+        assert "denied" in decision.message.lower() or ".env" in decision.message
 
     def test_pre_contract_passes_non_matching(self):
         bundle = _load_and_compile("valid_bundle.yaml")
         fn = bundle.preconditions[0]
         env = _envelope(args={"path": "/home/user/readme.md"})
-        verdict = fn(env)
-        assert verdict.passed
+        decision = fn(env)
+        assert decision.passed
 
     def test_pre_contract_tags_in_metadata(self):
         bundle = _load_and_compile("valid_bundle.yaml")
         fn = bundle.preconditions[0]
         env = _envelope(args={"path": ".env"})
-        verdict = fn(env)
-        assert verdict.metadata.get("tags") == ["secrets", "dlp"]
+        decision = fn(env)
+        assert decision.metadata.get("tags") == ["secrets", "dlp"]
 
     def test_pre_contract_passes_when_field_missing(self):
         """Missing field evaluates to false — rule doesn't fire."""
         bundle = _load_and_compile("valid_bundle.yaml")
         fn = bundle.preconditions[0]
         env = _envelope(args={})
-        verdict = fn(env)
-        assert verdict.passed
+        decision = fn(env)
+        assert decision.passed
 
 
 class TestCompilePostConditions:
@@ -85,16 +85,16 @@ class TestCompilePostConditions:
         bundle = _load_and_compile("valid_bundle.yaml")
         fn = bundle.postconditions[0]
         env = _envelope()
-        verdict = fn(env, "SSN: 123-45-6789")
-        assert not verdict.passed
-        assert verdict.metadata.get("tags") == ["pii"]
+        decision = fn(env, "SSN: 123-45-6789")
+        assert not decision.passed
+        assert decision.metadata.get("tags") == ["pii"]
 
     def test_post_contract_passes_no_match(self):
         bundle = _load_and_compile("valid_bundle.yaml")
         fn = bundle.postconditions[0]
         env = _envelope()
-        verdict = fn(env, "No PII here")
-        assert verdict.passed
+        decision = fn(env, "No PII here")
+        assert decision.passed
 
 
 class TestCompileSessionContracts:
@@ -112,17 +112,17 @@ class TestDisabledContracts:
     def test_disabled_contract_skipped(self):
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "disabled-rule",
                     "type": "pre",
                     "enabled": False,
                     "tool": "read_file",
                     "when": {"args.path": {"contains": ".env"}},
-                    "then": {"effect": "deny", "message": "denied"},
+                    "then": {"action": "block", "message": "denied"},
                 }
             ],
         }
@@ -132,17 +132,17 @@ class TestDisabledContracts:
     def test_enabled_contract_included(self):
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "enabled-rule",
                     "type": "pre",
                     "enabled": True,
                     "tool": "read_file",
                     "when": {"args.path": {"contains": ".env"}},
-                    "then": {"effect": "deny", "message": "denied"},
+                    "then": {"action": "block", "message": "denied"},
                 }
             ],
         }
@@ -154,24 +154,24 @@ class TestModeOverride:
     def test_default_mode_used(self):
         bundle = _load_and_compile("valid_bundle.yaml")
         assert bundle.default_mode == "enforce"
-        # Contract without mode override inherits default
+        # Rule without mode override inherits default
         fn = bundle.preconditions[0]
         assert fn._edictum_mode == "enforce"
 
     def test_per_rule_mode_override(self):
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "observe-rule",
                     "type": "pre",
                     "mode": "observe",
                     "tool": "read_file",
                     "when": {"args.path": {"contains": ".env"}},
-                    "then": {"effect": "deny", "message": "denied"},
+                    "then": {"action": "block", "message": "denied"},
                 }
             ],
         }
@@ -223,17 +223,17 @@ class TestThenMetadata:
     def test_then_metadata_in_verdict(self):
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "meta-rule",
                     "type": "pre",
                     "tool": "read_file",
                     "when": {"args.path": {"contains": ".env"}},
                     "then": {
-                        "effect": "deny",
+                        "action": "block",
                         "message": "denied",
                         "tags": ["secrets"],
                         "metadata": {"severity": "high", "category": "dlp"},
@@ -244,36 +244,36 @@ class TestThenMetadata:
         compiled = compile_contracts(bundle_data)
         fn = compiled.preconditions[0]
         env = _envelope(args={"path": ".env"})
-        verdict = fn(env)
-        assert not verdict.passed
-        assert verdict.metadata.get("tags") == ["secrets"]
-        assert verdict.metadata.get("severity") == "high"
-        assert verdict.metadata.get("category") == "dlp"
+        decision = fn(env)
+        assert not decision.passed
+        assert decision.metadata.get("tags") == ["secrets"]
+        assert decision.metadata.get("severity") == "high"
+        assert decision.metadata.get("category") == "dlp"
 
 
 class TestPolicyError:
     def test_type_mismatch_sets_policy_error(self):
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "type-mismatch",
                     "type": "pre",
                     "tool": "*",
                     "when": {"args.count": {"gt": 5}},
-                    "then": {"effect": "deny", "message": "Count too high."},
+                    "then": {"action": "block", "message": "Count too high."},
                 }
             ],
         }
         compiled = compile_contracts(bundle_data)
         fn = compiled.preconditions[0]
         env = _envelope(args={"count": "not_a_number"})
-        verdict = fn(env)
-        assert not verdict.passed
-        assert verdict.metadata.get("policy_error") is True
+        decision = fn(env)
+        assert not decision.passed
+        assert decision.metadata.get("policy_error") is True
 
 
 class TestPostconditionEffectMetadata:
@@ -282,16 +282,16 @@ class TestPostconditionEffectMetadata:
     def test_effect_stamped_on_post_function(self):
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "redact-secrets",
                     "type": "post",
                     "tool": "*",
                     "when": {"output.text": {"matches_any": ["sk-[a-z0-9]+"]}},
-                    "then": {"effect": "redact", "message": "Secrets found."},
+                    "then": {"action": "redact", "message": "Secrets found."},
                 }
             ],
         }
@@ -302,10 +302,10 @@ class TestPostconditionEffectMetadata:
     def test_default_effect_is_warn(self):
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "pii-check",
                     "type": "post",
@@ -324,16 +324,16 @@ class TestPostconditionEffectMetadata:
 
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "redact-keys",
                     "type": "post",
                     "tool": "*",
                     "when": {"output.text": {"matches_any": ["sk-prod-[a-z0-9]{8}", "AKIA-PROD-[A-Z]{12}"]}},
-                    "then": {"effect": "redact", "message": "Keys found."},
+                    "then": {"action": "redact", "message": "Keys found."},
                 }
             ],
         }
@@ -349,16 +349,16 @@ class TestPostconditionEffectMetadata:
     def test_no_patterns_for_contains_operator(self):
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "contains-check",
                     "type": "post",
                     "tool": "*",
                     "when": {"output.text": {"contains": "secret"}},
-                    "then": {"effect": "redact", "message": "Secret found."},
+                    "then": {"action": "redact", "message": "Secret found."},
                 }
             ],
         }
@@ -371,15 +371,15 @@ class TestSessionLimitsMerging:
     def test_multiple_session_contracts_merge(self):
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "limits-1",
                     "type": "session",
                     "limits": {"max_tool_calls": 100, "max_attempts": 200},
-                    "then": {"effect": "deny", "message": "limit 1"},
+                    "then": {"action": "block", "message": "limit 1"},
                 },
                 {
                     "id": "limits-2",
@@ -388,7 +388,7 @@ class TestSessionLimitsMerging:
                         "max_tool_calls": 50,
                         "max_calls_per_tool": {"bash": 10},
                     },
-                    "then": {"effect": "deny", "message": "limit 2"},
+                    "then": {"action": "block", "message": "limit 2"},
                 },
             ],
         }

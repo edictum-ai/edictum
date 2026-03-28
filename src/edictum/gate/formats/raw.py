@@ -7,7 +7,7 @@ import os
 
 
 class RawFormat:
-    """Raw format: parse standard keys, output full verdict details."""
+    """Raw format: parse standard keys, output full decision details."""
 
     def parse_stdin(self, data: dict) -> tuple[str, dict, str]:
         """Extract tool_name, tool_input, cwd from raw stdin."""
@@ -17,20 +17,20 @@ class RawFormat:
         return tool_name, tool_input, cwd
 
     def format_output(
-        self, verdict: str, contract_id: str | None, reason: str | None, evaluated: int
+        self, decision: str, rule_id: str | None, reason: str | None, evaluated: int
     ) -> tuple[str, int]:
-        """Format full verdict details.
+        """Format full decision details.
 
-        Exit code: 0 for allow, 1 for deny.
+        Exit code: 0 for allow, 1 for block.
         """
         output: dict = {
-            "verdict": verdict,
+            "decision": decision,
             "contracts_evaluated": evaluated,
         }
-        if contract_id:
-            output["contract_id"] = contract_id
+        if rule_id:
+            output["rule_id"] = rule_id
         if reason:
             output["reason"] = reason
 
-        exit_code = 1 if verdict == "deny" else 0
+        exit_code = 1 if decision == "block" else 0
         return json.dumps(output), exit_code

@@ -12,12 +12,12 @@ from edictum.cli.main import cli
 
 BASE_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-base
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: rule-a
     type: pre
     tool: read_file
@@ -25,8 +25,8 @@ contracts:
       args.path:
         contains: ".secret"
     then:
-      effect: deny
-      message: "Denied by contract-a"
+      action: block
+      message: "Denied by rule-a"
   - id: rule-b
     type: pre
     tool: bash
@@ -34,18 +34,18 @@ contracts:
       args.command:
         contains: "rm"
     then:
-      effect: deny
-      message: "Denied by contract-b"
+      action: block
+      message: "Denied by rule-b"
 """
 
 OVERRIDE_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-override
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: rule-a
     type: pre
     tool: read_file
@@ -53,7 +53,7 @@ contracts:
       args.path:
         contains_any: [".secret", ".pem"]
     then:
-      effect: deny
+      action: block
       message: "Denied by overridden rule-a"
   - id: rule-c
     type: post
@@ -62,18 +62,18 @@ contracts:
       output.text:
         contains: "password"
     then:
-      effect: warn
+      action: warn
       message: "Password detected"
 """
 
 THIRD_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-third
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: rule-b
     type: pre
     tool: bash
@@ -81,32 +81,32 @@ contracts:
       args.command:
         contains: "sudo"
     then:
-      effect: deny
+      action: block
       message: "Denied by overridden rule-b"
   - id: rule-d
     type: session
     limits:
       max_tool_calls: 100
     then:
-      effect: deny
+      action: block
       message: "Session limit"
 """
 
 INVALID_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: broken
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: rule-x
     type: pre
     tool: bash
     when:
       args.command: { contains: "rm"
     then:
-      effect: deny
+      action: block
       message: "Broken YAML."
 """
 
@@ -131,10 +131,10 @@ class TestValidateComposition:
         assert result.exit_code == 0
         assert "Composed" in result.output
         # Composed: rule-a (overridden), rule-b (from base), rule-c (from override) = 3
-        assert "3 contracts" in result.output
+        assert "3 rules" in result.output
 
     def test_validate_shows_overrides(self, tmp_path):
-        """edictum validate with contract ID conflicts shows override info."""
+        """edictum validate with rule ID conflicts shows override info."""
         base = tmp_path / "base.yaml"
         base.write_text(BASE_BUNDLE)
         override = tmp_path / "override.yaml"

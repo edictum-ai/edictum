@@ -1,6 +1,6 @@
 """Edictum OpenTelemetry integration.
 
-Emits governance-specific spans for every contract evaluation.
+Emits governance-specific spans for every rule evaluation.
 Gracefully degrades to no-op if OpenTelemetry is not installed.
 
 Install: pip install edictum[otel]
@@ -66,7 +66,7 @@ def configure_otel(
 
     *insecure* controls TLS for the gRPC exporter. ``True`` (default)
     sends spans over plaintext; set to ``False`` for TLS-enabled
-    collectors. Has no effect on the HTTP exporter (use ``https://``
+    collectors. Has no action on the HTTP exporter (use ``https://``
     in *endpoint* instead).
 
     Standard OTel env vars take precedence over arguments:

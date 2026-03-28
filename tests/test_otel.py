@@ -259,16 +259,16 @@ class TestOTelIntegration:
         tracer = trace.get_tracer("edictum")
 
         with tracer.start_as_current_span("edictum.evaluate") as span:
-            span.set_attribute("edictum.contract.id", "restrict-patient-access")
-            span.set_attribute("edictum.verdict", "deny")
+            span.set_attribute("edictum.rule.id", "restrict-patient-access")
+            span.set_attribute("edictum.decision", "block")
             span.set_attribute("edictum.tool.name", "query_patient_records")
             span.set_attribute("edictum.principal.role", "researcher")
 
         spans = exporter.get_finished_spans()
         assert len(spans) == 1
         assert spans[0].name == "edictum.evaluate"
-        assert spans[0].attributes["edictum.contract.id"] == "restrict-patient-access"
-        assert spans[0].attributes["edictum.verdict"] == "deny"
+        assert spans[0].attributes["edictum.rule.id"] == "restrict-patient-access"
+        assert spans[0].attributes["edictum.decision"] == "block"
 
         exporter.clear()
 
@@ -302,16 +302,16 @@ class TestOTelIntegration:
         framework_tracer = trace.get_tracer("langchain")
 
         with framework_tracer.start_as_current_span("langchain.agent_run") as parent:  # noqa: F841
-            with tracer.start_as_current_span("edictum.tool_call") as child:
+            with tracer.start_as_current_span("edictum.envelope") as child:
                 child.set_attribute("edictum.tool.name", "query")
                 with tracer.start_as_current_span("edictum.evaluate") as eval_span:
-                    eval_span.set_attribute("edictum.verdict", "allow")
+                    eval_span.set_attribute("edictum.decision", "allow")
 
         spans = exporter.get_finished_spans()
         assert len(spans) == 3
 
         parent_span = [s for s in spans if s.name == "langchain.agent_run"][0]
-        tool_span = [s for s in spans if s.name == "edictum.tool_call"][0]
+        tool_span = [s for s in spans if s.name == "edictum.envelope"][0]
         eval_span = [s for s in spans if s.name == "edictum.evaluate"][0]
 
         assert tool_span.parent.span_id == parent_span.context.span_id
@@ -348,18 +348,18 @@ class TestOTelIntegration:
         from opentelemetry.trace import StatusCode
 
         from edictum import Edictum, EdictumDenied, precondition
-        from edictum.contracts import Verdict
-        from edictum.envelope import ToolEnvelope
+        from edictum.rules import Decision
+        from edictum.envelope import ToolCall
 
         exporter = self._setup_exporter()
 
         @precondition(tool="DangerousTool")
-        def block_dangerous(envelope: ToolEnvelope) -> Verdict:
-            return Verdict.fail("Tool is too dangerous")
+        def block_dangerous(tool_call: ToolCall) -> Decision:
+            return Decision.fail("Tool is too dangerous")
 
         guard = Edictum(
             mode="enforce",
-            contracts=[block_dangerous],
+            rules=[block_dangerous],
             audit_sink=_NullAuditSink(),
         )
 
@@ -374,7 +374,7 @@ class TestOTelIntegration:
         gov_spans = [s for s in spans if s.name == "edictum.evaluate"]
         assert len(gov_spans) >= 1
 
-        denied_spans = [s for s in gov_spans if s.attributes.get("edictum.verdict") == "call_denied"]
+        denied_spans = [s for s in gov_spans if s.attributes.get("edictum.decision") == "call_denied"]
         assert len(denied_spans) >= 1
         assert denied_spans[0].status.status_code == StatusCode.ERROR
 

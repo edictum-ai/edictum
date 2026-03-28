@@ -8,18 +8,18 @@ from typing import Any
 
 @dataclass(frozen=True)
 class CompositionOverride:
-    """Records a contract that was replaced during composition."""
+    """Records a rule that was replaced during composition."""
 
-    contract_id: str
+    rule_id: str
     overridden_by: str  # source label of the winning layer
     original_source: str  # source label of the replaced layer
 
 
 @dataclass(frozen=True)
 class ObserveContract:
-    """Records a contract added as an observe-mode copy (observe_alongside)."""
+    """Records a rule added as an observe-mode copy (observe_alongside)."""
 
-    contract_id: str
+    rule_id: str
     enforced_source: str  # source label of the enforced version
     observed_source: str  # source label of the observe-mode version
 
@@ -69,18 +69,18 @@ def compose_bundles(*bundles: tuple[dict[str, Any], str]) -> ComposedBundle:
     first_data, first_label = bundles[0]
     merged = _deep_copy_bundle(first_data)
 
-    # Track contract origins: contract_id -> source_label
-    contract_sources: dict[str, str] = {}
-    for c in merged.get("contracts", []):
-        contract_sources[c["id"]] = first_label
+    # Track rule origins: rule_id -> source_label
+    rule_sources: dict[str, str] = {}
+    for c in merged.get("rules", []):
+        rule_sources[c["id"]] = first_label
 
     for data, label in bundles[1:]:
         is_observe_alongside = data.get("observe_alongside", False)
 
         if is_observe_alongside:
-            _merge_observe_alongside(merged, data, label, contract_sources, observes)
+            _merge_observe_alongside(merged, data, label, rule_sources, observes)
         else:
-            _merge_standard(merged, data, label, contract_sources, overrides)
+            _merge_standard(merged, data, label, rule_sources, overrides)
 
     return ComposedBundle(
         bundle=merged,
@@ -102,7 +102,7 @@ def _merge_standard(
     merged: dict[str, Any],
     layer: dict[str, Any],
     label: str,
-    contract_sources: dict[str, str],
+    rule_sources: dict[str, str],
     overrides: list[CompositionOverride],
 ) -> None:
     """Merge a standard (non-observe_alongside) layer into the merged bundle."""
@@ -136,59 +136,59 @@ def _merge_standard(
     if "observability" in layer:
         merged["observability"] = _deep_copy_bundle(layer["observability"])
 
-    # contracts: same ID replaces, unique ID concatenates
-    if "contracts" in layer:
+    # rules: same ID replaces, unique ID concatenates
+    if "rules" in layer:
         existing_by_id: dict[str, int] = {}
-        for i, c in enumerate(merged.get("contracts", [])):
+        for i, c in enumerate(merged.get("rules", [])):
             existing_by_id[c["id"]] = i
 
-        for contract in layer["contracts"]:
-            cid = contract["id"]
-            new_contract = _deep_copy_bundle(contract)
+        for rule in layer["rules"]:
+            cid = rule["id"]
+            new_contract = _deep_copy_bundle(rule)
 
             if cid in existing_by_id:
-                # Replace existing contract
+                # Replace existing rule
                 idx = existing_by_id[cid]
-                original_source = contract_sources.get(cid, "unknown")
+                original_source = rule_sources.get(cid, "unknown")
                 overrides.append(
                     CompositionOverride(
-                        contract_id=cid,
+                        rule_id=cid,
                         overridden_by=label,
                         original_source=original_source,
                     )
                 )
-                merged["contracts"][idx] = new_contract
-                contract_sources[cid] = label
+                merged["rules"][idx] = new_contract
+                rule_sources[cid] = label
             else:
-                # Append new contract
-                merged.setdefault("contracts", []).append(new_contract)
-                existing_by_id[cid] = len(merged["contracts"]) - 1
-                contract_sources[cid] = label
+                # Append new rule
+                merged.setdefault("rules", []).append(new_contract)
+                existing_by_id[cid] = len(merged["rules"]) - 1
+                rule_sources[cid] = label
 
 
 def _merge_observe_alongside(
     merged: dict[str, Any],
     layer: dict[str, Any],
     label: str,
-    contract_sources: dict[str, str],
+    rule_sources: dict[str, str],
     observes: list[ObserveContract],
 ) -> None:
-    """Merge an observe_alongside layer — contracts become observe-mode copies."""
-    for contract in layer.get("contracts", []):
-        cid = contract["id"]
+    """Merge an observe_alongside layer — rules become observe-mode copies."""
+    for rule in layer.get("rules", []):
+        cid = rule["id"]
         observe_id = f"{cid}:candidate"
 
-        observe_contract = _deep_copy_bundle(contract)
+        observe_contract = _deep_copy_bundle(rule)
         observe_contract["id"] = observe_id
         observe_contract["mode"] = "observe"
         observe_contract["_observe"] = True
 
-        merged.setdefault("contracts", []).append(observe_contract)
+        merged.setdefault("rules", []).append(observe_contract)
 
-        enforced_source = contract_sources.get(cid, "")
+        enforced_source = rule_sources.get(cid, "")
         observes.append(
             ObserveContract(
-                contract_id=cid,
+                rule_id=cid,
                 enforced_source=enforced_source,
                 observed_source=label,
             )

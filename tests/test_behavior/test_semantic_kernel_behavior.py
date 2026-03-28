@@ -6,7 +6,7 @@ import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
 
-from edictum import Edictum, Verdict, precondition
+from edictum import Edictum, Decision, precondition
 from edictum.adapters.semantic_kernel import SemanticKernelAdapter
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -90,10 +90,10 @@ class TestTerminateOnDeny:
         try:
 
             @precondition("*")
-            def always_deny(envelope):
-                return Verdict.fail("not allowed")
+            def always_deny(tool_call):
+                return Decision.fail("not allowed")
 
-            guard = _make_guard(contracts=[always_deny])
+            guard = _make_guard(rules=[always_deny])
             adapter = SemanticKernelAdapter(guard)
             kernel, captured = _make_kernel_and_capture()
             adapter.register(kernel)
@@ -111,10 +111,10 @@ class TestTerminateOnDeny:
         try:
 
             @precondition("*")
-            def always_deny(envelope):
-                return Verdict.fail("not allowed")
+            def always_deny(tool_call):
+                return Decision.fail("not allowed")
 
-            guard = _make_guard(contracts=[always_deny])
+            guard = _make_guard(rules=[always_deny])
             adapter = SemanticKernelAdapter(guard, terminate_on_deny=False)
             kernel, captured = _make_kernel_and_capture()
             adapter.register(kernel)
@@ -132,10 +132,10 @@ class TestTerminateOnDeny:
         try:
 
             @precondition("*")
-            def always_deny(envelope):
-                return Verdict.fail("not allowed")
+            def always_deny(tool_call):
+                return Decision.fail("not allowed")
 
-            guard = _make_guard(contracts=[always_deny])
+            guard = _make_guard(rules=[always_deny])
             adapter = SemanticKernelAdapter(guard, terminate_on_deny=False)
             kernel, captured = _make_kernel_and_capture()
             adapter.register(kernel)
@@ -158,10 +158,10 @@ class TestTerminateOnDeny:
         try:
 
             @precondition("*")
-            def always_deny(envelope):
-                return Verdict.fail("not allowed")
+            def always_deny(tool_call):
+                return Decision.fail("not allowed")
 
-            guard = _make_guard(contracts=[always_deny])
+            guard = _make_guard(rules=[always_deny])
             adapter = SemanticKernelAdapter(guard, terminate_on_deny=True)
             kernel, captured = _make_kernel_and_capture()
             adapter.register(kernel)

@@ -1,5 +1,5 @@
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: tools-test
@@ -16,7 +16,7 @@ tools:
   deploy:
     side_effect: irreversible
 
-contracts:
+rules:
   - id: block-sensitive-reads
     type: pre
     tool: read_file
@@ -24,5 +24,5 @@ contracts:
       args.path:
         contains: ".env"
     then:
-      effect: deny
+      action: block
       message: "Denied."

@@ -1,4 +1,4 @@
-"""Custom operator and selector validation for YAML contracts."""
+"""Custom operator and selector validation for YAML rules."""
 
 from __future__ import annotations
 

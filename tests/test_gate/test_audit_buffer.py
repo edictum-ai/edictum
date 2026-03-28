@@ -118,7 +118,7 @@ class TestAuditBufferRead:
         buffer.write(_make_event(action="call_allowed"))
         buffer.write(_make_event(action="call_denied"))
         buffer.write(_make_event(action="call_allowed"))
-        events = buffer.read_recent(verdict="deny")
+        events = buffer.read_recent(decision="block")
         assert len(events) == 1
 
 
@@ -153,9 +153,9 @@ class TestBuildAuditEvent:
             tool_name="Bash",
             tool_input={"command": "ls"},
             category="shell",
-            verdict="allow",
+            decision="allow",
             mode="enforce",
-            contract_id=None,
+            rule_id=None,
             decision_source=None,
             reason=None,
             cwd="/project",
@@ -175,9 +175,9 @@ class TestBuildAuditEvent:
             tool_name="Bash",
             tool_input=long_args,
             category="shell",
-            verdict="allow",
+            decision="allow",
             mode="enforce",
-            contract_id=None,
+            rule_id=None,
             decision_source=None,
             reason=None,
             cwd="/project",
@@ -194,29 +194,29 @@ class TestConsoleEventMapping:
     def test_allow_maps_to_call_allowed(self) -> None:
         raw = {"action": "call_allowed", "mode": "enforce", "tool_name": "Bash"}
         result = AuditBuffer._to_console_event(raw)
-        assert result["verdict"] == "call_allowed"
+        assert result["decision"] == "call_allowed"
 
     def test_deny_enforce_maps_to_call_denied(self) -> None:
         raw = {"action": "call_denied", "mode": "enforce", "tool_name": "Bash"}
         result = AuditBuffer._to_console_event(raw)
-        assert result["verdict"] == "call_denied"
+        assert result["decision"] == "call_denied"
 
     def test_deny_observe_maps_to_call_would_deny(self) -> None:
         raw = {"action": "call_would_deny", "mode": "observe", "tool_name": "Bash"}
         result = AuditBuffer._to_console_event(raw)
-        assert result["verdict"] == "call_would_deny"
+        assert result["decision"] == "call_would_deny"
 
     def test_decision_name_in_payload(self) -> None:
         raw = {
             "action": "call_denied",
             "mode": "enforce",
             "tool_name": "Read",
-            "decision_name": "deny-secret-file-reads",
+            "decision_name": "block-secret-file-reads",
             "decision_source": "yaml_precondition",
             "reason": "Denied: secrets",
         }
         result = AuditBuffer._to_console_event(raw)
-        assert result["payload"]["decision_name"] == "deny-secret-file-reads"
+        assert result["payload"]["decision_name"] == "block-secret-file-reads"
         assert result["payload"]["decision_source"] == "yaml_precondition"
         assert result["payload"]["reason"] == "Denied: secrets"
 

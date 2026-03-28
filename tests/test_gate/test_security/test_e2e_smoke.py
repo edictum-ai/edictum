@@ -11,14 +11,14 @@ from edictum.gate.install import install_claude_code, uninstall_claude_code
 
 _BASE_CONTRACTS = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
   description: test
 defaults:
   mode: enforce
-contracts:
-  - id: deny-env-dump
+rules:
+  - id: block-env-dump
     type: pre
     tool: Bash
     when:
@@ -26,29 +26,29 @@ contracts:
         matches_any:
           - 'cat\\s+\\.env'
     then:
-      effect: deny
+      action: block
       message: "Denied: environment variable access"
 """
 
 
 def test_full_lifecycle(tmp_path: Path) -> None:
-    """init -> install -> check deny -> check allow -> audit WAL has events."""
+    """init -> install -> check block -> check allow -> audit WAL has events."""
     # 1. Set up fake home + gate config
     home = tmp_path / "home"
     home.mkdir()
     gate_dir = home / ".edictum"
     gate_dir.mkdir()
-    (gate_dir / "contracts").mkdir()
+    (gate_dir / "rules").mkdir()
     (gate_dir / "audit").mkdir()
 
-    # Write contracts
-    contracts_path = gate_dir / "contracts" / "base.yaml"
+    # Write rules
+    contracts_path = gate_dir / "rules" / "base.yaml"
     contracts_path.write_text(_BASE_CONTRACTS)
 
     wal_path = gate_dir / "audit" / "wal.jsonl"
 
     config = GateConfig(
-        contracts=(str(contracts_path),),
+        rules=(str(contracts_path),),
         audit=AuditConfig(enabled=True, buffer_path=str(wal_path)),
         redaction=RedactionConfig(enabled=True),
         fail_open=False,
@@ -63,7 +63,7 @@ def test_full_lifecycle(tmp_path: Path) -> None:
     settings = json.loads((claude_dir / "settings.json").read_text())
     assert "PreToolUse" in settings.get("hooks", {})
 
-    # 3. Check: deny case
+    # 3. Check: block case
     stdin_deny = json.dumps(
         {
             "tool_name": "Bash",
@@ -72,7 +72,7 @@ def test_full_lifecycle(tmp_path: Path) -> None:
     )
     stdout, exit_code = run_check(stdin_deny, "claude-code", config, str(tmp_path))
     result = json.loads(stdout)
-    assert "deny" in json.dumps(result).lower()
+    assert "block" in json.dumps(result).lower()
 
     # 4. Check: allow case
     stdin_allow = json.dumps(

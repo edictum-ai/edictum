@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from edictum.server.client import EdictumServerClient
-from edictum.server.contract_source import _STABLE_CONNECTION_SECS, ServerContractSource
+from edictum.server.rule_source import _STABLE_CONNECTION_SECS, ServerContractSource
 
 
 def _make_client(*, env: str = "production", bundle_name: str = "default") -> EdictumServerClient:
@@ -146,7 +146,7 @@ class TestServerContractSource:
         _install_fake_httpx_sse([bad_event, good_event], captured)
 
         received = []
-        with caplog.at_level(logging.WARNING, logger="edictum.server.contract_source"):
+        with caplog.at_level(logging.WARNING, logger="edictum.server.rule_source"):
             async for bundle in source.watch():
                 received.append(bundle)
                 await source.close()
@@ -159,7 +159,7 @@ class TestServerContractSource:
     @pytest.mark.asyncio
     @pytest.mark.security
     async def test_watch_does_not_store_public_key_from_stream(self):
-        """Public keys must NOT come from the same SSE channel as contract data."""
+        """Public keys must NOT come from the same SSE channel as rule data."""
         client = _make_client()
         source = ServerContractSource(client)
 
@@ -308,7 +308,7 @@ class TestServerContractSource:
             await source.close()
 
         with patch("asyncio.sleep", side_effect=stop_after_one):
-            with caplog.at_level(logging.DEBUG, logger="edictum.server.contract_source"):
+            with caplog.at_level(logging.DEBUG, logger="edictum.server.rule_source"):
                 async for _bundle in source.watch():
                     pass
 
@@ -341,7 +341,7 @@ class TestServerContractSource:
                 await source.close()
 
         with patch("asyncio.sleep", side_effect=capture_sleep):
-            with caplog.at_level(logging.DEBUG, logger="edictum.server.contract_source"):
+            with caplog.at_level(logging.DEBUG, logger="edictum.server.rule_source"):
                 async for _bundle in source.watch():
                     pass
 
@@ -550,7 +550,7 @@ class TestServerContractSource:
 
         with patch("asyncio.sleep", side_effect=capture_sleep):
             with patch("time.monotonic", side_effect=monotonic_values):
-                with caplog.at_level(logging.DEBUG, logger="edictum.server.contract_source"):
+                with caplog.at_level(logging.DEBUG, logger="edictum.server.rule_source"):
                     async for _bundle in source.watch():
                         pass
 

@@ -15,7 +15,7 @@ from edictum.cli.main import cli
 
 VALID_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: test-bundle
@@ -24,7 +24,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: block-env-reads
     type: pre
     tool: read_file
@@ -32,7 +32,7 @@ contracts:
       args.path:
         contains_any: [".env", ".secret"]
     then:
-      effect: deny
+      action: block
       message: "Sensitive file '{args.path}' denied."
       tags: [secrets]
 
@@ -43,7 +43,7 @@ contracts:
       args.command:
         matches: '\\brm\\s+-rf\\b'
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied."
       tags: [safety]
 
@@ -54,7 +54,7 @@ contracts:
       output.text:
         matches: '\\b\\d{3}-\\d{2}-\\d{4}\\b'
     then:
-      effect: warn
+      action: warn
       message: "PII detected."
       tags: [pii]
 
@@ -63,14 +63,14 @@ contracts:
     limits:
       max_tool_calls: 50
     then:
-      effect: deny
+      action: block
       message: "Session limit reached."
       tags: [rate-limit]
 """
 
 BUNDLE_V2 = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: test-bundle-v2
@@ -79,7 +79,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: block-env-reads
     type: pre
     tool: read_file
@@ -87,7 +87,7 @@ contracts:
       args.path:
         contains_any: [".env", ".secret", ".pem"]
     then:
-      effect: deny
+      action: block
       message: "Sensitive file '{args.path}' denied."
       tags: [secrets]
 
@@ -97,7 +97,7 @@ contracts:
     when:
       principal.ticket_ref: { exists: false }
     then:
-      effect: deny
+      action: block
       message: "Ticket required."
       tags: [compliance]
 
@@ -108,7 +108,7 @@ contracts:
       output.text:
         matches: '\\b\\d{3}-\\d{2}-\\d{4}\\b'
     then:
-      effect: warn
+      action: warn
       message: "PII detected."
       tags: [pii]
 
@@ -117,30 +117,30 @@ contracts:
     limits:
       max_tool_calls: 100
     then:
-      effect: deny
+      action: block
       message: "Session limit reached."
       tags: [rate-limit]
 """
 
 INVALID_WRONG_EFFECT = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
-  name: bad-effect
+  name: bad-action
 
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: bad-rule
     type: pre
     tool: bash
     when:
       args.command: { contains: "rm" }
     then:
-      effect: warn
-      message: "Wrong effect for pre."
+      action: warn
+      message: "Wrong action for pre."
 """
 
 
@@ -170,7 +170,7 @@ class TestCheckJson:
         parsed = json.loads(result.output)
         assert parsed["tool"] == "read_file"
         assert parsed["args"] == {"path": "safe.txt"}
-        assert parsed["verdict"] == "allow"
+        assert parsed["decision"] == "allow"
         assert parsed["reason"] is None
         assert parsed["contracts_evaluated"] >= 1
         assert parsed["environment"] == "production"
@@ -186,9 +186,9 @@ class TestCheckJson:
         parsed = json.loads(result.output)
         assert parsed["tool"] == "read_file"
         assert parsed["args"] == {"path": "/app/.env"}
-        assert parsed["verdict"] == "deny"
+        assert parsed["decision"] == "block"
         assert parsed["reason"] is not None
-        assert parsed["contract_id"] == "block-env-reads"
+        assert parsed["rule_id"] == "block-env-reads"
         assert parsed["contracts_evaluated"] >= 1
         assert parsed["environment"] == "production"
 
@@ -250,7 +250,7 @@ class TestCheckJson:
         )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        required_keys = {"tool", "args", "verdict", "reason", "contracts_evaluated", "environment"}
+        required_keys = {"tool", "args", "decision", "reason", "contracts_evaluated", "environment"}
         assert required_keys.issubset(parsed.keys())
 
 
@@ -272,7 +272,7 @@ class TestValidateJson:
         assert len(parsed["files"]) == 1
         f = parsed["files"][0]
         assert f["valid"] is True
-        assert f["contracts"] == 4
+        assert f["rules"] == 4
         assert "pre" in f["breakdown"]
 
     def test_invalid_bundle_json(self):
@@ -308,7 +308,7 @@ class TestValidateJson:
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert "composed" in parsed
-        assert parsed["composed"]["contracts"] > 0
+        assert parsed["composed"]["rules"] > 0
         assert "breakdown" in parsed["composed"]
 
     def test_nonexistent_file_json(self):
@@ -411,7 +411,7 @@ class TestDiffJson:
         runner = CliRunner()
         result = runner.invoke(cli, ["diff", old, new, "--json"])
         parsed = json.loads(result.output)
-        # Composition report should be present since bundles share contract IDs
+        # Composition report should be present since bundles share rule IDs
         if "composition" in parsed:
             assert "overrides" in parsed["composition"]
             assert "observe_contracts" in parsed["composition"]
