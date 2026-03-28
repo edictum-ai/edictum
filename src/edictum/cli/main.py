@@ -152,7 +152,7 @@ def _evaluate_all(
     if decision == "allowed":
         sb_verdict, sb_id, sb_msg, sb_evaluated = _evaluate_sandbox_contracts(compiled, tool_call)
         evaluated.extend(sb_evaluated)
-        if sb_verdict == "denied":
+        if sb_verdict == "blocked":
             decision, rule_id, message = sb_verdict, sb_id, sb_msg
     return decision, rule_id, message, evaluated
 
@@ -369,7 +369,7 @@ def check(
     decision, rule_id, message, evaluated = _evaluate_all(compiled, tool_call)
 
     n_evaluated = len(evaluated)
-    verdict_label = "block" if decision == "denied" else "allow"
+    verdict_label = "block" if decision == "blocked" else "allow"
 
     if json_output:
         output: dict[str, Any] = {
@@ -383,10 +383,10 @@ def check(
         if rule_id:
             output["rule_id"] = rule_id
         click.echo(json.dumps(output, indent=2))
-        sys.exit(1 if decision == "denied" else 0)
+        sys.exit(1 if decision == "blocked" else 0)
 
-    if decision == "denied":
-        _console.print(f"[red bold]DENIED[/red bold] by rule [yellow]{escape(rule_id or '')}[/yellow]")
+    if decision == "blocked":
+        _console.print(f"[red bold]BLOCKED[/red bold] by rule [yellow]{escape(rule_id or '')}[/yellow]")
         _console.print(f"  Message: {escape(message or '')}")
         # Show tags if available
         deny_record = evaluated[-1] if evaluated else {}
@@ -594,7 +594,7 @@ def replay(file: str, audit_log: str, output: str | None) -> None:
         new_verdict, rule_id, message, evaluated = _evaluate_all(compiled, tool_call)
 
         # Map to action strings for comparison
-        new_action = "call_denied" if new_verdict == "denied" else "call_allowed"
+        new_action = "call_blocked" if new_verdict == "blocked" else "call_allowed"
         changed = original_action != new_action
 
         if changed:
@@ -609,7 +609,7 @@ def replay(file: str, audit_log: str, output: str | None) -> None:
             "changed": changed,
         }
         if rule_id:
-            report_entry["denied_by"] = rule_id
+            report_entry["blocked_by"] = rule_id
             report_entry["message"] = message
         report_lines.append(report_entry)
 
@@ -629,7 +629,7 @@ def replay(file: str, audit_log: str, output: str | None) -> None:
         for entry in report_lines:
             if entry["changed"]:
                 _console.print(f"  {entry['tool_name']}: {entry['original_action']} -> {entry['new_verdict']}")
-                if entry.get("denied_by"):
+                if entry.get("blocked_by"):
                     _console.print(f"    Rule: {entry['denied_by']}")
     else:
         _console.print("[green]No changes detected.[/green]")
@@ -715,7 +715,7 @@ def _run_cases(file: str, cases: str, environment: str = "production") -> None:
         decision, rule_id, message, evaluated = _evaluate_all(compiled, tool_call)
 
         # Map decision to expected format
-        actual = "block" if decision == "denied" else "allow"
+        actual = "block" if decision == "blocked" else "allow"
 
         # Check match_contract
         contract_match_ok = True
@@ -725,13 +725,13 @@ def _run_cases(file: str, cases: str, environment: str = "production") -> None:
         if actual == expect and contract_match_ok:
             passed += 1
             detail = f"{tool} {json.dumps(args)}"
-            verdict_label = "DENIED" if actual == "block" else "ALLOWED"
+            verdict_label = "BLOCKED" if actual == "block" else "ALLOWED"
             contract_info = f" ({rule_id})" if rule_id else ""
             _console.print(f"[green]  {escape(tc_id)}:[/green] {escape(detail)} -> {verdict_label}{contract_info}")
         else:
             failed += 1
             detail = f"{tool} {json.dumps(args)}"
-            actual_label = "DENIED" if actual == "block" else "ALLOWED"
+            actual_label = "BLOCKED" if actual == "block" else "ALLOWED"
             expected_label = expect.upper()
             if not contract_match_ok:
                 _console.print(

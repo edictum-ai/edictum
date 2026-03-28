@@ -175,7 +175,7 @@ class TestCheckJson:
         assert parsed["contracts_evaluated"] >= 1
         assert parsed["environment"] == "production"
 
-    def test_denied_json_output(self):
+    def test_blocked_json_output(self):
         path = write_file(VALID_BUNDLE)
         runner = CliRunner()
         result = runner.invoke(

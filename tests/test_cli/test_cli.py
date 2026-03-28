@@ -415,15 +415,15 @@ class TestCheckCommand:
     Show which rules matched, which passed, which would block/warn.
 
     Exit code 0: tool call would be ALLOWED
-    Exit code 1: tool call would be DENIED
+    Exit code 1: tool call would be BLOCKED
 
     Output should show:
-    - Decision (ALLOWED / DENIED)
+    - Decision (ALLOWED / BLOCKED)
     - Which rule denied (if denied): id, message, tags
     - How many rules were evaluated
     """
 
-    def test_denied_sensitive_read(self):
+    def test_blocked_sensitive_read(self):
         path = write_file(VALID_BUNDLE)
         runner = CliRunner()
         result = runner.invoke(
@@ -438,7 +438,7 @@ class TestCheckCommand:
             ],
         )
         assert result.exit_code == 1
-        assert "denied" in result.output.lower() or "DENIED" in result.output
+        assert "blocked" in result.output.lower()
         assert "block-env-reads" in result.output
 
     def test_allowed_safe_read(self):
@@ -458,7 +458,7 @@ class TestCheckCommand:
         assert result.exit_code == 0
         assert "allowed" in result.output.lower() or "ALLOWED" in result.output
 
-    def test_denied_destructive_bash(self):
+    def test_blocked_destructive_bash(self):
         path = write_file(VALID_BUNDLE)
         runner = CliRunner()
         result = runner.invoke(
@@ -513,7 +513,7 @@ class TestCheckCommand:
         )
         assert result.exit_code == 0
 
-    def test_check_without_ticket_denied(self):
+    def test_check_without_ticket_blocked(self):
         path = write_file(BUNDLE_V2)
         runner = CliRunner()
         result = runner.invoke(
