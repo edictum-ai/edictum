@@ -32,7 +32,7 @@ Core provides protocols and interfaces. The server SDK provides HTTP-backed impl
 - edictum check + edictum test CLI
 - AuditEvent dataclass + StdoutAuditSink + FileAuditSink (.jsonl) + RedactionPolicy
 - OTel span instrumentation + GovernanceTelemetry
-- Violation classification (violations.py) with pii_detected, secret_detected, policy_violation types
+- Violation classification (findings.py) with pii_detected, secret_detected, policy_violation types
 
 ## Server (edictum-server)
 
@@ -41,7 +41,7 @@ The server is a separate deployment, coming soon as open source. It provides:
 - Production approval workflows (ServerApprovalBackend connects to webhooks, Slack/Teams, review dashboard)
 - Centralized audit ingestion and governance dashboard (block rates, rule drift, sandbox violations)
 - Distributed session state for multi-agent tracking across processes
-- Hot-reload rules via SSE push (ServerRuleSource) without restarting agents
+- Hot-reload rules via SSE push (ServerContractSource) without restarting agents
 - RBAC for rule management (who can create/modify/deploy rules)
 - Cross-agent session tracking (correlate tool calls across agents)
 - SSO integration (Okta, Azure AD) and JWT/OIDC principal verification
@@ -76,7 +76,7 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - v0.7.0: env.* selector, Edictum.from_multiple() guard merging, Claude Code GitHub Actions
 - v0.8.0: Bundle composition (compose_bundles, from_yaml multi-file), dual-mode evaluation
 - v0.8.1: ContractResult → RuleResult rename, terminology enforcement
-- v0.9.0: YAML extensibility (custom_operators, custom_selectors, metadata.* selector, template_dirs, from_yaml_string), adapter lifecycle (on_block, on_allow, success_check, set_principal, principal_resolver), CompositeSink, CLI --json/--environment, OTel TLS
+- v0.9.0: YAML extensibility (custom_operators, custom_selectors, metadata.* selector, template_dirs, from_yaml_string), adapter lifecycle (on_deny, on_allow, success_check, set_principal, principal_resolver), CompositeSink, CLI --json/--environment, OTel TLS
 - Docs overhaul: homepage, quickstart, concepts section, patterns, 7 guides
 - edictum-demo repo: github.com/edictum-ai/edictum-demo
 - v0.10.0: HITL approval workflows (ApprovalBackend, action: ask, timeout/timeout_action), wildcard tool matching (fnmatch), Nanobot adapter, Server SDK package (edictum[server])
@@ -189,7 +189,7 @@ Before tagging a release:
 
 1. `grep -rn` for banned terms (contract/contracts, denied, finding, engine, shadow mode) in src/, docs/, CHANGELOG.md
 2. Verify CLI output strings match .docs-style-guide.md terminology
-3. Verify YAML examples in release notes use correct schema (`then:` block with `action:` and `message:`, not `action:`)
+3. Verify YAML examples in release notes use correct schema (`then:` block with `action:` and `message:`, not `effect:`)
 4. Verify release notes prose uses canonical terms
 5. Run: `pytest tests/ -v && ruff check src/ tests/`
 
