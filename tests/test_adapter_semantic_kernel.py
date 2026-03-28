@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from edictum import Edictum, Decision, postcondition, precondition
+from edictum import Decision, Edictum, postcondition, precondition
 from edictum.adapters.semantic_kernel import SemanticKernelAdapter
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend

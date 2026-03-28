@@ -6,9 +6,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from edictum.rules import Decision
 from edictum.envelope import ToolCall
 from edictum.limits import OperationLimits
+from edictum.rules import Decision
 from edictum.yaml_engine.evaluator import BUILTIN_OPERATOR_NAMES, _PolicyError, evaluate_expression
 
 # Placeholder pattern for message templating: {selector}

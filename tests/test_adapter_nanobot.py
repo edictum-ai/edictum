@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock
 
-from edictum import Edictum, Principal, Decision, postcondition, precondition
+from edictum import Decision, Edictum, Principal, postcondition, precondition
 from edictum.adapters.nanobot import GovernedToolRegistry, NanobotAdapter
 from edictum.approval import ApprovalDecision, ApprovalRequest, ApprovalStatus
 from edictum.audit import AuditAction

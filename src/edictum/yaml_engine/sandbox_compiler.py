@@ -7,8 +7,8 @@ import re
 import shlex
 from typing import Any
 
-from edictum.rules import Decision
 from edictum.envelope import ToolCall
+from edictum.rules import Decision
 
 # Pattern for shell redirection operators at token start.
 # Matches: >>, >, <<, <, or fd-prefixed variants like 2>, 2>>.

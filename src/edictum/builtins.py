@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from edictum.rules import Decision, precondition
 from edictum.envelope import ToolCall
+from edictum.rules import Decision, precondition
 
 
 def deny_sensitive_reads(

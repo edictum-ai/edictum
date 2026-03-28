@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from edictum import Edictum, Decision, postcondition
+from edictum import Decision, Edictum, postcondition
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import CapturingAuditSink

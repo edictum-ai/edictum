@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
-from edictum import Edictum, Decision, postcondition
+from edictum import Decision, Edictum, postcondition
 from edictum.adapters.langchain import LangChainAdapter
 from edictum.findings import Finding, PostCallResult
 from edictum.storage import MemoryBackend

@@ -7,9 +7,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from edictum.rules import Decision
 from edictum.envelope import SideEffect, ToolCall
 from edictum.hooks import HookDecision, HookResult
+from edictum.rules import Decision
 from edictum.session import Session
 
 if TYPE_CHECKING:

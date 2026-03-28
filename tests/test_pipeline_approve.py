@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from edictum import (
+    Decision,
     Edictum,
     EdictumDenied,
-    Decision,
     precondition,
 )
 from edictum.approval import (

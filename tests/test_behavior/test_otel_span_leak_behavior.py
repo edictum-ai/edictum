@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from edictum import Edictum, Decision, precondition
+from edictum import Decision, Edictum, precondition
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink

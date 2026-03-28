@@ -11,8 +11,8 @@ from dataclasses import replace
 import pytest
 
 from edictum import Edictum
-from edictum.rules import Decision
 from edictum.envelope import ToolCall
+from edictum.rules import Decision
 
 # -- Valid YAML fixtures (pass schema validation) ----------------------------
 

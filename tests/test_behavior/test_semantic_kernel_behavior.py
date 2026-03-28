@@ -6,7 +6,7 @@ import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
 
-from edictum import Edictum, Decision, precondition
+from edictum import Decision, Edictum, precondition
 from edictum.adapters.semantic_kernel import SemanticKernelAdapter
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink

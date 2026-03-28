@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from edictum import Edictum, EdictumConfigError, CheckPipeline, SideEffect, create_envelope
+from edictum import CheckPipeline, Edictum, EdictumConfigError, SideEffect, create_envelope
 from edictum.envelope import BashClassifier, ToolRegistry
 from edictum.pipeline import PostDecision
 

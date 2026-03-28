@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from edictum import Edictum, Decision, precondition
+from edictum import Decision, Edictum, precondition
 from edictum.adapters.crewai import CrewAIAdapter
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend

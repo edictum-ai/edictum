@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from edictum import Edictum, OperationLimits, Decision, precondition, session_contract
+from edictum import Decision, Edictum, OperationLimits, precondition, session_contract
 from edictum.envelope import SideEffect, create_envelope
 from edictum.hooks import HookDecision
 from edictum.pipeline import CheckPipeline

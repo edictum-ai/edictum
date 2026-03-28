@@ -6,7 +6,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from edictum.envelope import Principal, create_envelope
-from edictum.evaluation import RuleResult, EvaluationResult
+from edictum.evaluation import EvaluationResult, RuleResult
 
 if TYPE_CHECKING:
     from edictum._guard import Edictum

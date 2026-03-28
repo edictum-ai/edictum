@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 
 from edictum import (
+    Decision,
     Edictum,
     EdictumConfigError,
     EdictumDenied,
     Principal,
-    Decision,
     create_envelope,
     precondition,
 )

@@ -31,7 +31,6 @@ from edictum.audit import (
     StdoutAuditSink,
 )
 from edictum.builtins import deny_sensitive_reads
-from edictum.rules import Decision, postcondition, precondition, session_contract
 from edictum.envelope import (
     BashClassifier,
     Principal,
@@ -40,12 +39,13 @@ from edictum.envelope import (
     ToolRegistry,
     create_envelope,
 )
-from edictum.evaluation import RuleResult, EvaluationResult
+from edictum.evaluation import EvaluationResult, RuleResult
 from edictum.findings import Finding, PostCallResult
 from edictum.hooks import HookDecision, HookResult
 from edictum.limits import OperationLimits
 from edictum.otel import configure_otel, get_tracer, has_otel  # noqa: F401 — get_tracer re-exported for backward compat
 from edictum.pipeline import CheckPipeline, PostDecision, PreDecision
+from edictum.rules import Decision, postcondition, precondition, session_contract
 from edictum.session import Session
 from edictum.storage import MemoryBackend, StorageBackend
 from edictum.telemetry import GovernanceTelemetry

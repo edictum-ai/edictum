@@ -6,7 +6,7 @@ import tempfile
 
 import pytest
 
-from edictum import Edictum, CheckPipeline, SideEffect, create_envelope
+from edictum import CheckPipeline, Edictum, SideEffect, create_envelope
 from edictum.envelope import ToolRegistry
 from edictum.pipeline import PostDecision
 

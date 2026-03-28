@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from edictum import Edictum, EdictumDenied, Decision, precondition
+from edictum import Decision, Edictum, EdictumDenied, precondition
 from edictum.approval import (
     ApprovalBackend,
     ApprovalDecision,

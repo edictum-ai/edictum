@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from edictum import Edictum, Principal, Decision, precondition
+from edictum import Decision, Edictum, Principal, precondition
 from edictum.adapters.google_adk import GoogleADKAdapter
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend

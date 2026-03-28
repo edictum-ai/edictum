@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from edictum import Edictum, Decision, postcondition, precondition
+from edictum import Decision, Edictum, postcondition, precondition
 from edictum.adapters.claude_agent_sdk import ClaudeAgentSDKAdapter
 from edictum.audit import AuditAction
 from edictum.findings import Finding

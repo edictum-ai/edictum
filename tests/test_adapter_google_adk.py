@@ -7,7 +7,7 @@ import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from edictum import Edictum, Principal, Decision, postcondition, precondition
+from edictum import Decision, Edictum, Principal, postcondition, precondition
 from edictum.adapters.google_adk import GoogleADKAdapter
 from edictum.approval import ApprovalDecision, ApprovalRequest, ApprovalStatus
 from edictum.audit import AuditAction

@@ -348,8 +348,8 @@ class TestOTelIntegration:
         from opentelemetry.trace import StatusCode
 
         from edictum import Edictum, EdictumDenied, precondition
-        from edictum.rules import Decision
         from edictum.envelope import ToolCall
+        from edictum.rules import Decision
 
         exporter = self._setup_exporter()
 

@@ -6,7 +6,7 @@ preserving exact-match and '*' semantics.
 
 from __future__ import annotations
 
-from edictum import Edictum, Decision, precondition
+from edictum import Decision, Edictum, precondition
 from edictum.envelope import create_envelope
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink

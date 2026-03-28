@@ -20,12 +20,12 @@ import pytest
 from edictum import (
     AuditAction,
     CollectingAuditSink,
+    Decision,
     Edictum,
     EdictumDenied,
     FileAuditSink,
     Principal,
     ToolCall,
-    Decision,
     precondition,
 )
 

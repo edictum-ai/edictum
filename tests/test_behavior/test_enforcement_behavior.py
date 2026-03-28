@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from edictum import Edictum, Decision, postcondition, precondition
+from edictum import Decision, Edictum, postcondition, precondition
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink

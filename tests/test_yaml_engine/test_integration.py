@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from edictum import Edictum, EdictumConfigError, EdictumDenied
-from edictum.rules import Decision, precondition
 from edictum.envelope import create_envelope
+from edictum.rules import Decision, precondition
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from edictum import Edictum, Decision, precondition
+from edictum import Decision, Edictum, precondition
 from edictum._runner import _ERROR_ACTIONS
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
