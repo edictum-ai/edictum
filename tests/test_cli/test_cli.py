@@ -1082,7 +1082,7 @@ class TestTestCommand:
 
     def test_missing_tool_field(self):
         """edictum test should reject cases missing the 'tool' field."""
-        bad = write_file("cases:\n  - id: no-tool\n    expect: block\n")
+        bad = write_file("cases:\n  - id: no-tool\n    expect: bogus\n")
         rules = write_file(VALID_BUNDLE)
         runner = CliRunner()
         result = runner.invoke(cli, ["test", rules, "--cases", bad])
@@ -1112,14 +1112,14 @@ class TestTestCommand:
         assert "invalid" in result.output.lower()
         assert "warn" in result.output
 
-    def test_invalid_expect_value_block(self):
-        """edictum test should reject 'block' as an expect value."""
-        bad = write_file("cases:\n  - id: bad\n    tool: bash\n    args:\n      command: ls\n    expect: block\n")
+    def test_invalid_expect_value_deny(self):
+        """edictum test should reject 'deny' as an expect value (old terminology)."""
+        bad = write_file("cases:\n  - id: bad\n    tool: bash\n    args:\n      command: ls\n    expect: bogus\n")
         rules = write_file(VALID_BUNDLE)
         runner = CliRunner()
         result = runner.invoke(cli, ["test", rules, "--cases", bad])
         assert result.exit_code == 2
-        assert "block" in result.output
+        assert "bogus" in result.output
 
     def test_mixed_pass_and_fail(self):
         """Mixed results should report correct counts."""

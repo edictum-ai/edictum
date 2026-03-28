@@ -12,25 +12,25 @@ class TestHookDecision:
         assert d.reason is None
 
     def test_deny(self):
-        d = HookDecision.deny("not allowed")
+        d = HookDecision.block("not allowed")
         assert d.result == HookResult.DENY
         assert d.reason == "not allowed"
 
     def test_deny_truncation(self):
         long_reason = "x" * 600
-        d = HookDecision.deny(long_reason)
+        d = HookDecision.block(long_reason)
         assert len(d.reason) == 500
         assert d.reason.endswith("...")
 
     def test_deny_exact_500(self):
         reason = "x" * 500
-        d = HookDecision.deny(reason)
+        d = HookDecision.block(reason)
         assert d.reason == reason
         assert len(d.reason) == 500
 
     def test_deny_501(self):
         reason = "x" * 501
-        d = HookDecision.deny(reason)
+        d = HookDecision.block(reason)
         assert len(d.reason) == 500
         assert d.reason.endswith("...")
 

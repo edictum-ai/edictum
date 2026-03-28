@@ -62,7 +62,7 @@ class TestPreExecute:
 
     async def test_hook_deny(self, session):
         def deny_all(tool_call):
-            return HookDecision.deny("denied by hook")
+            return HookDecision.block("denied by hook")
 
         hook = HookRegistration(phase="before", tool="*", callback=deny_all)
         guard = make_guard(hooks=[hook], backend=session._backend)

@@ -103,7 +103,7 @@ class CheckPipeline:
                     decision = await decision
             except Exception as exc:
                 logger.exception("Hook %s raised", getattr(hook_reg.callback, "__name__", "anonymous"))
-                decision = HookDecision.deny(f"Hook error: {exc}")
+                decision = HookDecision.block(f"Hook error: {exc}")
 
             hook_record = {
                 "name": getattr(hook_reg.callback, "__name__", "anonymous"),
