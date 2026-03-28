@@ -46,10 +46,10 @@ Then read the actual codebase to understand current state:
    - `envelope.py` (ToolCall, Principal, create_envelope, SideEffect, ToolRegistry)
    - `session.py` (Session, counter keys)
    - `audit.py` (AuditEvent, AuditAction, AuditSink, RedactionPolicy, sinks)
-   - `violations.py` (Violation, PostCallResult, build_violations)
+   - `findings.py` (`Finding`, PostCallResult, build_violations)
    - `telemetry.py` (GovernanceTelemetry, start_tool_span, record_block)
    - `approval.py` (ApprovalBackend, ApprovalRequest, ApprovalDecision, ApprovalStatus)
-5. **Existing adapter patterns** — Read at least 2 adapters in `src/edictum/adapters/` to understand the established pattern (constructor, _pre/_post, _block, _check_tool_success, _emit_audit_pre, pending state, observe mode, on_block/on_allow callbacks, approval handling). Good choices:
+5. **Existing adapter patterns** — Read at least 2 adapters in `src/edictum/adapters/` to understand the established pattern (constructor, _pre/_post, _on_deny, _check_tool_success, _emit_audit_pre, pending state, observe mode, on_deny/on_allow callbacks, approval handling). Good choices:
    - One simple adapter (e.g., `openai_agents.py` — clean pre/post with guardrails)
    - One complex adapter (e.g., `nanobot.py` — inline execution + approval handling)
 6. **Test patterns** — Read `tests/conftest.py` (shared fixtures: NullAuditSink, CapturingAuditSink, make_guard pattern), `tests/test_adapter_parity.py` (parity test tiers and helper function conventions), and one adapter test file (e.g., `tests/test_adapter_openai_agents.py`) to understand framework-mocking strategy.
@@ -74,13 +74,13 @@ Check for these categories of violations:
 
 ### Adapter Pattern Violations (HIGH)
 - Does the adapter follow the established constructor pattern? (guard, session_id, principal, principal_resolver)
-- Does it implement ALL required internal methods? (_pre, _post, _emit_audit_pre, _check_tool_success, _block, set_principal, _resolve_principal, session_id property)
+- Does it implement ALL required internal methods? (_pre, _post, _emit_audit_pre, _check_tool_success, _on_deny, set_principal, _resolve_principal, session_id property)
 - Does it follow the correct pre-execution flow? (create_envelope → increment_attempts → start_span → pre_execute → observe/block/allow handling)
 - Does it follow the correct post-execution flow? (pop pending → check_success → post_execute → record_execution → emit audit → end span → build_violations)
 - Does pending state management match the framework's execution model? (dict for parallel, single-slot for sequential, none for inline)
 - Does it handle observe mode correctly? (block → allow with CALL_WOULD_DENY audit)
 - Does it handle per-rule observed blocks?
-- Does it call on_block/on_allow/on_postcondition_warn callbacks at the right place?
+- Does it call on_deny/on_allow/on_postcondition_warn callbacks at the right place?
 
 ### API Design Checklist (HIGH)
 - Does every new parameter have an observable effect with a behavior test?

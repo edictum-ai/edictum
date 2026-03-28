@@ -32,7 +32,7 @@ Core provides protocols and interfaces. The server SDK provides HTTP-backed impl
 - edictum check + edictum test CLI
 - AuditEvent dataclass + StdoutAuditSink + FileAuditSink (.jsonl) + RedactionPolicy
 - OTel span instrumentation + GovernanceTelemetry
-- Violation classification (findings.py) with pii_detected, secret_detected, policy_violation types
+- Violation classification (`findings.py`, `Finding`) with pii_detected, secret_detected, policy_violation types
 
 ## Server (edictum-server)
 
@@ -187,7 +187,7 @@ pytest tests/test_adapter_parity.py -v
 
 Before tagging a release:
 
-1. `grep -rn` for banned terms (contract/contracts, denied, finding, engine, shadow mode) in src/, docs/, CHANGELOG.md
+1. `grep -rn` for banned terms (contract/contracts, denied, engine, shadow mode) in src/, docs/, CHANGELOG.md
 2. Verify CLI output strings match .docs-style-guide.md terminology
 3. Verify YAML examples in release notes use correct schema (`then:` block with `action:` and `message:`, not `effect:`)
 4. Verify release notes prose uses canonical terms

@@ -13,7 +13,7 @@ Everything under `src/edictum/` is the core library (MIT). This includes:
 
 - Pipeline (`pipeline.py`) — CheckPipeline, PreDecision, PostDecision
 - Envelope (`envelope.py`) — ToolCall, Principal, create_envelope()
-- Contracts (`rules.py`) — @precondition, @postcondition, @session_rule, Decision
+- Contracts (`rules.py`) — @precondition, @postcondition, @session_contract, Decision
 - YAML engine (`yaml_engine/`) — loader, evaluator, compiler (including sandbox compilation), templates
 - Adapters (`adapters/`) — all 7 framework adapters
 - Audit (`audit.py`) — AuditEvent, StdoutAuditSink, FileAuditSink, RedactionPolicy
