@@ -4,23 +4,23 @@
 
 ## What It Does
 
-Edictum sits between an agent's decision to call a tool and actual execution. It enforces contracts, hooks, audit trails, and operation limits. When a rule is violated, it tells the agent **why** so it can self-correct.
+Edictum sits between an agent's decision to call a tool and actual execution. It enforces rules, hooks, audit trails, and operation limits. When a rule is violated, it tells the agent **why** so it can self-correct.
 
 ## Package Structure
 
 ```
 src/edictum/
 ├── __init__.py          # Edictum class, guard.run(), exceptions, re-exports
-├── envelope.py          # ToolEnvelope (frozen), SideEffect, ToolRegistry, BashClassifier
+├── envelope.py          # ToolCall (frozen), SideEffect, ToolRegistry, BashClassifier
 ├── hooks.py             # HookDecision (ALLOW/DENY)
-├── contracts.py         # Verdict, @precondition, @postcondition, @session_contract
+├── rules.py         # Decision, @precondition, @postcondition, @session_rule
 ├── limits.py            # OperationLimits (attempt + execution + per-tool caps)
-├── pipeline.py          # GovernancePipeline — single source of governance logic
+├── pipeline.py          # CheckPipeline — single source of governance logic
 ├── session.py           # Session (atomic counters via StorageBackend)
 ├── storage.py           # StorageBackend protocol + MemoryBackend
 ├── audit.py             # AuditEvent, RedactionPolicy, Stdout/File sinks
 ├── telemetry.py         # OpenTelemetry (graceful no-op if absent)
-├── builtins.py          # deny_sensitive_reads()
+├── builtins.py          # block_sensitive_reads()
 ├── types.py             # Internal types (HookRegistration, ToolConfig)
 └── adapters/
     ├── langchain.py         # LangChain adapter (pre/post tool call hooks)
@@ -39,18 +39,18 @@ Every tool call passes through:
 Agent decides to call tool
     │
     ▼
-Adapter creates ToolEnvelope (deep-copied, classified)
+Adapter creates ToolCall (deep-copied, classified)
 Increments attempt_count (BEFORE governance)
     │
     ▼
 Pipeline.pre_execute() — 5 steps:
     1. Attempt limit (>= max_attempts?)
     2. Before hooks (user-defined, can DENY)
-    3. Preconditions (contract checks, can DENY)
-    4. Session contracts (cross-turn state, can DENY)
+    3. Checks (rule checks, can BLOCK)
+    4. Session rules (cross-turn state, can BLOCK)
     5. Execution limits (>= max_tool_calls? per-tool?)
     │
-    ├── DENY → audit event → tell agent why → agent self-corrects
+    ├── BLOCK → audit event → tell agent why → agent self-corrects
     │
     └── ALLOW → tool executes
                     │
@@ -69,24 +69,24 @@ Pipeline.pre_execute() — 5 steps:
 **Pipeline owns ALL governance logic.** Adapters are thin translation layers. Adding a second adapter doesn't fork governance behavior.
 
 **Two counter types:**
-- `max_attempts` — caps ALL PreToolUse events (including denied). Catches denial loops.
+- `max_attempts` — caps ALL PreToolUse events (including blocked). Catches block loops.
 - `max_tool_calls` — caps executions only (PostToolUse). Caps total work done.
 
 **Postconditions are observe-only.** They emit warnings, never block. For pure/read tools: suggest retry. For write/irreversible: warn only.
 
-**Observe mode** (`mode="observe"`): full pipeline runs, audit emits `CALL_WOULD_DENY`, but tool executes anyway. For shadow deployment.
+**Observe mode** (`mode="observe"`): full pipeline runs, audit emits `CALL_WOULD_BLOCK`, but tool executes anyway.
 
 **Zero runtime deps.** OpenTelemetry via optional `edictum[otel]`.
 
 **Redaction at write time.** Destructive by design — no recovery. Sensitive keys, secret value patterns (OpenAI/AWS/JWT/GitHub/Slack), 32KB payload cap.
 
-**BashClassifier is a heuristic, not a security boundary.** Conservative READ allowlist + shell operator detection. Defense in depth with `deny_sensitive_reads()`.
+**BashClassifier is a heuristic, not a security boundary.** Conservative READ allowlist + shell operator detection. Defense in depth with `block_sensitive_reads()`.
 
 ## Usage Modes
 
 **1. Framework-agnostic (`guard.run()`):**
 ```python
-guard = Edictum(contracts=[deny_sensitive_reads()])
+guard = Edictum(rules=[block_sensitive_reads()])
 result = await guard.run("Bash", {"command": "ls"}, my_bash_fn)
 ```
 

@@ -2,7 +2,7 @@
 
 ## What is Edictum
 
-Runtime rule enforcement for AI agent tool calls. Deterministic pipeline: preconditions, postconditions, session rules, principal-aware enforcement. Eight framework adapters (LangChain, CrewAI, Agno, Semantic Kernel, OpenAI Agents SDK, Claude Agent SDK, Nanobot, Google ADK). Zero runtime deps in core.
+Runtime rule enforcement for AI agent tool calls. Deterministic pipeline: checks, output checks, session rules, principal-aware enforcement. Eight framework adapters (LangChain, CrewAI, Agno, Semantic Kernel, OpenAI Agents SDK, Claude Agent SDK, Nanobot, Google ADK). Zero runtime deps in core.
 
 Current version: 0.16.0 (PyPI: `edictum`)
 
@@ -27,21 +27,21 @@ Core provides protocols and interfaces. The server SDK provides HTTP-backed impl
 - YAML rule parsing + validation + templates + composition
 - All 8 framework adapters
 - Sandbox rules (`type: sandbox`) — allowlist-based governance for file paths, commands, and domains
-- Observe mode (shadow deploy)
+- Observe mode
 - on_postcondition_warn callbacks
 - edictum check + edictum test CLI
 - AuditEvent dataclass + StdoutAuditSink + FileAuditSink (.jsonl) + RedactionPolicy
 - OTel span instrumentation + GovernanceTelemetry
-- Finding classification (violations.py) with pii_detected, secret_detected, policy_violation types
+- Violation classification (violations.py) with pii_detected, secret_detected, policy_violation types
 
 ## Server (edictum-server)
 
 The server is a separate deployment, coming soon as open source. It provides:
 
 - Production approval workflows (ServerApprovalBackend connects to webhooks, Slack/Teams, review dashboard)
-- Centralized audit ingestion and governance dashboard (denial rates, rule drift, sandbox violations)
+- Centralized audit ingestion and governance dashboard (block rates, rule drift, sandbox violations)
 - Distributed session state for multi-agent tracking across processes
-- Hot-reload rules via SSE push (ServerContractSource) without restarting agents
+- Hot-reload rules via SSE push (ServerRuleSource) without restarting agents
 - RBAC for rule management (who can create/modify/deploy rules)
 - Cross-agent session tracking (correlate tool calls across agents)
 - SSO integration (Okta, Azure AD) and JWT/OIDC principal verification
@@ -75,12 +75,12 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - v0.6.2: Renamed to_sdk_hooks() → to_hook_callables()
 - v0.7.0: env.* selector, Edictum.from_multiple() guard merging, Claude Code GitHub Actions
 - v0.8.0: Bundle composition (compose_bundles, from_yaml multi-file), dual-mode evaluation
-- v0.8.1: RuleResult → RuleResult rename, terminology enforcement
-- v0.9.0: YAML extensibility (custom_operators, custom_selectors, metadata.* selector, template_dirs, from_yaml_string), adapter lifecycle (on_deny, on_allow, success_check, set_principal, principal_resolver), CompositeSink, CLI --json/--environment, OTel TLS
+- v0.8.1: ContractResult → RuleResult rename, terminology enforcement
+- v0.9.0: YAML extensibility (custom_operators, custom_selectors, metadata.* selector, template_dirs, from_yaml_string), adapter lifecycle (on_block, on_allow, success_check, set_principal, principal_resolver), CompositeSink, CLI --json/--environment, OTel TLS
 - Docs overhaul: homepage, quickstart, concepts section, patterns, 7 guides
 - edictum-demo repo: github.com/edictum-ai/edictum-demo
 - v0.10.0: HITL approval workflows (ApprovalBackend, action: ask, timeout/timeout_action), wildcard tool matching (fnmatch), Nanobot adapter, Server SDK package (edictum[server])
-- v0.11.0: Sandbox rules (type: sandbox) — allowlist-based governance for file paths, commands, and domains. Pipeline stage between preconditions and session.
+- v0.11.0: Sandbox rules (type: sandbox) — allowlist-based governance for file paths, commands, and domains. Pipeline stage between checks and session rules.
 - v0.11.1: Fix path traversal bypass in sandbox within/not_within checks (os.path.normpath normalization)
 - v0.11.2: Security hardening — ServerBackend fail-closed, BashClassifier operator coverage, symlink resolution in sandbox, approval timeout audit accuracy, tool_name validation, MemoryBackend atomicity
 - v0.11.3: Adversarial test suite, CI hardening (bandit + security test step), code-reviewer security criteria, architecture.md refresh
@@ -117,13 +117,13 @@ The binding glossary is `.docs-style-guide.md`. ALL code, comments, docstrings, 
 
 | Wrong | Correct |
 |-------|---------|
-| rule / rules (in prose) | rule / rules |
-| blocked | denied |
+| contract / contracts | rule / rules |
+| denied | blocked |
+| finding | violation |
 | engine (for runtime) | pipeline |
 | shadow mode | observe mode |
-| alert | finding |
 
-**Exception**: None. There are no exceptions. The class was renamed from `RuleResult` to `RuleResult` in v0.8.1 to eliminate the last holdout.
+**Exception**: None. There are no exceptions. The class was renamed from `ContractResult` to `RuleResult` in v0.8.1 to eliminate the last holdout.
 
 Before writing ANY user-facing string, comment, docstring, or documentation, check it against the glossary.
 
@@ -133,7 +133,7 @@ Before adding any new public API (function, method, parameter, class), verify AL
 
 - **Every accepted parameter has an observable action.** If the parameter is in the signature, there must be a test proving it changes behavior. If unimplemented, raise `NotImplementedError` — never silently ignore.
 - **Collection parameters have documented merge semantics.** If a parameter accepts a set/list/dict, document and test whether it EXTENDS defaults or REPLACES them. Use `merged = defaults | custom` for union.
-- **Deny decisions propagate end-to-end.** If the pipeline returns block, trace the path through every adapter. Never return a generic "allow" after processing a block.
+- **Block decisions propagate end-to-end.** If the pipeline returns block, trace the path through every adapter. Never return a generic "allow" after processing a block.
 - **Callbacks fire exactly once.** If a callback is invoked in an inner method AND an outer wrapper, one must be removed. Assert `callback.call_count == 1` in tests.
 - **All adapters handle the new feature.** Run `pytest tests/test_adapter_parity.py -v` after any adapter change.
 - **No ghost features.** If you add it to CLAUDE.md, architecture.md, or any doc page, the code must exist. Run `pytest tests/test_docs_sync.py -v`.
@@ -168,7 +168,7 @@ Examples:
 - Sandbox: symlink escape, double-encoding, null byte injection
 - BashClassifier: every shell metacharacter individually
 - Session limits: concurrent access, counter reset on backend failure
-- Approval: timeout edge cases, status/approved flag combinations
+- Approval: timeout edge cases, status/action combinations
 - Input validation: null bytes, control characters, path separators in tool_name
 
 ## Pre-Merge Verification
@@ -187,7 +187,7 @@ pytest tests/test_adapter_parity.py -v
 
 Before tagging a release:
 
-1. `grep -rn` for banned terms (rule/rules in prose, blocked, engine, shadow mode, alert) in src/, docs/, CHANGELOG.md
+1. `grep -rn` for banned terms (contract/contracts, denied, finding, engine, shadow mode) in src/, docs/, CHANGELOG.md
 2. Verify CLI output strings match .docs-style-guide.md terminology
 3. Verify YAML examples in release notes use correct schema (`then:` block with `action:` and `message:`, not `action:`)
 4. Verify release notes prose uses canonical terms

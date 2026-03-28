@@ -10,7 +10,7 @@
 
 Runtime rule enforcement for AI agent tool calls.
 
-**Prompts are suggestions. Contracts are enforcement.** The LLM cannot talk its way past a rule.
+**Prompts are suggestions. Rules are enforcement.** The LLM cannot talk its way past a rule.
 
 **55us overhead** · **18 adapters across Python, TypeScript, Go** · **Zero runtime deps** · **Fail-closed by default**
 
@@ -28,7 +28,7 @@ from edictum import Edictum, EdictumDenied
 guard = Edictum.from_template("file-agent")
 result = guard.evaluate("read_file", {"path": ".env"})
 print(result.decision)         # "block"
-print(result.deny_reasons[0])  # "Sensitive file '.env' denied."
+print(result.deny_reasons[0])  # "Sensitive file '.env' blocked."
 ```
 
 Full path -- your rule, your enforcement:
@@ -39,7 +39,7 @@ guard = Edictum.from_yaml("rules.yaml")
 try:
     result = await guard.run("read_file", {"path": ".env"}, read_file)
 except EdictumDenied as e:
-    print(e.reason)  # "Sensitive file '.env' denied."
+    print(e.reason)  # "Sensitive file '.env' blocked."
 ```
 
 `rules.yaml`:
@@ -60,10 +60,10 @@ rules:
         contains_any: [".env", ".secret", "credentials", ".pem", "id_rsa"]
     then:
       action: block
-      message: "Sensitive file '{args.path}' denied."
+      message: "Sensitive file '{args.path}' blocked."
 ```
 
-Contracts are YAML. Enforcement is deterministic -- no LLM in the evaluation path, just pattern matching against tool names and arguments. The agent cannot bypass a matched rule. Rule errors, type mismatches, and missing fields all fail closed (block). Tool calls with no matching rules are allowed by default -- add a catch-all `tool: "*"` rule for block-by-default.
+Rules are YAML. Enforcement is deterministic -- no LLM in the evaluation path, just pattern matching against tool names and arguments. The agent cannot bypass a matched rule. Rule errors, type mismatches, and missing fields all fail closed (block). Tool calls with no matching rules are allowed by default -- add a catch-all `tool: "*"` rule for block-by-default.
 
 ## The Problem
 
@@ -112,7 +112,7 @@ See [Adapter docs](https://docs.edictum.ai/docs/adapters/overview) for all 8 fra
 
 ## What You Can Do
 
-**Contracts** -- four types covering the full tool call lifecycle:
+**Rules** -- four types covering the full tool call lifecycle:
 
 - **Preconditions** block dangerous calls before execution
 - **Postconditions** scan tool output -- warn, redact PII, or block
@@ -121,17 +121,17 @@ See [Adapter docs](https://docs.edictum.ai/docs/adapters/overview) for all 8 fra
 
 **Principal-aware enforcement** -- role-gate tools with claims and `env.*` context. `set_principal()` for mid-session role changes.
 
-**Callbacks** -- `on_deny` / `on_allow` for logging, alerting, or approval workflows.
+**Callbacks** -- block/allow lifecycle callbacks for logging, alerting, or approval workflows.
 
 **Test and validate:**
 
 - `edictum validate` -- catch schema errors at load time
-- `edictum test` -- YAML test cases with expected verdicts
+- `edictum test` -- YAML test cases with expected decisions
 - `guard.evaluate()` -- dry-run without executing the tool
 
 **Ship safely:**
 
-- Observe mode -- log what would be denied, then enforce
+- Observe mode -- log what would be blocked, then enforce
 - Multi-file composition with deterministic merge
 - Custom YAML operators and selectors
 - `edictum diff` and `edictum replay` for rule drift detection
@@ -147,7 +147,7 @@ See [Adapter docs](https://docs.edictum.ai/docs/adapters/overview) for all 8 fra
 
 ```python
 guard = Edictum.from_template("file-agent")
-# Blocks .env, .pem, credentials, id_rsa reads. Denies rm -rf, chmod 777, destructive shell commands.
+# Blocks .env, .pem, credentials, id_rsa reads. Blocks rm -rf, chmod 777, destructive shell commands.
 
 guard = Edictum.from_template("research-agent")
 # Postcondition PII scanning on tool output. Session limits (100 calls, 20 per tool).
