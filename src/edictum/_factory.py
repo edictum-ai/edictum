@@ -445,6 +445,7 @@ def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
         on_allow=first._on_allow,
         success_check=first._success_check,
         approval_backend=first._approval_backend,
+        workflow_runtime=first._workflow_runtime,
     )
     merged.tool_registry = first.tool_registry
 

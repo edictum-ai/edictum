@@ -6,6 +6,7 @@ import asyncio
 import base64
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from edictum._exceptions import EdictumConfigError
@@ -47,6 +48,9 @@ async def _from_server(
     allow_insecure: bool = False,
     verify_signatures: bool = False,
     signing_public_key: str | None = None,
+    workflow_path: str | Path | None = None,
+    workflow_content: str | bytes | None = None,
+    workflow_exec_evaluator_enabled: bool = False,
 ) -> Edictum:
     """Create an Edictum instance wired to a remote edictum-server.
 
@@ -77,6 +81,10 @@ async def _from_server(
             Requires the ``edictum[verified]`` extra (PyNaCl).
         signing_public_key: Hex-encoded Ed25519 public key for signature
             verification. Required when ``verify_signatures=True``.
+        workflow_path: Explicit local workflow YAML path for M1 workflow gates.
+        workflow_content: Explicit local workflow YAML content for M1 workflow gates.
+        workflow_exec_evaluator_enabled: Enable trusted ``exec(...)`` workflow
+            conditions for the locally attached workflow.
 
     Returns:
         Configured Edictum instance connected to the server.
@@ -88,6 +96,7 @@ async def _from_server(
         ValueError: If ``bundle_name`` is None and ``auto_watch`` is False,
             or if ``verify_signatures=True`` without ``signing_public_key``.
     """
+    from edictum._factory import _load_workflow_runtime
     from edictum.server.approval_backend import ServerApprovalBackend
     from edictum.server.audit_sink import ServerAuditSink
     from edictum.server.backend import ServerBackend
@@ -120,6 +129,11 @@ async def _from_server(
     effective_sink = audit_sink or ServerAuditSink(client)
     effective_approval = approval_backend or ServerApprovalBackend(client)
     effective_backend = storage_backend or ServerBackend(client)
+    workflow_runtime = _load_workflow_runtime(
+        workflow_path=workflow_path,
+        workflow_content=workflow_content,
+        workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
+    )
 
     if bundle_name is not None:
         try:
@@ -182,6 +196,7 @@ async def _from_server(
             principal=principal,
             principal_resolver=principal_resolver,
             approval_backend=effective_approval,
+            workflow_runtime=workflow_runtime,
         )
     else:
         guard = cls(
@@ -199,6 +214,7 @@ async def _from_server(
             principal=principal,
             principal_resolver=principal_resolver,
             approval_backend=effective_approval,
+            workflow_runtime=workflow_runtime,
         )
         guard._assignment_ready = asyncio.Event()
 
@@ -212,9 +228,11 @@ async def _from_server(
         await _start_sse_watcher(guard)
 
     if bundle_name is None:
+        ready_event = guard._assignment_ready
+        assert ready_event is not None
         try:
             await asyncio.wait_for(
-                guard._assignment_ready.wait(),
+                ready_event.wait(),
                 timeout=_ASSIGNMENT_TIMEOUT_SECS,
             )
         except TimeoutError:
@@ -242,9 +260,13 @@ async def _start_sse_watcher(self: Edictum) -> None:
                 try:
                     if bundle.get("_assignment_changed"):
                         new_name = bundle["bundle_name"]
-                        response = await self._server_client.get(
+                        server_client = self._server_client
+                        if server_client is None:
+                            logger.warning("Server client missing during SSE assignment update")
+                            continue
+                        response = await server_client.get(
                             f"/api/v1/bundles/{new_name}/current",
-                            env=self._server_client.env,
+                            env=server_client.env,
                         )
                         yaml_b64 = response.get("yaml_bytes", "")
                         yaml_data = base64.b64decode(yaml_b64) if yaml_b64 else b""
@@ -265,6 +287,9 @@ async def _start_sse_watcher(self: Edictum) -> None:
                         if not signature:
                             logger.warning("Unsigned bundle received with verify_signatures=True — rejecting")
                             continue
+                        if not isinstance(public_key, str):
+                            logger.warning("Missing signing_public_key for bundle verification — rejecting")
+                            continue
 
                         try:
                             verify_bundle_signature(yaml_data, signature, public_key)
@@ -274,7 +299,9 @@ async def _start_sse_watcher(self: Edictum) -> None:
 
                     await self.reload(yaml_data)
                     if bundle.get("_assignment_changed"):
-                        self._server_client.bundle_name = bundle["bundle_name"]
+                        server_client = self._server_client
+                        if server_client is not None:
+                            server_client.bundle_name = bundle["bundle_name"]
                     ready_event = getattr(self, "_assignment_ready", None)
                     if ready_event is not None and not ready_event.is_set():
                         ready_event.set()

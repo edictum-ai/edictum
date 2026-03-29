@@ -104,6 +104,22 @@ stages:
         )
         assert guard._workflow_runtime is not None
 
+    def test_from_multiple_preserves_first_guard_workflow_runtime(self):
+        first = Edictum.from_yaml_string(
+            _BUNDLE,
+            backend=MemoryBackend(),
+            workflow_content=_WORKFLOW,
+        )
+        second = Edictum.from_yaml_string(
+            _BUNDLE,
+            backend=MemoryBackend(),
+        )
+
+        merged = Edictum.from_multiple([first, second])
+
+        assert merged._workflow_runtime is not None
+        assert merged._workflow_runtime.definition.metadata.name == "explicit-workflow"
+
     @pytest.mark.asyncio
     async def test_evaluate_skips_workflow_state_in_m1(self):
         guard = Edictum.from_yaml_string(
