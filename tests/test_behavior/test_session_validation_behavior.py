@@ -85,3 +85,22 @@ class TestToolNameValidationInSession:
         session = Session("valid-session", MemoryBackend())
         with pytest.raises(ValueError, match="Invalid tool_name"):
             await session.batch_get_counters(include_tool="tool\x00name")
+
+
+class TestSessionValueBehavior:
+    @pytest.mark.asyncio
+    async def test_get_set_delete_value_round_trip(self):
+        session = Session("workflow-session", MemoryBackend())
+
+        await session.set_value("workflow:test:state", '{"active_stage":"read-context"}')
+        assert await session.get_value("workflow:test:state") == '{"active_stage":"read-context"}'
+
+        await session.delete_value("workflow:test:state")
+        assert await session.get_value("workflow:test:state") is None
+
+    @pytest.mark.security
+    @pytest.mark.asyncio
+    async def test_session_value_name_rejects_path_separator(self):
+        session = Session("workflow-session", MemoryBackend())
+        with pytest.raises(ValueError, match="Invalid session value name"):
+            await session.set_value("workflow/test", "x")

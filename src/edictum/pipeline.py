@@ -34,6 +34,10 @@ class PreDecision:
     approval_timeout: int = 300
     approval_timeout_effect: str = "deny"
     approval_message: str | None = None
+    workflow: dict[str, Any] | None = None
+    workflow_stage_id: str | None = None
+    workflow_involved: bool = False
+    workflow_events: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -267,7 +271,78 @@ class GovernancePipeline:
                     policy_error=pe,
                 )
 
-        # 5. Execution limits (use pre-fetched counters)
+        workflow_meta: dict[str, Any] | None = None
+        workflow_stage_id: str | None = None
+        workflow_involved = False
+        workflow_events: list[dict] = []
+
+        # 5. Workflow gates
+        if self._guard._workflow_runtime is not None:
+            try:
+                workflow_eval = await self._guard._workflow_runtime.evaluate(session, envelope)
+            except Exception as exc:
+                contract_record = {
+                    "name": "workflow:error",
+                    "type": "workflow_gate",
+                    "passed": False,
+                    "message": f"Workflow evaluation error: {exc}",
+                    "metadata": {"policy_error": True},
+                }
+                contracts_evaluated.append(contract_record)
+                return PreDecision(
+                    action="deny",
+                    reason=f"Workflow evaluation error: {exc}",
+                    decision_source="workflow",
+                    decision_name="workflow_error",
+                    hooks_evaluated=hooks_evaluated,
+                    contracts_evaluated=contracts_evaluated,
+                    policy_error=True,
+                    workflow=workflow_meta,
+                    workflow_stage_id=workflow_stage_id,
+                    workflow_involved=True,
+                    workflow_events=workflow_events,
+                )
+
+            if workflow_eval.records:
+                contracts_evaluated.extend(workflow_eval.records)
+                workflow_meta = workflow_eval.audit
+                workflow_stage_id = workflow_eval.stage_id or None
+            if workflow_eval.records or workflow_eval.events or workflow_eval.stage_id:
+                workflow_involved = True
+            workflow_events.extend(workflow_eval.events)
+
+            if workflow_eval.action == "block":
+                return PreDecision(
+                    action="deny",
+                    reason=workflow_eval.reason,
+                    decision_source="workflow",
+                    decision_name=workflow_eval.stage_id or None,
+                    hooks_evaluated=hooks_evaluated,
+                    contracts_evaluated=contracts_evaluated,
+                    policy_error=has_observed_deny
+                    or any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated),
+                    workflow=workflow_meta,
+                    workflow_stage_id=workflow_stage_id,
+                    workflow_involved=workflow_involved,
+                    workflow_events=workflow_events,
+                )
+            if workflow_eval.action == "pending_approval":
+                return PreDecision(
+                    action="pending_approval",
+                    reason=workflow_eval.reason,
+                    decision_source="workflow",
+                    decision_name=workflow_eval.stage_id or None,
+                    hooks_evaluated=hooks_evaluated,
+                    contracts_evaluated=contracts_evaluated,
+                    policy_error=any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated),
+                    approval_message=workflow_eval.reason or None,
+                    workflow=workflow_meta,
+                    workflow_stage_id=workflow_stage_id,
+                    workflow_involved=workflow_involved,
+                    workflow_events=workflow_events,
+                )
+
+        # 6. Execution limits (use pre-fetched counters)
         exec_count = counters["execs"]
         if exec_count >= self._guard.limits.max_tool_calls:
             return PreDecision(
@@ -278,6 +353,10 @@ class GovernancePipeline:
                 decision_name="max_tool_calls",
                 hooks_evaluated=hooks_evaluated,
                 contracts_evaluated=contracts_evaluated,
+                workflow=workflow_meta,
+                workflow_stage_id=workflow_stage_id,
+                workflow_involved=workflow_involved,
+                workflow_events=workflow_events,
             )
 
         # Per-tool limits (use pre-fetched counter when available)
@@ -293,6 +372,10 @@ class GovernancePipeline:
                     decision_name=f"max_calls_per_tool:{envelope.tool_name}",
                     hooks_evaluated=hooks_evaluated,
                     contracts_evaluated=contracts_evaluated,
+                    workflow=workflow_meta,
+                    workflow_stage_id=workflow_stage_id,
+                    workflow_involved=workflow_involved,
+                    workflow_events=workflow_events,
                 )
 
         # 6. All checks passed
@@ -308,6 +391,10 @@ class GovernancePipeline:
             observed=has_observed_deny,
             policy_error=pe,
             observe_results=observe_results,
+            workflow=workflow_meta,
+            workflow_stage_id=workflow_stage_id,
+            workflow_involved=workflow_involved,
+            workflow_events=workflow_events,
         )
 
     async def post_execute(

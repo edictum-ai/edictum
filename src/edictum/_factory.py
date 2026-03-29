@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from edictum._guard import Edictum
     from edictum.approval import ApprovalBackend
     from edictum.envelope import ToolEnvelope
+    from edictum.workflow import WorkflowRuntime
     from edictum.yaml_engine.composer import CompositionReport
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ def _build_guard_from_compiled(
     principal: Principal | None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None,
     approval_backend: ApprovalBackend | None,
+    workflow_runtime: WorkflowRuntime | None,
 ) -> Edictum:
     """Shared guard construction from compiled contracts and bundle data."""
     # Handle observability config
@@ -108,6 +110,30 @@ def _build_guard_from_compiled(
         principal=principal,
         principal_resolver=principal_resolver,
         approval_backend=approval_backend,
+        workflow_runtime=workflow_runtime,
+    )
+
+
+def _load_workflow_runtime(
+    *,
+    workflow_path: str | Path | None = None,
+    workflow_content: str | bytes | None = None,
+    workflow_exec_evaluator_enabled: bool = False,
+):
+    if workflow_path is None and workflow_content is None:
+        return None
+    if workflow_path is not None and workflow_content is not None:
+        raise EdictumConfigError("Specify only one of workflow_path or workflow_content")
+
+    from edictum.workflow import WorkflowRuntime, load_workflow, load_workflow_string
+
+    if workflow_path is not None:
+        definition = load_workflow(workflow_path)
+    else:
+        definition = load_workflow_string(workflow_content)
+    return WorkflowRuntime(
+        definition,
+        exec_evaluator_enabled=workflow_exec_evaluator_enabled,
     )
 
 
@@ -129,6 +155,8 @@ def _from_yaml(
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
     approval_backend: ApprovalBackend | None = None,
+    workflow_path: str | Path | None = None,
+    workflow_exec_evaluator_enabled: bool = False,
 ) -> Edictum | tuple[Edictum, CompositionReport]:
     """Create an Edictum instance from one or more YAML contract bundles.
 
@@ -188,6 +216,10 @@ def _from_yaml(
         policy_version = hashlib.sha256(":".join(str(h) for _d, h in loaded).encode()).hexdigest()
 
     compiled = compile_contracts(bundle_data, custom_operators=custom_operators, custom_selectors=custom_selectors)
+    workflow_runtime = _load_workflow_runtime(
+        workflow_path=workflow_path,
+        workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
+    )
 
     guard = _build_guard_from_compiled(
         cls,
@@ -206,6 +238,7 @@ def _from_yaml(
         principal=principal,
         principal_resolver=principal_resolver,
         approval_backend=approval_backend,
+        workflow_runtime=workflow_runtime,
     )
 
     if return_report:
@@ -231,6 +264,8 @@ def _from_yaml_string(
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
     approval_backend: ApprovalBackend | None = None,
+    workflow_content: str | bytes | None = None,
+    workflow_exec_evaluator_enabled: bool = False,
 ) -> Edictum:
     """Create an Edictum instance from a YAML string or bytes.
 
@@ -252,6 +287,10 @@ def _from_yaml_string(
     policy_version = str(bundle_hash)
 
     compiled = compile_contracts(bundle_data, custom_operators=custom_operators, custom_selectors=custom_selectors)
+    workflow_runtime = _load_workflow_runtime(
+        workflow_content=workflow_content,
+        workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
+    )
 
     return _build_guard_from_compiled(
         cls,
@@ -270,6 +309,7 @@ def _from_yaml_string(
         principal=principal,
         principal_resolver=principal_resolver,
         approval_backend=approval_backend,
+        workflow_runtime=workflow_runtime,
     )
 
 

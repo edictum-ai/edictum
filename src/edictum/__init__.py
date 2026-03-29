@@ -50,6 +50,20 @@ from edictum.session import Session
 from edictum.storage import MemoryBackend, StorageBackend
 from edictum.telemetry import GovernanceTelemetry
 from edictum.types import HookRegistration
+from edictum.workflow import (
+    WorkflowApproval,
+    WorkflowCheck,
+    WorkflowDefinition,
+    WorkflowEvaluation,
+    WorkflowEvidence,
+    WorkflowGate,
+    WorkflowMetadata,
+    WorkflowRuntime,
+    WorkflowStage,
+    WorkflowState,
+    load_workflow,
+    load_workflow_string,
+)
 
 __all__ = [
     "__version__",
@@ -101,6 +115,18 @@ __all__ = [
     "ContractResult",
     "CompositionReport",
     "TemplateInfo",
+    "WorkflowApproval",
+    "WorkflowCheck",
+    "WorkflowDefinition",
+    "WorkflowEvaluation",
+    "WorkflowEvidence",
+    "WorkflowGate",
+    "WorkflowMetadata",
+    "WorkflowRuntime",
+    "WorkflowStage",
+    "WorkflowState",
+    "load_workflow",
+    "load_workflow_string",
 ]
 
 # CompositionReport is lazy-loaded so that `import edictum` works without

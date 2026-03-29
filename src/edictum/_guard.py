@@ -27,6 +27,7 @@ from edictum.types import HookRegistration
 if TYPE_CHECKING:
     from edictum._factory import TemplateInfo
     from edictum.evaluation import EvaluationResult
+    from edictum.workflow import WorkflowRuntime
     from edictum.yaml_engine.composer import CompositionReport
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ class Edictum:
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
         approval_backend: ApprovalBackend | None = None,
+        workflow_runtime: WorkflowRuntime | None = None,
     ):
         self.environment = environment
         self.mode = mode
@@ -101,6 +103,7 @@ class Edictum:
         self._principal = principal
         self._principal_resolver = principal_resolver
         self._approval_backend = approval_backend
+        self._workflow_runtime = workflow_runtime
 
         # Build tool registry
         self.tool_registry = ToolRegistry()
@@ -364,6 +367,8 @@ class Edictum:
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
         approval_backend: ApprovalBackend | None = None,
+        workflow_path: str | Path | None = None,
+        workflow_exec_evaluator_enabled: bool = False,
     ) -> Edictum | tuple[Edictum, CompositionReport]:
         """Create an Edictum instance from one or more YAML contract bundles."""
         from edictum._factory import _from_yaml
@@ -386,6 +391,8 @@ class Edictum:
             principal=principal,
             principal_resolver=principal_resolver,
             approval_backend=approval_backend,
+            workflow_path=workflow_path,
+            workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
         )
 
     @classmethod
@@ -407,6 +414,8 @@ class Edictum:
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
         approval_backend: ApprovalBackend | None = None,
+        workflow_content: str | bytes | None = None,
+        workflow_exec_evaluator_enabled: bool = False,
     ) -> Edictum:
         """Create an Edictum instance from a YAML string or bytes."""
         from edictum._factory import _from_yaml_string
@@ -428,6 +437,8 @@ class Edictum:
             principal=principal,
             principal_resolver=principal_resolver,
             approval_backend=approval_backend,
+            workflow_content=workflow_content,
+            workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
         )
 
     @classmethod

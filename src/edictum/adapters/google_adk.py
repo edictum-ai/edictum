@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
 
 from edictum.approval import ApprovalStatus
@@ -16,6 +16,7 @@ from edictum.pipeline import GovernancePipeline
 from edictum.session import Session
 
 logger = logging.getLogger(__name__)
+_MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 
 if TYPE_CHECKING:
     from edictum import Edictum
@@ -55,6 +56,7 @@ class GoogleADKAdapter:
         self._session = Session(self._session_id, guard.backend)
         self._call_index = 0
         self._pending: dict[str, tuple[Any, Any]] = {}
+        self._pending_decisions: dict[str, Any] = {}
         self._principal = principal
         self._principal_resolver = principal_resolver
         self._on_postcondition_warn = on_postcondition_warn
@@ -135,6 +137,7 @@ class GoogleADKAdapter:
 
         try:
             decision = await self._pipeline.pre_execute(envelope, self._session)
+            await self._emit_workflow_events(envelope, decision.workflow_events)
 
             # Handle observe mode: convert deny to allow with warning
             if self._guard.mode == "observe" and decision.action == "deny":
@@ -142,6 +145,7 @@ class GoogleADKAdapter:
                 span.set_attribute("governance.action", "would_deny")
                 span.set_attribute("governance.would_deny_reason", decision.reason)
                 self._pending[call_id] = (envelope, span)
+                self._pending_decisions[call_id] = decision
                 return None  # allow through
 
             # Handle deny
@@ -160,11 +164,12 @@ class GoogleADKAdapter:
 
             # Handle pending_approval
             if decision.action == "pending_approval":
-                result = await self._handle_approval(envelope, decision, span)
+                result, decision = await self._resolve_pending_approval(envelope, decision, span)
                 if result is not None:
                     return result  # span ended inside _handle_approval
                 # Approved -- fall through to allow
                 self._pending[call_id] = (envelope, span)
+                self._pending_decisions[call_id] = decision
                 return None
 
             # Handle per-contract observed denials
@@ -200,6 +205,7 @@ class GoogleADKAdapter:
                     logger.exception("on_allow callback raised")
             span.set_attribute("governance.action", "allowed")
             self._pending[call_id] = (envelope, span)
+            self._pending_decisions[call_id] = decision
             return None
         except Exception:
             if call_id not in self._pending:
@@ -215,6 +221,10 @@ class GoogleADKAdapter:
         if not pending:
             return PostCallResult(result=tool_response)
 
+        decision = self._pending_decisions.pop(call_id, None)
+        if decision is None:
+            return PostCallResult(result=tool_response)
+
         envelope, span = pending
 
         try:
@@ -227,6 +237,19 @@ class GoogleADKAdapter:
             effective_response = (
                 post_decision.redacted_response if post_decision.redacted_response is not None else tool_response
             )
+
+            workflow_events: list[dict] = []
+            if (
+                tool_success
+                and decision.workflow_involved
+                and decision.workflow_stage_id
+                and self._guard._workflow_runtime
+            ):
+                workflow_events = await self._guard._workflow_runtime.record_result(
+                    self._session,
+                    decision.workflow_stage_id,
+                    envelope,
+                )
 
             # Record in session
             await self._session.record_execution(envelope.tool_name, success=tool_success)
@@ -252,8 +275,10 @@ class GoogleADKAdapter:
                     mode=self._guard.mode,
                     policy_version=self._guard.policy_version,
                     policy_error=post_decision.policy_error,
+                    workflow=decision.workflow,
                 )
             )
+            await self._emit_workflow_events(envelope, workflow_events)
 
             # End span
             span.set_attribute("governance.tool_success", tool_success)
@@ -330,14 +355,47 @@ class GoogleADKAdapter:
                 mode=self._guard.mode,
                 policy_version=self._guard.policy_version,
                 policy_error=decision.policy_error,
+                workflow=decision.workflow,
             )
         )
 
+    async def _emit_workflow_events(self, envelope: Any, events: list[dict]) -> None:
+        for record in events:
+            workflow = record.get("workflow")
+            action_name = record.get("action")
+            if not isinstance(workflow, dict) or not isinstance(action_name, str):
+                continue
+            action = AuditAction.WORKFLOW_STAGE_ADVANCED
+            if action_name == AuditAction.WORKFLOW_COMPLETED.value:
+                action = AuditAction.WORKFLOW_COMPLETED
+            await self._guard.audit_sink.emit(
+                AuditEvent(
+                    action=action,
+                    run_id=envelope.run_id,
+                    call_id=envelope.call_id,
+                    call_index=envelope.call_index,
+                    tool_name=envelope.tool_name,
+                    tool_args=self._guard.redaction.redact_args(envelope.args),
+                    side_effect=envelope.side_effect.value,
+                    environment=envelope.environment,
+                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    mode=self._guard.mode,
+                    policy_version=self._guard.policy_version,
+                    workflow=dict(workflow),
+                )
+            )
+
     async def _emit_error_audit(self, call_id: str | None, error: Exception) -> None:
         """Emit CALL_FAILED audit for tool errors. Used by on_tool_error_callback."""
-        pending = self._pending.pop(call_id, None) if call_id else None
+        if call_id is None:
+            return
+        pending = self._pending.pop(call_id, None)
         if not pending:
             return
+        decision = self._pending_decisions.pop(call_id, None)
+        if decision is None:
+            return
+
         envelope, span = pending
         try:
             await self._session.record_execution(envelope.tool_name, success=False)
@@ -358,6 +416,7 @@ class GoogleADKAdapter:
                     session_execution_count=await self._session.execution_count(),
                     mode=self._guard.mode,
                     policy_version=self._guard.policy_version,
+                    workflow=decision.workflow,
                 )
             )
             span.set_attribute("governance.tool_success", False)
@@ -366,8 +425,32 @@ class GoogleADKAdapter:
         finally:
             span.end()
 
+    async def _resolve_pending_approval(
+        self,
+        envelope: Any,
+        decision: Any,
+        span: Any,
+    ) -> tuple[dict | None, Any]:
+        current = decision
+        for _ in range(_MAX_WORKFLOW_APPROVAL_ROUNDS):
+            denied = await self._handle_approval(envelope, current, span)
+            if denied is not None:
+                return denied, current
+            if (
+                current.decision_source != "workflow"
+                or not current.workflow_stage_id
+                or self._guard._workflow_runtime is None
+            ):
+                return None, replace(current, action="allow")
+            await self._guard._workflow_runtime.record_approval(self._session, current.workflow_stage_id)
+            current = await self._pipeline.pre_execute(envelope, self._session)
+            await self._emit_workflow_events(envelope, current.workflow_events)
+            if current.action != "pending_approval":
+                return None, current
+        raise RuntimeError(f"workflow: exceeded maximum approval rounds ({_MAX_WORKFLOW_APPROVAL_ROUNDS})")
+
     async def _handle_approval(self, envelope: Any, decision: Any, span: Any) -> dict | None:
-        """Handle pending_approval decisions. Returns denial dict or None to proceed."""
+        """Handle one pending_approval decision. Returns denial dict or None to proceed."""
         if self._guard._approval_backend is None:
             reason = "Approval required but no approval backend configured"
             await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_DENIED)
@@ -412,11 +495,6 @@ class GoogleADKAdapter:
             await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_DENIED)
 
         if approved:
-            if self._guard._on_allow:
-                try:
-                    self._guard._on_allow(envelope)
-                except Exception:
-                    logger.exception("on_allow callback raised")
             span.set_attribute("governance.action", "approved")
             return None  # Proceed with execution
 

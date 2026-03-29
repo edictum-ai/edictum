@@ -6,9 +6,10 @@ import json
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
 
+from edictum.approval import ApprovalStatus
 from edictum.audit import AuditAction, AuditEvent
 from edictum.envelope import Principal, create_envelope
 from edictum.findings import Finding, PostCallResult, build_findings
@@ -16,6 +17,7 @@ from edictum.pipeline import GovernancePipeline
 from edictum.session import Session
 
 logger = logging.getLogger(__name__)
+_MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 
 if TYPE_CHECKING:
     from edictum import Edictum
@@ -53,6 +55,7 @@ class OpenAIAgentsAdapter:
         self._session = Session(self._session_id, guard.backend)
         self._call_index = 0
         self._pending: dict[str, tuple[Any, Any]] = {}
+        self._pending_decisions: dict[str, Any] = {}
         self._principal = principal
         self._principal_resolver = principal_resolver
 
@@ -179,6 +182,7 @@ class OpenAIAgentsAdapter:
         try:
             # Run pipeline
             decision = await self._pipeline.pre_execute(envelope, self._session)
+            await self._emit_workflow_events(envelope, decision.workflow_events)
 
             # Handle observe mode: convert deny to allow with warning
             if self._guard.mode == "observe" and decision.action == "deny":
@@ -186,6 +190,7 @@ class OpenAIAgentsAdapter:
                 span.set_attribute("governance.action", "would_deny")
                 span.set_attribute("governance.would_deny_reason", decision.reason)
                 self._pending[call_id] = (envelope, span)
+                self._pending_decisions[call_id] = decision
                 return None  # allow through
 
             # Handle deny
@@ -201,7 +206,15 @@ class OpenAIAgentsAdapter:
                 self._guard.telemetry.set_span_error(span, decision.reason or "denied")
                 span.end()
                 self._pending.pop(call_id, None)
+                self._pending_decisions.pop(call_id, None)
                 return f"DENIED: {decision.reason}"
+
+            if decision.action == "pending_approval":
+                denied, decision = await self._resolve_pending_approval(envelope, decision, span)
+                if denied is not None:
+                    self._pending.pop(call_id, None)
+                    self._pending_decisions.pop(call_id, None)
+                    return denied
 
             # Handle per-contract observed denials
             if decision.observed:
@@ -236,6 +249,7 @@ class OpenAIAgentsAdapter:
                     logger.exception("on_allow callback raised")
             span.set_attribute("governance.action", "allowed")
             self._pending[call_id] = (envelope, span)
+            self._pending_decisions[call_id] = decision
             return None
 
         except Exception:
@@ -252,6 +266,10 @@ class OpenAIAgentsAdapter:
         if not pending:
             return PostCallResult(result=tool_response)
 
+        decision = self._pending_decisions.pop(call_id, None)
+        if decision is None:
+            return PostCallResult(result=tool_response)
+
         envelope, span = pending
 
         try:
@@ -264,6 +282,19 @@ class OpenAIAgentsAdapter:
             effective_response = (
                 post_decision.redacted_response if post_decision.redacted_response is not None else tool_response
             )
+
+            workflow_events: list[dict] = []
+            if (
+                tool_success
+                and decision.workflow_involved
+                and decision.workflow_stage_id
+                and self._guard._workflow_runtime
+            ):
+                workflow_events = await self._guard._workflow_runtime.record_result(
+                    self._session,
+                    decision.workflow_stage_id,
+                    envelope,
+                )
 
             # Record in session
             await self._session.record_execution(envelope.tool_name, success=tool_success)
@@ -289,8 +320,10 @@ class OpenAIAgentsAdapter:
                     mode=self._guard.mode,
                     policy_version=self._guard.policy_version,
                     policy_error=post_decision.policy_error,
+                    workflow=decision.workflow,
                 )
             )
+            await self._emit_workflow_events(envelope, workflow_events)
 
             span.set_attribute("governance.tool_success", tool_success)
             span.set_attribute("governance.postconditions_passed", post_decision.postconditions_passed)
@@ -345,8 +378,118 @@ class OpenAIAgentsAdapter:
                 mode=self._guard.mode,
                 policy_version=self._guard.policy_version,
                 policy_error=decision.policy_error,
+                workflow=decision.workflow,
             )
         )
+
+    async def _emit_workflow_events(self, envelope: Any, events: list[dict]) -> None:
+        for record in events:
+            workflow = record.get("workflow")
+            action_name = record.get("action")
+            if not isinstance(workflow, dict) or not isinstance(action_name, str):
+                continue
+            action = AuditAction.WORKFLOW_STAGE_ADVANCED
+            if action_name == AuditAction.WORKFLOW_COMPLETED.value:
+                action = AuditAction.WORKFLOW_COMPLETED
+            await self._guard.audit_sink.emit(
+                AuditEvent(
+                    action=action,
+                    run_id=envelope.run_id,
+                    call_id=envelope.call_id,
+                    call_index=envelope.call_index,
+                    tool_name=envelope.tool_name,
+                    tool_args=self._guard.redaction.redact_args(envelope.args),
+                    side_effect=envelope.side_effect.value,
+                    environment=envelope.environment,
+                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    mode=self._guard.mode,
+                    policy_version=self._guard.policy_version,
+                    workflow=dict(workflow),
+                )
+            )
+
+    async def _resolve_pending_approval(
+        self,
+        envelope: Any,
+        decision: Any,
+        span: Any,
+    ) -> tuple[str | None, Any]:
+        current = decision
+        for _ in range(_MAX_WORKFLOW_APPROVAL_ROUNDS):
+            denied = await self._handle_approval(envelope, current, span)
+            if denied is not None:
+                return denied, current
+            if (
+                current.decision_source != "workflow"
+                or not current.workflow_stage_id
+                or self._guard._workflow_runtime is None
+            ):
+                return None, replace(current, action="allow")
+            await self._guard._workflow_runtime.record_approval(self._session, current.workflow_stage_id)
+            current = await self._pipeline.pre_execute(envelope, self._session)
+            await self._emit_workflow_events(envelope, current.workflow_events)
+            if current.action != "pending_approval":
+                return None, current
+        raise RuntimeError(f"workflow: exceeded maximum approval rounds ({_MAX_WORKFLOW_APPROVAL_ROUNDS})")
+
+    async def _handle_approval(self, envelope: Any, decision: Any, span: Any) -> str | None:
+        if self._guard._approval_backend is None:
+            reason = "Approval required but no approval backend configured"
+            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_DENIED)
+            self._guard.telemetry.record_denial(envelope, reason)
+            if self._guard._on_deny:
+                try:
+                    self._guard._on_deny(envelope, reason, decision.decision_name)
+                except Exception:
+                    logger.exception("on_deny callback raised")
+            span.set_attribute("governance.action", "denied")
+            self._guard.telemetry.set_span_error(span, reason)
+            span.end()
+            return self._deny(reason)
+
+        principal_dict = asdict(envelope.principal) if envelope.principal else None
+        approval_request = await self._guard._approval_backend.request_approval(
+            tool_name=envelope.tool_name,
+            tool_args=envelope.args,
+            message=decision.approval_message or decision.reason or "",
+            timeout=decision.approval_timeout,
+            timeout_effect=decision.approval_timeout_effect,
+            principal=principal_dict,
+        )
+        await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_REQUESTED)
+
+        approval_decision = await self._guard._approval_backend.wait_for_decision(
+            approval_id=approval_request.approval_id,
+            timeout=decision.approval_timeout,
+        )
+
+        approved = approval_decision.approved
+        if not approved and approval_decision.status == ApprovalStatus.TIMEOUT:
+            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_TIMEOUT)
+            if decision.approval_timeout_effect == "allow":
+                approved = True
+        elif approval_decision.approved:
+            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_GRANTED)
+        else:
+            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_DENIED)
+
+        if approved:
+            span.set_attribute("governance.action", "approved")
+            return None
+
+        reason = approval_decision.reason or decision.reason or "Approval denied"
+        if not approved and approval_decision.status == ApprovalStatus.TIMEOUT:
+            reason = f"Approval timed out: {reason}"
+        self._guard.telemetry.record_denial(envelope, reason)
+        if self._guard._on_deny:
+            try:
+                self._guard._on_deny(envelope, reason, decision.decision_name)
+            except Exception:
+                logger.exception("on_deny callback raised")
+        span.set_attribute("governance.action", "denied")
+        self._guard.telemetry.set_span_error(span, reason)
+        span.end()
+        return self._deny(f"Approval denied: {reason}")
 
     def _check_tool_success(self, tool_name: str, tool_response: Any) -> bool:
         if self._guard._success_check is not None:

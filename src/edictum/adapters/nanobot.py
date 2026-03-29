@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
 
 from edictum.approval import ApprovalStatus
@@ -15,6 +15,7 @@ from edictum.pipeline import GovernancePipeline
 from edictum.session import Session
 
 logger = logging.getLogger(__name__)
+_MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 
 if TYPE_CHECKING:
     from edictum import Edictum
@@ -62,13 +63,13 @@ class GovernedToolRegistry:
     # -- Delegate ToolRegistry methods to inner --
 
     def register(self, name: str, handler: Callable, description: str = "") -> None:
-        return self._inner.register(name, handler, description)
+        self._inner.register(name, handler, description)
 
     def list_tools(self) -> list[str]:
-        return self._inner.list_tools()
+        return list(self._inner.list_tools())
 
     def get_description(self, name: str) -> str:
-        return self._inner.get_description(name)
+        return str(self._inner.get_description(name))
 
     async def execute(self, name: str, args: dict) -> str:
         """Execute a tool with governance wrapping.
@@ -96,6 +97,7 @@ class GovernedToolRegistry:
 
         try:
             decision = await self._pipeline.pre_execute(envelope, self._session)
+            await self._emit_workflow_events(envelope, decision.workflow_events)
 
             # Observe mode: convert deny to allow with CALL_WOULD_DENY audit
             if self._guard.mode == "observe" and decision.action == "deny":
@@ -117,7 +119,7 @@ class GovernedToolRegistry:
                 return f"[DENIED] {decision.reason}"
             elif decision.action == "pending_approval":
                 # Approval flow
-                result = await self._handle_approval(envelope, decision, span)
+                result, decision = await self._resolve_pending_approval(envelope, decision, span)
                 if result is not None:
                     return result
                 # Approved — fall through to execute
@@ -166,6 +168,19 @@ class GovernedToolRegistry:
                 post_decision.redacted_response if post_decision.redacted_response is not None else result
             )
 
+            workflow_events: list[dict] = []
+            if (
+                tool_success
+                and decision.workflow_involved
+                and decision.workflow_stage_id
+                and self._guard._workflow_runtime
+            ):
+                workflow_events = await self._guard._workflow_runtime.record_result(
+                    self._session,
+                    decision.workflow_stage_id,
+                    envelope,
+                )
+
             await self._session.record_execution(name, success=tool_success)
 
             action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
@@ -188,8 +203,10 @@ class GovernedToolRegistry:
                     mode=self._guard.mode,
                     policy_version=self._guard.policy_version,
                     policy_error=post_decision.policy_error,
+                    workflow=decision.workflow,
                 )
             )
+            await self._emit_workflow_events(envelope, workflow_events)
 
             span.set_attribute("governance.tool_success", tool_success)
             span.set_attribute("governance.postconditions_passed", post_decision.postconditions_passed)
@@ -203,8 +220,32 @@ class GovernedToolRegistry:
         finally:
             span.end()
 
+    async def _resolve_pending_approval(
+        self,
+        envelope: Any,
+        decision: Any,
+        span: Any,
+    ) -> tuple[str | None, Any]:
+        current = decision
+        for _ in range(_MAX_WORKFLOW_APPROVAL_ROUNDS):
+            denied = await self._handle_approval(envelope, current, span)
+            if denied is not None:
+                return denied, current
+            if (
+                current.decision_source != "workflow"
+                or not current.workflow_stage_id
+                or self._guard._workflow_runtime is None
+            ):
+                return None, replace(current, action="allow")
+            await self._guard._workflow_runtime.record_approval(self._session, current.workflow_stage_id)
+            current = await self._pipeline.pre_execute(envelope, self._session)
+            await self._emit_workflow_events(envelope, current.workflow_events)
+            if current.action != "pending_approval":
+                return None, current
+        raise RuntimeError(f"workflow: exceeded maximum approval rounds ({_MAX_WORKFLOW_APPROVAL_ROUNDS})")
+
     async def _handle_approval(self, envelope: Any, decision: Any, span: Any) -> str | None:
-        """Handle pending_approval decisions. Returns denial string or None to proceed."""
+        """Handle one pending_approval decision. Returns denial string or None to proceed."""
         if self._guard._approval_backend is None:
             reason = "Approval required but no approval backend configured"
             await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_DENIED)
@@ -246,11 +287,6 @@ class GovernedToolRegistry:
             await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_DENIED)
 
         if approved:
-            if self._guard._on_allow:
-                try:
-                    self._guard._on_allow(envelope)
-                except Exception:
-                    logger.exception("on_allow callback raised")
             span.set_attribute("governance.action", "approved")
             return None  # Proceed with execution
 
@@ -264,6 +300,32 @@ class GovernedToolRegistry:
         span.set_attribute("governance.action", "denied")
         self._guard.telemetry.set_span_error(span, reason)
         return f"[DENIED] Approval denied: {reason}"
+
+    async def _emit_workflow_events(self, envelope: Any, events: list[dict]) -> None:
+        for record in events:
+            workflow = record.get("workflow")
+            action_name = record.get("action")
+            if not isinstance(workflow, dict) or not isinstance(action_name, str):
+                continue
+            action = AuditAction.WORKFLOW_STAGE_ADVANCED
+            if action_name == AuditAction.WORKFLOW_COMPLETED.value:
+                action = AuditAction.WORKFLOW_COMPLETED
+            await self._guard.audit_sink.emit(
+                AuditEvent(
+                    action=action,
+                    run_id=envelope.run_id,
+                    call_id=envelope.call_id,
+                    call_index=envelope.call_index,
+                    tool_name=envelope.tool_name,
+                    tool_args=self._guard.redaction.redact_args(envelope.args),
+                    side_effect=envelope.side_effect.value,
+                    environment=envelope.environment,
+                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    mode=self._guard.mode,
+                    policy_version=self._guard.policy_version,
+                    workflow=dict(workflow),
+                )
+            )
 
     async def _emit_audit_pre(self, envelope: Any, decision: Any, audit_action: AuditAction | None = None) -> None:
         if audit_action is None:
@@ -290,6 +352,7 @@ class GovernedToolRegistry:
                 mode=self._guard.mode,
                 policy_version=self._guard.policy_version,
                 policy_error=decision.policy_error,
+                workflow=decision.workflow,
             )
         )
 
