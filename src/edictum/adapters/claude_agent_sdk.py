@@ -157,11 +157,12 @@ class ClaudeAgentSDKAdapter:
             if decision.action == "pending_approval":
                 denied, decision = await self._resolve_pending_approval(envelope, decision, span)
                 if denied is not None:
+                    span.end()
                     self._pending.pop(tool_use_id, None)
                     self._pending_decisions.pop(tool_use_id, None)
                     return denied
 
-            # Handle per-contract observed denials
+            # Handle per-rule observed denials
             if decision.observed:
                 for cr in decision.contracts_evaluated:
                     if cr.get("observed") and not cr.get("passed"):
@@ -390,7 +391,6 @@ class ClaudeAgentSDKAdapter:
                     logger.exception("on_deny callback raised")
             span.set_attribute("governance.action", "denied")
             self._guard.telemetry.set_span_error(span, reason)
-            span.end()
             return self._deny(reason)
 
         principal_dict = asdict(envelope.principal) if envelope.principal else None
@@ -434,7 +434,6 @@ class ClaudeAgentSDKAdapter:
                 logger.exception("on_deny callback raised")
         span.set_attribute("governance.action", "denied")
         self._guard.telemetry.set_span_error(span, reason)
-        span.end()
         return self._deny(f"Approval denied: {reason}")
 
     def _check_tool_success(self, tool_name: str, tool_response: Any) -> bool:

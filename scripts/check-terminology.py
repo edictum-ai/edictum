@@ -14,14 +14,14 @@ from pathlib import Path
 # Banned patterns: (regex, replacement hint, description)
 BANNED_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\bshadow mode\b", re.IGNORECASE), "observe mode", "banned phrase"),
-    (re.compile(r"\bper-rule\b", re.IGNORECASE), "per-contract", "banned phrase"),
-    (re.compile(r"\bRuleResult\b"), "ContractResult", "old class name"),
-    (re.compile(r"\brule_id\b"), "contract_id", "old field name"),
-    (re.compile(r"\brule_type\b"), "contract_type", "old field name"),
+    (re.compile(r"\bper-contract\b", re.IGNORECASE), "per-rule", "banned phrase"),
+    (re.compile(r"\bContractResult\b"), "RuleResult", "old class name"),
+    (re.compile(r"\bcontract_id\b"), "rule_id", "old field name"),
+    (re.compile(r"\bcontract_type\b"), "rule_type", "old field name"),
     (re.compile(r'"\brules_evaluated\b"'), '"contracts_evaluated"', "old field name"),
-    (re.compile(r"\bby rule\b", re.IGNORECASE), "by contract", "banned phrase"),
-    (re.compile(r"\bRules evaluated\b"), "Contracts evaluated", "banned CLI string"),
-    (re.compile(r"\ball rules passed\b", re.IGNORECASE), "all contracts passed", "banned CLI string"),
+    (re.compile(r"\bby contract\b", re.IGNORECASE), "by rule", "banned phrase"),
+    (re.compile(r"\bContracts evaluated\b"), "Rules evaluated", "banned CLI string"),
+    (re.compile(r"\ball contracts passed\b", re.IGNORECASE), "all rules passed", "banned CLI string"),
 ]
 
 # "blocked" needs special handling — allow the loop variable in builtins.py

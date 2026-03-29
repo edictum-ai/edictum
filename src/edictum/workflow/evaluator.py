@@ -221,4 +221,8 @@ def _parse_optional_string_arg(raw: str, fn: str) -> str:
 
 
 def _unquote(value: str) -> str:
-    return cast(str, ast.literal_eval(f'"{value}"'))
+    result = cast(str, ast.literal_eval(f'"{value}"'))
+    for char in result:
+        if ord(char) < 0x20 or ord(char) == 0x7F:
+            raise ValueError("workflow: condition arguments must not contain control characters")
+    return result

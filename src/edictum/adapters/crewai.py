@@ -70,7 +70,7 @@ class CrewAIAdapter:
 
     @staticmethod
     def _normalize_tool_name(name: str) -> str:
-        """Normalize CrewAI tool names to match contract tool names.
+        """Normalize CrewAI tool names to match rule names.
 
         Lowercases and replaces spaces, hyphens, and other non-alphanumeric
         separators with underscores, then collapses consecutive underscores.
@@ -215,12 +215,13 @@ class CrewAIAdapter:
             if decision.action == "pending_approval":
                 denied, decision = await self._resolve_pending_approval(envelope, decision, span)
                 if denied is not None:
+                    span.end()
                     self._pending_envelope = None
                     self._pending_span = None
                     self._pending_decision = None
                     return denied
 
-            # Handle per-contract observed denials
+            # Handle per-rule observed denials
             if decision.observed:
                 for cr in decision.contracts_evaluated:
                     if cr.get("observed") and not cr.get("passed"):
@@ -449,7 +450,6 @@ class CrewAIAdapter:
                     logger.exception("on_deny callback raised")
             span.set_attribute("governance.action", "denied")
             self._guard.telemetry.set_span_error(span, reason)
-            span.end()
             return self._deny(reason)
 
         principal_dict = asdict(envelope.principal) if envelope.principal else None
@@ -493,7 +493,6 @@ class CrewAIAdapter:
                 logger.exception("on_deny callback raised")
         span.set_attribute("governance.action", "denied")
         self._guard.telemetry.set_span_error(span, reason)
-        span.end()
         return self._deny(f"Approval denied: {reason}")
 
     def _check_tool_success(self, tool_name: str, tool_result: Any) -> bool:

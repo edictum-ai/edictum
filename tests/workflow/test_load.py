@@ -63,3 +63,21 @@ stages:
         message: nope
 """
         )
+
+
+def test_load_workflow_rejects_control_characters_in_condition_args():
+    with pytest.raises(EdictumConfigError, match="control characters"):
+        load_workflow_string(
+            """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: bad-gate-arg
+stages:
+  - id: verify
+    tools: [Read]
+    exit:
+      - condition: file_read("specs/\\nmalicious")
+        message: nope
+"""
+        )
