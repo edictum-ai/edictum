@@ -20,20 +20,20 @@ from .conftest import AutoApproveBackend
 
 _BUNDLE = """
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: adapter-bundle
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: noop-pre
     type: pre
     tool: Noop
     when:
-      input.path:
+      args.path:
         equals: never
     then:
-      effect: deny
+      action: block
       message: never
 """
 

@@ -61,28 +61,28 @@ class GovernanceTelemetry:
             description="Number of allowed tool calls",
         )
 
-    def start_tool_span(self, envelope: Any) -> Any:
+    def start_tool_span(self, tool_call: Any) -> Any:
         """Start span. Returns _NoOpSpan if OTel not available."""
         if not self._tracer:
             return _NoOpSpan()
         return self._tracer.start_span(
-            f"tool.execute {envelope.tool_name}",
+            f"tool.execute {tool_call.tool_name}",
             attributes={
-                "tool.name": envelope.tool_name,
-                "tool.side_effect": envelope.side_effect.value,
-                "tool.call_index": envelope.call_index,
-                "governance.environment": envelope.environment,
-                "governance.run_id": envelope.run_id,
+                "tool.name": tool_call.tool_name,
+                "tool.side_effect": tool_call.side_effect.value,
+                "tool.call_index": tool_call.call_index,
+                "governance.environment": tool_call.environment,
+                "governance.run_id": tool_call.run_id,
             },
         )
 
-    def record_denial(self, envelope: Any, reason: str | None = None) -> None:
+    def record_denial(self, tool_call: Any, reason: str | None = None) -> None:
         if _HAS_OTEL and self._meter:
-            self._denied_counter.add(1, {"tool.name": envelope.tool_name})
+            self._denied_counter.add(1, {"tool.name": tool_call.tool_name})
 
-    def record_allowed(self, envelope: Any) -> None:
+    def record_allowed(self, tool_call: Any) -> None:
         if _HAS_OTEL and self._meter:
-            self._allowed_counter.add(1, {"tool.name": envelope.tool_name})
+            self._allowed_counter.add(1, {"tool.name": tool_call.tool_name})
 
     def set_span_error(self, span: Any, reason: str) -> None:
         """Set span status to ERROR. No-op if OTel not available."""

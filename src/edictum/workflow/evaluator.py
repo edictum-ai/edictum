@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
-from edictum.envelope import ToolEnvelope
+from edictum.envelope import ToolCall
 from edictum.workflow.definition import WorkflowDefinition, WorkflowGate, WorkflowStage
 from edictum.workflow.result import WorkflowState
 
@@ -43,7 +43,7 @@ class EvaluateRequest:
     gate: WorkflowGate
     parsed: ParsedCondition
     state: WorkflowState
-    call: ToolEnvelope
+    call: ToolCall
 
 
 @dataclass

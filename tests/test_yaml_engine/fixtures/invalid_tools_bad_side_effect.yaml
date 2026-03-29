@@ -1,5 +1,5 @@
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: bad-tools
@@ -11,7 +11,7 @@ tools:
   explode_tool:
     side_effect: explode
 
-contracts:
+rules:
   - id: placeholder
     type: pre
     tool: "*"
@@ -19,5 +19,5 @@ contracts:
       args.path:
         exists: true
     then:
-      effect: deny
+      action: block
       message: "Denied."

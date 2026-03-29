@@ -1,4 +1,4 @@
-"""Compiler tests for sandbox contracts."""
+"""Compiler tests for sandbox rules."""
 
 from __future__ import annotations
 
@@ -13,21 +13,21 @@ def _compile(yaml: str):
 
 
 class TestSandboxCompilation:
-    """Sandbox contracts compile to callables with correct metadata."""
+    """Sandbox rules compile to callables with correct metadata."""
 
     YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tool: read_file
     within: [/workspace]
-    outside: deny
+    outside: block
     message: "Denied"
 """
 
@@ -53,7 +53,7 @@ contracts:
     def test_sandbox_callable_has_effect(self):
         compiled = _compile(self.YAML)
         fn = compiled.sandbox_contracts[0]
-        assert fn._edictum_effect == "deny"
+        assert fn._edictum_effect == "block"
 
     def test_sandbox_callable_has_source(self):
         compiled = _compile(self.YAML)
@@ -62,22 +62,22 @@ contracts:
 
 
 class TestSandboxDisabled:
-    """Disabled sandbox contracts are skipped."""
+    """Disabled sandbox rules are skipped."""
 
     YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: disabled-sandbox
     type: sandbox
     enabled: false
     tool: read_file
     within: [/workspace]
-    outside: deny
+    outside: block
     message: "Denied"
 """
 
@@ -91,33 +91,33 @@ class TestSandboxToolNormalization:
 
     YAML_SINGULAR = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: singular-sandbox
     type: sandbox
     tool: read_file
     within: [/workspace]
-    outside: deny
+    outside: block
     message: "Denied"
 """
 
     YAML_PLURAL = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: plural-sandbox
     type: sandbox
     tools: [read_file, write_file]
     within: [/workspace]
-    outside: deny
+    outside: block
     message: "Denied"
 """
 
@@ -137,38 +137,38 @@ class TestSandboxCallableEvaluation:
 
     YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: file-sandbox
     type: sandbox
     tool: read_file
     within: [/workspace, /tmp]
     not_within: [/workspace/.git]
-    outside: deny
+    outside: block
     message: "Outside sandbox"
 """
 
     def test_allowed_path_passes(self):
         compiled = _compile(self.YAML)
         fn = compiled.sandbox_contracts[0]
-        envelope = create_envelope("read_file", {"path": "/workspace/file.txt"})
-        verdict = fn(envelope)
-        assert verdict.passed is True
+        tool_call = create_envelope("read_file", {"path": "/workspace/file.txt"})
+        decision = fn(tool_call)
+        assert decision.passed is True
 
     def test_excluded_path_fails(self):
         compiled = _compile(self.YAML)
         fn = compiled.sandbox_contracts[0]
-        envelope = create_envelope("read_file", {"path": "/workspace/.git/config"})
-        verdict = fn(envelope)
-        assert verdict.passed is False
+        tool_call = create_envelope("read_file", {"path": "/workspace/.git/config"})
+        decision = fn(tool_call)
+        assert decision.passed is False
 
     def test_outside_path_fails(self):
         compiled = _compile(self.YAML)
         fn = compiled.sandbox_contracts[0]
-        envelope = create_envelope("read_file", {"path": "/etc/shadow"})
-        verdict = fn(envelope)
-        assert verdict.passed is False
+        tool_call = create_envelope("read_file", {"path": "/etc/shadow"})
+        decision = fn(tool_call)
+        assert decision.passed is False

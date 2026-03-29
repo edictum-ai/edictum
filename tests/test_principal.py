@@ -146,29 +146,29 @@ class TestEnvelopePropagation:
             ticket_ref="JIRA-1234",
             claims={"department": "platform"},
         )
-        envelope = create_envelope(
+        tool_call = create_envelope(
             "TestTool",
             {"key": "value"},
             principal=principal,
         )
-        assert envelope.principal == principal  # deep-copied, not identity
-        assert envelope.principal.role == "sre"
-        assert envelope.principal.ticket_ref == "JIRA-1234"
-        assert envelope.principal.claims == {"department": "platform"}
+        assert tool_call.principal == principal  # deep-copied, not identity
+        assert tool_call.principal.role == "sre"
+        assert tool_call.principal.ticket_ref == "JIRA-1234"
+        assert tool_call.principal.claims == {"department": "platform"}
 
     def test_envelope_without_principal(self):
-        """Backwards compat: envelope without principal still works."""
-        envelope = create_envelope("TestTool", {"key": "value"})
-        assert envelope.principal is None
+        """Backwards compat: tool_call without principal still works."""
+        tool_call = create_envelope("TestTool", {"key": "value"})
+        assert tool_call.principal is None
 
     def test_envelope_with_legacy_principal(self):
         """Backwards compat: principal without new fields still works."""
         principal = Principal(user_id="bob")
-        envelope = create_envelope("TestTool", {}, principal=principal)
-        assert envelope.principal.user_id == "bob"
-        assert envelope.principal.role is None
-        assert envelope.principal.ticket_ref is None
-        assert envelope.principal.claims == {}
+        tool_call = create_envelope("TestTool", {}, principal=principal)
+        assert tool_call.principal.user_id == "bob"
+        assert tool_call.principal.role is None
+        assert tool_call.principal.ticket_ref is None
+        assert tool_call.principal.claims == {}
 
 
 class TestAuditEventPrincipalSerialization:

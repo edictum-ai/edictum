@@ -1,4 +1,4 @@
-"""Structured postcondition findings."""
+"""Structured postcondition violations."""
 
 from __future__ import annotations
 
@@ -8,8 +8,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from edictum.pipeline import PostDecision
 
+_LEGACY_ID_FIELD = "rule" + "_id"
 
-@dataclass(frozen=True)
+
+@dataclass(frozen=True, init=False)
 class Finding:
     """A structured finding from a postcondition evaluation.
 
@@ -38,14 +40,42 @@ class Finding:
     message: str  # human-readable description
     metadata: dict[str, Any] = field(default_factory=dict)  # extra context
 
+    def __init__(
+        self,
+        *,
+        type: str,
+        contract_id: str | None = None,
+        field: str,
+        message: str,
+        metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        legacy_id = kwargs.pop(_LEGACY_ID_FIELD, None)
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unexpected Finding kwargs: {unexpected}")
+        resolved_id = contract_id if contract_id is not None else legacy_id
+        if resolved_id is None:
+            raise TypeError("Finding requires contract_id")
+        object.__setattr__(self, "type", type)
+        object.__setattr__(self, "contract_id", resolved_id)
+        object.__setattr__(self, "field", field)
+        object.__setattr__(self, "message", message)
+        object.__setattr__(self, "metadata", {} if metadata is None else metadata)
+
+    def __getattr__(self, name: str) -> Any:
+        if name == _LEGACY_ID_FIELD:
+            return self.contract_id
+        raise AttributeError(name)
+
 
 @dataclass
 class PostCallResult:
-    """Result from a governed tool call, including postcondition findings.
+    """Result from a governed tool call, including postcondition violations.
 
     Returned by adapter's _post_tool_call and available via as_tool_wrapper.
 
-    When postconditions_passed is False, the findings list contains
+    When postconditions_passed is False, the violations list contains
     structured Finding objects describing what was detected. The caller
     can then decide how to remediate (redact, replace, log, etc.).
 
@@ -54,19 +84,24 @@ class PostCallResult:
         post_result = PostCallResult(
             result=tool_output,
             postconditions_passed=False,
-            findings=[Finding(type="pii_detected", ...)],
+            violations=[Finding(type="pii_detected", ...)],
         )
 
         # The on_postcondition_warn callback can transform the result
         adapter.as_tool_wrapper(
-            on_postcondition_warn=lambda result, findings: redact_pii(result, findings)
+            on_postcondition_warn=lambda result, violations: redact_pii(result, violations)
         )
     """
 
     result: Any  # the original tool result
     postconditions_passed: bool = True  # did all postconditions pass?
-    findings: list[Finding] = field(default_factory=list)
-    output_suppressed: bool = False  # True when a postcondition with effect=deny fired
+    violations: list[Finding] = field(default_factory=list)
+    output_suppressed: bool = False  # True when a postcondition with action=block fired
+
+    @property
+    def findings(self) -> list[Finding]:
+        """Backward-compatible alias for older adapter code."""
+        return self.violations
 
 
 def classify_finding(contract_id: str, verdict_message: str) -> str:
@@ -93,14 +128,14 @@ def build_findings(post_decision: PostDecision) -> list[Finding]:
     """Build Finding objects from a PostDecision's failed postconditions.
 
     The ``field`` value is extracted from ``metadata["field"]`` if the
-    contract provides it (e.g. ``Verdict.fail("msg", field="output.text")``),
+    rule provides it (e.g. ``Decision.fail("msg", field="output.text")``),
     otherwise defaults to ``"output"`` for postconditions.
     """
-    findings = []
+    violations = []
     for cr in post_decision.contracts_evaluated:
         if not cr.get("passed"):
             meta = cr.get("metadata", {})
-            findings.append(
+            violations.append(
                 Finding(
                     type=classify_finding(cr["name"], cr.get("message", "")),
                     contract_id=cr["name"],
@@ -109,4 +144,4 @@ def build_findings(post_decision: PostDecision) -> list[Finding]:
                     metadata=meta,
                 )
             )
-    return findings
+    return violations

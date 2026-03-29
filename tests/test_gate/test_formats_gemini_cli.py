@@ -130,29 +130,29 @@ class TestGeminiCliOutput:
         assert code == 0
 
     def test_format_allow_with_contract(self) -> None:
-        stdout, code = self.fmt.format_output("allow", "some-contract", None, 3)
+        stdout, code = self.fmt.format_output("allow", "some-rule", None, 3)
         result = json.loads(stdout)
         assert result == {}
         assert code == 0
 
     def test_format_deny(self) -> None:
-        stdout, code = self.fmt.format_output("deny", "test-contract", "Not allowed", 5)
-        assert "test-contract" in stdout
+        stdout, code = self.fmt.format_output("block", "test-rule", "Not allowed", 5)
+        assert "test-rule" in stdout
         assert "Not allowed" in stdout
         assert code == 2
 
     def test_format_deny_exit_code(self) -> None:
-        _, code = self.fmt.format_output("deny", "c1", "bad", 1)
+        _, code = self.fmt.format_output("block", "c1", "bad", 1)
         assert code == 2
 
     def test_format_deny_no_contract(self) -> None:
-        stdout, code = self.fmt.format_output("deny", None, "Generic deny", 0)
-        assert stdout == "Generic deny"
+        stdout, code = self.fmt.format_output("block", None, "Generic block", 0)
+        assert stdout == "Generic block"
         assert code == 2
 
     def test_format_deny_contract_only(self) -> None:
-        stdout, code = self.fmt.format_output("deny", "my-contract", None, 1)
-        assert "my-contract" in stdout
+        stdout, code = self.fmt.format_output("block", "my-rule", None, 1)
+        assert "my-rule" in stdout
         assert code == 2
 
     def test_format_warn_treated_as_allow(self) -> None:

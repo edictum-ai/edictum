@@ -1,6 +1,6 @@
 """Behavior tests for OTel span lifecycle — no span leaks on exceptions or denials.
 
-Verifies span.end() is always called even when pipeline raises, adapters deny,
+Verifies span.end() is always called even when pipeline raises, adapters block,
 or Nanobot hits the no-backend approval path.
 """
 
@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from edictum import Edictum, Verdict, precondition
+from edictum import Decision, Edictum, precondition
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -158,7 +158,7 @@ class TestGuardRunSpanEnd:
         mock_span = MagicMock()
         with (
             patch.object(guard.telemetry, "start_tool_span", return_value=mock_span),
-            patch("edictum.GovernancePipeline.pre_execute", side_effect=RuntimeError("crash")),
+            patch("edictum.CheckPipeline.pre_execute", side_effect=RuntimeError("crash")),
         ):
             with pytest.raises(RuntimeError, match="crash"):
                 await guard.run("TestTool", {}, lambda: "ok")
@@ -170,12 +170,12 @@ class TestGuardRunSpanEnd:
 
 def _make_approval_contract():
     @precondition("*")
-    def requires_approval(envelope):
-        return Verdict.fail("needs approval")
+    def requires_approval(tool_call):
+        return Decision.fail("needs approval")
 
-    requires_approval._edictum_effect = "approve"
+    requires_approval._edictum_effect = "ask"
     requires_approval._edictum_timeout = 10
-    requires_approval._edictum_timeout_effect = "deny"
+    requires_approval._edictum_timeout_action = "block"
     return requires_approval
 
 
@@ -187,7 +187,7 @@ class TestNanobotNoBackendDenial:
         from edictum.adapters.nanobot import GovernedToolRegistry
 
         sink = NullAuditSink()
-        guard = _make_guard(contracts=[_make_approval_contract()], audit_sink=sink)
+        guard = _make_guard(rules=[_make_approval_contract()], audit_sink=sink)
         inner = MagicMock()
         inner.execute = AsyncMock(return_value="ok")
         registry = GovernedToolRegistry(inner, guard)
@@ -199,7 +199,7 @@ class TestNanobotNoBackendDenial:
     async def test_no_backend_calls_record_denial(self):
         from edictum.adapters.nanobot import GovernedToolRegistry
 
-        guard = _make_guard(contracts=[_make_approval_contract()])
+        guard = _make_guard(rules=[_make_approval_contract()])
         inner = MagicMock()
         inner.execute = AsyncMock(return_value="ok")
         registry = GovernedToolRegistry(inner, guard)
@@ -207,30 +207,30 @@ class TestNanobotNoBackendDenial:
             await registry.execute("TestTool", {})
             mock_denial.assert_called_once()
 
-    async def test_no_backend_fires_on_deny(self):
+    async def test_no_backend_fires_on_block(self):
         from edictum.adapters.nanobot import GovernedToolRegistry
 
-        on_deny = MagicMock()
-        guard = _make_guard(contracts=[_make_approval_contract()], on_deny=on_deny)
+        on_block = MagicMock()
+        guard = _make_guard(rules=[_make_approval_contract()], on_block=on_block)
         inner = MagicMock()
         inner.execute = AsyncMock(return_value="ok")
         registry = GovernedToolRegistry(inner, guard)
         await registry.execute("TestTool", {})
-        on_deny.assert_called_once()
-        assert "no approval backend" in on_deny.call_args[0][1].lower()
+        on_block.assert_called_once()
+        assert "no approval backend" in on_block.call_args[0][1].lower()
 
 
 class TestNanobotSpanEndOnDeny:
-    """Nanobot execute() ends span even on deny path (try/finally)."""
+    """Nanobot execute() ends span even on block path (try/finally)."""
 
-    async def test_nanobot_execute_span_ended_on_deny(self):
+    async def test_nanobot_execute_span_ended_on_block(self):
         from edictum.adapters.nanobot import GovernedToolRegistry
 
         @precondition("*")
-        def block(envelope):
-            return Verdict.fail("denied")
+        def block(tool_call):
+            return Decision.fail("denied")
 
-        guard = _make_guard(contracts=[block])
+        guard = _make_guard(rules=[block])
         inner = MagicMock()
         registry = GovernedToolRegistry(inner, guard)
         mock_span = MagicMock()

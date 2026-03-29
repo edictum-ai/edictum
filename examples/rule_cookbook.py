@@ -1,17 +1,17 @@
-"""Edictum Contract Cookbook — Recipes for every governance pattern.
+"""Edictum Rule Cookbook — Recipes for every governance pattern.
 
-Each recipe is a standalone, copy-paste-ready contract with:
+Each recipe is a standalone, copy-paste-ready rule with:
 - Docstring explaining WHEN and WHY you'd use it
 - Working code against the real Edictum API
 - The denial message written to help the agent self-correct
 
-Run this file to verify all contracts compile:
-    python contract_cookbook.py
+Run this file to verify all rules compile:
+    python rule_cookbook.py
 
-Contracts are organized by the THREE contract types:
-    1. Preconditions  — block BEFORE the tool runs (safe to deny)
+Contracts are organized by the THREE rule types:
+    1. Preconditions  — block BEFORE the tool runs (safe to block)
     2. Postconditions  — inspect AFTER the tool runs (observe + warn)
-    3. Session contracts — govern across turns (cumulative state)
+    3. Session rules — govern across turns (cumulative state)
 
 ═══════════════════════════════════════════════════════════════════════
 """
@@ -22,7 +22,7 @@ import json
 import re
 from collections.abc import Callable
 
-from edictum import Verdict, postcondition, precondition, session_contract
+from edictum import Decision, postcondition, precondition, session_contract
 
 # ════════════════════════════════════════════════════════════════════
 #  PART 1: PRECONDITIONS — Block Before Execution
@@ -39,25 +39,25 @@ from edictum import Verdict, postcondition, precondition, session_contract
 
 # ─── 1.1  Blocklist: Deny specific dangerous actions ─────────────
 #
-#  The simplest contract. Match a pattern, deny if found.
+#  The simplest rule. Match a pattern, block if found.
 #  Good for: known-bad commands, sensitive paths, forbidden APIs.
 
 
 @precondition("bash")
-def no_destructive_commands(envelope):
+def no_destructive_commands(tool_call):
     """Block shell commands that destroy data.
 
     WHY: Agents explore aggressively. An agent told to "clean up"
     will happily `rm -rf /` if nothing stops it.
     """
-    cmd = envelope.args.get("command", "")
+    cmd = tool_call.args.get("command", "")
     destructive = ["rm -rf", "rm -r /", "mkfs", "dd if=", "> /dev/", "chmod -R 777"]
     for pattern in destructive:
         if pattern in cmd:
-            return Verdict.fail(
+            return Decision.fail(
                 f"Destructive command denied: '{pattern}'. Use 'mv' to relocate files instead of deleting them."
             )
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 @precondition(
@@ -66,18 +66,18 @@ def no_destructive_commands(envelope):
         s in (e.args.get("path") or "") for s in [".env", "credentials", "id_rsa", ".pem", ".key", ".secret"]
     ),
 )
-def block_sensitive_reads(envelope):
+def block_sensitive_reads(tool_call):
     """Prevent agents from reading secrets files.
 
     WHY: File-organizer agents read everything to understand content.
     Secrets in .env or credentials.json end up in the LLM context,
     logged in traces, and potentially leaked in outputs.
 
-    The `when` guard short-circuits — envelope isn't even created
+    The `when` guard short-circuits — tool_call isn't even created
     for non-matching paths.
     """
-    return Verdict.fail(
-        f"Cannot read sensitive file '{envelope.args.get('path')}'. "
+    return Decision.fail(
+        f"Cannot read sensitive file '{tool_call.args.get('path')}'. "
         "Skip this file and continue with non-sensitive files."
     )
 
@@ -90,7 +90,7 @@ def block_sensitive_reads(envelope):
 
 
 @precondition("bash")
-def allowlist_read_only_commands(envelope):
+def allowlist_read_only_commands(tool_call):
     """Only allow a curated set of read-only shell commands.
 
     WHY: In a research/analysis agent, the agent should observe
@@ -101,7 +101,7 @@ def allowlist_read_only_commands(envelope):
     read-only pipelines like ``rg pattern | head -20`` are intentionally
     denied. Each command must be invoked individually.
     """
-    cmd = (envelope.args.get("command") or "").strip()
+    cmd = (tool_call.args.get("command") or "").strip()
     allowed_prefixes = [
         "ls",
         "cat",
@@ -130,15 +130,15 @@ def allowlist_read_only_commands(envelope):
 
     # Also block shell operators regardless
     if any(op in cmd for op in [">", ">>", "|", ";", "&&", "||", "$(", "`"]):
-        return Verdict.fail(
+        return Decision.fail(
             "Shell operators (pipes, redirects, chaining) are not allowed. Use individual read-only commands only."
         )
 
     for prefix in allowed_prefixes:
         if cmd == prefix or cmd.startswith(prefix + " "):
-            return Verdict.pass_()
+            return Decision.pass_()
 
-    return Verdict.fail(
+    return Decision.fail(
         f"Command '{cmd.split()[0]}' is not in the read-only allowlist. "
         f"Allowed commands: {', '.join(allowed_prefixes[:8])}..."
     )
@@ -158,85 +158,85 @@ def make_require_target_dir(base: str):
     """
 
     @precondition("move_file")
-    def require_target_dir(envelope):
-        dest = envelope.args.get("destination", "")
+    def require_target_dir(tool_call):
+        dest = tool_call.args.get("destination", "")
         if not dest.startswith(base):
-            return Verdict.fail(
+            return Decision.fail(
                 f"Destination '{dest}' is outside the allowed area. "
                 f"All file moves must target '{base}<category>/'. "
                 f"Example: '{base}documents/report.pdf'."
             )
-        return Verdict.pass_()
+        return Decision.pass_()
 
     return require_target_dir
 
 
 # ─── 1.4  Environment-Aware Contracts ────────────────────────────
 #
-#  Same contract, different behavior per environment.
-#  The envelope carries `environment` from Edictum config.
+#  Same rule, different behavior per environment.
+#  The tool_call carries `environment` from Edictum config.
 
 
 @precondition("deploy")
-def production_requires_dry_run(envelope):
+def production_requires_dry_run(tool_call):
     """In production, require --dry-run flag before real deploys.
 
     WHY: Production deployments are irreversible. Force the agent to
     do a dry-run first so it can verify the plan before executing.
     """
-    if envelope.environment != "production":
-        return Verdict.pass_()
+    if tool_call.environment != "production":
+        return Decision.pass_()
 
-    args = envelope.args
+    args = tool_call.args
     if not args.get("dry_run", False):
-        return Verdict.fail(
+        return Decision.fail(
             "Production deployments require a dry-run first. "
             "Re-run with dry_run=True, verify the output, then "
             "run again with dry_run=False."
         )
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 @precondition("*")
-def staging_only_in_staging(envelope):
+def staging_only_in_staging(tool_call):
     """Block writes to staging resources outside staging environment.
 
     WHY: Agents running in dev shouldn't accidentally hit staging APIs.
     """
-    if envelope.environment == "staging":
-        return Verdict.pass_()
+    if tool_call.environment == "staging":
+        return Decision.pass_()
 
-    for val in envelope.args.values():
+    for val in tool_call.args.values():
         if isinstance(val, str) and "staging" in val.lower():
-            return Verdict.fail(
+            return Decision.fail(
                 f"Reference to 'staging' detected outside staging environment "
-                f"(current: {envelope.environment}). "
+                f"(current: {tool_call.environment}). "
                 "Use environment-appropriate resources."
             )
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 # ─── 1.5  Time-Based Contracts ───────────────────────────────────
 #
-#  Deny actions based on when they happen. Uses the envelope's
+#  Deny actions based on when they happen. Uses the tool_call's
 #  timestamp (UTC) for consistency.
 
 
 @precondition("deploy")
-def no_friday_deploys(envelope):
+def no_friday_deploys(tool_call):
     """Block deployments on Fridays (and weekends).
 
     WHY: The classic SRE rule. Don't deploy before the weekend
     when nobody is around to fix things.
     """
-    day = envelope.timestamp.weekday()  # 0=Monday, 6=Sunday
+    day = tool_call.timestamp.weekday()  # 0=Monday, 6=Sunday
     if day >= 4:  # Friday, Saturday, Sunday
         day_names = {4: "Friday", 5: "Saturday", 6: "Sunday"}
-        return Verdict.fail(
+        return Decision.fail(
             f"Deployments are not allowed on {day_names[day]}s. "
             "Schedule this for Monday-Thursday during business hours."
         )
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 def make_business_hours_only(tools: list[str], tz_offset: int = 0):
@@ -248,18 +248,18 @@ def make_business_hours_only(tools: list[str], tz_offset: int = 0):
     tool_pattern = tools[0] if len(tools) == 1 else "*"
 
     @precondition(tool_pattern)
-    def business_hours_only(envelope):
-        if tool_pattern == "*" and envelope.tool_name not in tools:
-            return Verdict.pass_()
+    def business_hours_only(tool_call):
+        if tool_pattern == "*" and tool_call.tool_name not in tools:
+            return Decision.pass_()
 
-        hour = (envelope.timestamp.hour + tz_offset) % 24
+        hour = (tool_call.timestamp.hour + tz_offset) % 24
         if not (9 <= hour < 17):
-            return Verdict.fail(
-                f"'{envelope.tool_name}' is restricted to business hours "
+            return Decision.fail(
+                f"'{tool_call.tool_name}' is restricted to business hours "
                 f"(09:00-17:00 UTC{tz_offset:+d}). Current hour: {hour:02d}:00. "
                 "Schedule this operation for the next business day."
             )
-        return Verdict.pass_()
+        return Decision.pass_()
 
     return business_hours_only
 
@@ -271,20 +271,20 @@ def make_business_hours_only(tools: list[str], tz_offset: int = 0):
 
 
 @precondition("query_database")
-def validate_sql_query(envelope):
+def validate_sql_query(tool_call):
     """Block dangerous SQL patterns.
 
     WHY: Text-to-SQL agents generate queries from natural language.
     A prompt injection or misunderstanding could produce DROP TABLE
     or unbounded SELECTs that crash the database.
     """
-    query = (envelope.args.get("query") or "").upper()
+    query = (tool_call.args.get("query") or "").upper()
 
     # Block DDL
     ddl_keywords = ["DROP", "ALTER", "TRUNCATE", "CREATE", "GRANT", "REVOKE"]
     for kw in ddl_keywords:
         if re.search(rf"\b{kw}\b", query):
-            return Verdict.fail(
+            return Decision.fail(
                 f"DDL statement '{kw}' is not allowed. "
                 "This agent can only run SELECT queries. "
                 "Rephrase your approach using read-only operations."
@@ -292,59 +292,59 @@ def validate_sql_query(envelope):
 
     # Require LIMIT on SELECT
     if "SELECT" in query and "LIMIT" not in query:
-        return Verdict.fail(
+        return Decision.fail(
             "SELECT queries must include a LIMIT clause. Add 'LIMIT 1000' to prevent unbounded result sets."
         )
 
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 @precondition("call_api")
-def validate_api_payload(envelope):
+def validate_api_payload(tool_call):
     """Ensure API payloads contain required fields.
 
     WHY: Agents constructing API requests often forget required fields.
     Catching this before the call saves a round-trip and avoids
     confusing error messages from the API.
     """
-    payload = envelope.args.get("body", {})
+    payload = tool_call.args.get("body", {})
     required = ["user_id", "action"]
 
     missing = [f for f in required if f not in payload]
     if missing:
-        return Verdict.fail(
+        return Decision.fail(
             f"API payload missing required fields: {', '.join(missing)}. "
             f"Add these fields before calling the API. "
             f"Expected: {json.dumps({f: '<value>' for f in required})}."
         )
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 # ─── 1.7  Cost Estimation (Pre-check) ────────────────────────────
 #
-#  Estimate cost from arguments and deny if too expensive.
+#  Estimate cost from arguments and block if too expensive.
 #  Use when you can predict cost from input parameters.
 
 
 def make_max_cost_per_call(tool: str, cost_fn: Callable, max_cost: float, currency: str = "USD"):
-    """Factory: deny individual tool calls that exceed a cost threshold.
+    """Factory: block individual tool calls that exceed a cost threshold.
 
     WHY: A coding agent spinning up cloud resources could accidentally
     create an expensive instance. Check estimated cost before execution.
 
-    cost_fn receives the envelope args and returns estimated cost.
+    cost_fn receives the tool_call args and returns estimated cost.
     """
 
     @precondition(tool)
-    def max_cost_per_call(envelope):
-        estimated = cost_fn(envelope.args)
+    def max_cost_per_call(tool_call):
+        estimated = cost_fn(tool_call.args)
         if estimated > max_cost:
-            return Verdict.fail(
+            return Decision.fail(
                 f"Estimated cost {currency} {estimated:.2f} exceeds limit "
                 f"of {currency} {max_cost:.2f} per call. "
                 "Choose a smaller instance type or reduce the scope."
             )
-        return Verdict.pass_()
+        return Decision.pass_()
 
     return max_cost_per_call
 
@@ -375,7 +375,7 @@ ec2_cost_limit = make_max_cost_per_call("create_ec2_instance", estimate_ec2_cost
 
 
 @precondition("*")
-def no_prompt_injection_in_args(envelope):
+def no_prompt_injection_in_args(tool_call):
     """Detect prompt injection attempts in tool arguments.
 
     WHY: If an agent reads untrusted content (emails, documents, web pages)
@@ -392,15 +392,15 @@ def no_prompt_injection_in_args(envelope):
         "\\n\\nAssistant:",
     ]
 
-    args_str = json.dumps(envelope.args).lower()
+    args_str = json.dumps(tool_call.args).lower()
     for pattern in suspicious_patterns:
         if pattern.lower() in args_str:
-            return Verdict.fail(
+            return Decision.fail(
                 "Suspicious content detected in tool arguments that resembles "
                 "a prompt injection attempt. Review the input source and "
                 "sanitize before proceeding."
             )
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -413,7 +413,7 @@ def no_prompt_injection_in_args(envelope):
 #  For read/pure tools: suggest a retry.
 #  For write/irreversible tools: warn and log for review.
 #
-#  Postconditions receive (envelope, tool_response).
+#  Postconditions receive (tool_call, tool_response).
 # ════════════════════════════════════════════════════════════════════
 
 
@@ -423,7 +423,7 @@ def no_prompt_injection_in_args(envelope):
 
 
 @postcondition("*")
-def detect_pii_in_output(envelope, tool_response):
+def detect_pii_in_output(tool_call, tool_response):
     """Warn if tool output contains PII patterns.
 
     WHY: A database query or API call might return personal data.
@@ -431,7 +431,7 @@ def detect_pii_in_output(envelope, tool_response):
     PII exposure, and the agent is warned to handle it carefully.
     """
     if not isinstance(tool_response, str):
-        return Verdict.pass_()
+        return Decision.pass_()
 
     pii_patterns = {
         "SSN": r"\b\d{3}-\d{2}-\d{4}\b",
@@ -446,13 +446,13 @@ def detect_pii_in_output(envelope, tool_response):
             found.append(name)
 
     if found:
-        return Verdict.fail(
+        return Decision.fail(
             f"Tool output contains potential PII: {', '.join(found)}. "
             "Do NOT include this data in summaries or outputs. "
             "Redact before processing further.",
             pii_types=found,
         )
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 # ─── 2.2  Data Quality Validation ────────────────────────────────
@@ -461,7 +461,7 @@ def detect_pii_in_output(envelope, tool_response):
 
 
 @postcondition("query_database")
-def validate_query_results(envelope, tool_response):
+def validate_query_results(tool_call, tool_response):
     """Warn if query returns too many rows or empty results.
 
     WHY: An agent building reports from SQL queries should know
@@ -469,7 +469,7 @@ def validate_query_results(envelope, tool_response):
     of rows (possible missing WHERE clause).
     """
     if isinstance(tool_response, str) and tool_response.startswith("Error:"):
-        return Verdict.pass_()  # Error handling is separate
+        return Decision.pass_()  # Error handling is separate
 
     # Try to detect row count from common response formats
     row_count = None
@@ -482,17 +482,17 @@ def validate_query_results(envelope, tool_response):
 
     if row_count is not None:
         if row_count == 0:
-            return Verdict.fail(
+            return Decision.fail(
                 "Query returned zero rows. Verify your WHERE clause "
                 "and table name are correct before drawing conclusions."
             )
         if row_count > 10000:
-            return Verdict.fail(
+            return Decision.fail(
                 f"Query returned {row_count:,} rows — this is unusually large. "
                 "Add more filters or use aggregation to reduce the result set."
             )
 
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 # ─── 2.3  API Response Validation ────────────────────────────────
@@ -501,7 +501,7 @@ def validate_query_results(envelope, tool_response):
 
 
 @postcondition("call_api")
-def validate_api_response(envelope, tool_response):
+def validate_api_response(tool_call, tool_response):
     """Warn if API response indicates a problem.
 
     WHY: Agents often ignore HTTP error codes and treat error
@@ -509,7 +509,7 @@ def validate_api_response(envelope, tool_response):
     """
     if isinstance(tool_response, str):
         if any(s in tool_response for s in ["Error:", "403", "401", "500", "502", "503"]):
-            return Verdict.fail(
+            return Decision.fail(
                 "API returned an error response. Do not treat this as valid data. "
                 "Check the endpoint, credentials, and parameters before retrying."
             )
@@ -517,9 +517,9 @@ def validate_api_response(envelope, tool_response):
     if isinstance(tool_response, dict):
         status = tool_response.get("status") or tool_response.get("statusCode")
         if isinstance(status, int) and status >= 400:
-            return Verdict.fail(f"API returned status {status}. Inspect the error message and adjust your request.")
+            return Decision.fail(f"API returned status {status}. Inspect the error message and adjust your request.")
 
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 # ─── 2.4  Output Size Monitoring ─────────────────────────────────
@@ -528,7 +528,7 @@ def validate_api_response(envelope, tool_response):
 
 
 @postcondition("*")
-def monitor_output_size(envelope, tool_response):
+def monitor_output_size(tool_call, tool_response):
     """Warn if tool output is unusually large.
 
     WHY: A read_file on a 50MB log file, or an API that returns
@@ -536,17 +536,17 @@ def monitor_output_size(envelope, tool_response):
     and can cause the agent to lose track of its task.
     """
     if tool_response is None:
-        return Verdict.pass_()
+        return Decision.pass_()
 
     size = len(str(tool_response))
     if size > 50_000:
-        return Verdict.fail(
+        return Decision.fail(
             f"Tool output is very large ({size:,} chars). "
             "Consider using head/tail, pagination, or more specific "
             "filters to reduce the output before processing.",
             output_size=size,
         )
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 # ─── 2.5  Secrets Leak Detection ─────────────────────────────────
@@ -555,7 +555,7 @@ def monitor_output_size(envelope, tool_response):
 
 
 @postcondition("*")
-def detect_secrets_in_output(envelope, tool_response):
+def detect_secrets_in_output(tool_call, tool_response):
     """Warn if tool output contains secret-like patterns.
 
     WHY: Defense in depth. Even if the agent was allowed to read
@@ -563,7 +563,7 @@ def detect_secrets_in_output(envelope, tool_response):
     should never enter the conversation context.
     """
     if not isinstance(tool_response, str):
-        return Verdict.pass_()
+        return Decision.pass_()
 
     secret_patterns = {
         "AWS Access Key": r"AKIA[0-9A-Z]{16}",
@@ -579,20 +579,20 @@ def detect_secrets_in_output(envelope, tool_response):
             found.append(name)
 
     if found:
-        return Verdict.fail(
+        return Decision.fail(
             f"Tool output contains secrets: {', '.join(found)}. "
             "Do NOT reference, log, or output these values. "
             "Treat this output as sensitive and proceed carefully.",
             secret_types=found,
         )
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 # ════════════════════════════════════════════════════════════════════
 #  PART 3: SESSION CONTRACTS — Govern Across Turns
 # ════════════════════════════════════════════════════════════════════
 #
-#  Session contracts use PERSISTED counters to track cumulative
+#  Session rules use PERSISTED counters to track cumulative
 #  state across tool calls. They must be async because Session
 #  methods are async.
 #
@@ -606,7 +606,7 @@ def detect_secrets_in_output(envelope, tool_response):
 
 # ─── 3.1  Operation Limits ───────────────────────────────────────
 #
-#  The most common session contract. Cap total actions.
+#  The most common session rule. Cap total actions.
 
 
 def make_operation_limit(max_ops: int):
@@ -620,12 +620,12 @@ def make_operation_limit(max_ops: int):
     async def limit_operations(session):
         count = await session.execution_count()
         if count >= max_ops:
-            return Verdict.fail(
+            return Decision.fail(
                 f"Session limit reached: {count}/{max_ops} tool calls. "
                 "Stop executing tools. Summarize what you've accomplished "
                 "and what remains to be done."
             )
-        return Verdict.pass_()
+        return Decision.pass_()
 
     return limit_operations
 
@@ -655,7 +655,7 @@ def make_budget_limit(budget: float, cost_per_tool: dict[str, float], currency: 
 
         remaining = budget - total_cost
         if remaining <= 0:
-            return Verdict.fail(
+            return Decision.fail(
                 f"Budget exhausted: {currency} {total_cost:.2f} spent "
                 f"of {currency} {budget:.2f} limit. "
                 "Stop making paid API calls. Use cached results or "
@@ -663,9 +663,9 @@ def make_budget_limit(budget: float, cost_per_tool: dict[str, float], currency: 
             )
         if remaining < budget * 0.1:
             # Allow but warn when under 10% remaining
-            return Verdict.pass_()
+            return Decision.pass_()
 
-        return Verdict.pass_()
+        return Decision.pass_()
 
     return budget_limit
 
@@ -700,12 +700,12 @@ def make_per_tool_rate_limit(tool: str, max_calls: int, window_description: str 
     async def rate_limit(session):
         count = await session.tool_execution_count(tool)
         if count >= max_calls:
-            return Verdict.fail(
+            return Decision.fail(
                 f"Rate limit: '{tool}' called {count} times "
                 f"(max {max_calls} {window_description}). "
                 "Wait before making more calls, or batch your operations."
             )
-        return Verdict.pass_()
+        return Decision.pass_()
 
     return rate_limit
 
@@ -731,14 +731,14 @@ def make_failure_escalation(max_consecutive: int = 3):
     async def failure_escalation(session):
         failures = await session.consecutive_failures()
         if failures >= max_consecutive:
-            return Verdict.fail(
+            return Decision.fail(
                 f"Agent has failed {failures} consecutive times. "
                 "Stop retrying the same approach. Either: "
                 "(1) try a completely different strategy, "
                 "(2) ask the user for help, or "
                 "(3) summarize what went wrong and stop."
             )
-        return Verdict.pass_()
+        return Decision.pass_()
 
     return failure_escalation
 
@@ -759,11 +759,11 @@ def make_require_before(prerequisite: str, dependent: str):
     @session_contract
     async def require_ordering(session):
         await session.tool_execution_count(prerequisite)
-        # This contract is checked on every tool call, but we only
+        # This rule is checked on every tool call, but we only
         # care when the dependent tool is about to be called.
-        # Since session contracts can't see the current envelope,
+        # Since session rules can't see the current tool_call,
         # we use a precondition for the actual gate (see below).
-        return Verdict.pass_()
+        return Decision.pass_()
 
     # Actually, this is better as a precondition with session state.
     # See the combined pattern below.
@@ -776,7 +776,7 @@ class DependencyGate:
 
     Usage:
         gate = DependencyGate("authenticate", "query_database")
-        guard = Edictum(contracts=[gate.contract])
+        guard = Edictum(rules=[gate.rule])
     """
 
     def __init__(self, prerequisite: str, dependent: str):
@@ -784,12 +784,12 @@ class DependencyGate:
         self.dependent = dependent
 
         @precondition(dependent)
-        def _contract(envelope):
+        def _contract(tool_call):
             # This is a sync precondition but needs session state.
-            # For the async version, use a session contract.
-            return Verdict.pass_()  # Placeholder
+            # For the async version, use a session rule.
+            return Decision.pass_()  # Placeholder
 
-        self.contract = _contract
+        self.rule = _contract
 
     def make_session_contract(self):
         prerequisite = self.prerequisite
@@ -806,7 +806,7 @@ class DependencyGate:
             if prereq_count == 0 and dep_count == 0:
                 # Can't tell from session alone — use precondition.
                 pass
-            return Verdict.pass_()
+            return Decision.pass_()
 
         return dependency_check
 
@@ -819,24 +819,24 @@ class WorkflowGate:
         gate = WorkflowGate()
 
         @precondition("authenticate")
-        def mark_authenticated(envelope):
+        def mark_authenticated(tool_call):
             gate.satisfied = True
-            return Verdict.pass_()
+            return Decision.pass_()
 
         @precondition("query_database")
-        def require_auth(envelope):
+        def require_auth(tool_call):
             return gate.check("Call 'authenticate' first.")
 
-        guard = Edictum(contracts=[mark_authenticated, require_auth])
+        guard = Edictum(rules=[mark_authenticated, require_auth])
     """
 
     def __init__(self):
         self.satisfied = False
 
-    def check(self, message: str) -> Verdict:
+    def check(self, message: str) -> Decision:
         if not self.satisfied:
-            return Verdict.fail(message)
-        return Verdict.pass_()
+            return Decision.fail(message)
+        return Decision.pass_()
 
 
 # ─── 3.6  Progress Monitoring ────────────────────────────────────
@@ -858,12 +858,12 @@ def make_stuck_detection(max_attempts_without_progress: int = 10):
         executions = await session.execution_count()
 
         if attempts > max_attempts_without_progress and executions < attempts * 0.3:
-            return Verdict.fail(
+            return Decision.fail(
                 f"Progress stall detected: {executions} successes out of "
                 f"{attempts} attempts ({executions / attempts:.0%} success rate). "
                 "The agent appears stuck. Change approach or ask for help."
             )
-        return Verdict.pass_()
+        return Decision.pass_()
 
     return stuck_detection
 
@@ -872,13 +872,13 @@ def make_stuck_detection(max_attempts_without_progress: int = 10):
 #  PART 4: COMPOSITION PATTERNS
 # ════════════════════════════════════════════════════════════════════
 #
-#  Real governance combines multiple contract types.
+#  Real governance combines multiple rule types.
 #  Here are complete configurations for common agent types.
 # ════════════════════════════════════════════════════════════════════
 
 
 def research_agent_contracts():
-    """Complete contract set for a research/analysis agent.
+    """Complete rule set for a research/analysis agent.
 
     Agent can: search, read, query databases, call APIs.
     Agent cannot: modify data, delete files, deploy anything.
@@ -903,7 +903,7 @@ def research_agent_contracts():
 
 
 def file_organizer_contracts(target_dir: str = "/tmp/organized/"):
-    """Complete contract set for a file organizer agent.
+    """Complete rule set for a file organizer agent.
 
     Agent can: list, read, move files to target directory.
     Agent cannot: delete files, read secrets, write outside target.
@@ -922,7 +922,7 @@ def file_organizer_contracts(target_dir: str = "/tmp/organized/"):
 
 
 def devops_agent_contracts():
-    """Complete contract set for a DevOps/deployment agent.
+    """Complete rule set for a DevOps/deployment agent.
 
     Agent can: run commands, deploy (with dry-run), manage infra.
     Agent cannot: deploy on Fridays, exceed cost limits, bypass dry-run.
@@ -965,22 +965,22 @@ def devops_agent_contracts():
 #
 #  Cost of Global Contracts
 #  ─────────────────────────
-#  Wildcard contracts like ``no_prompt_injection_in_args`` (targeting
+#  Wildcard rules like ``no_prompt_injection_in_args`` (targeting
 #  ``"*"``) run on every tool call. The pattern-matching heuristic
 #  can produce false positives — benign content that happens to
 #  contain phrases like "ignore previous instructions" will be
-#  denied. Scope global contracts narrowly or use ``when=`` guards
+#  denied. Scope global rules narrowly or use ``when=`` guards
 #  to limit which envelopes they inspect.
 #
-#  Session Contract Limitations
+#  Session Rule Limitations
 #  ─────────────────────────────
-#  Session contracts receive only the Session object — they have no
-#  access to the current ToolEnvelope. They can query cumulative
+#  Session rules receive only the Session object — they have no
+#  access to the current ToolCall. They can query cumulative
 #  counters (attempt_count, execution_count, tool_execution_count,
 #  consecutive_failures) but cannot inspect the current tool name or
-#  arguments. If you need both session state and envelope data, use
+#  arguments. If you need both session state and tool_call data, use
 #  a precondition that reads from shared state (see WorkflowGate in
-#  Part 3) or combine a precondition with a session contract.
+#  Part 3) or combine a precondition with a session rule.
 # ════════════════════════════════════════════════════════════════════
 
 
@@ -989,7 +989,7 @@ def devops_agent_contracts():
 # ════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    # Count all contracts defined in this file
+    # Count all rules defined in this file
 
     preconditions = []
     postconditions = []
@@ -1014,7 +1014,7 @@ if __name__ == "__main__":
         if callable(obj) and name.endswith("_contracts") and not name.startswith("_"):
             compositions.append(name)
 
-    print("Edictum Contract Cookbook")
+    print("Edictum Rule Cookbook")
     print("=" * 60)
     print(f"\n  Preconditions:      {len(preconditions)}")
     for p in preconditions:
@@ -1022,7 +1022,7 @@ if __name__ == "__main__":
     print(f"\n  Postconditions:     {len(postconditions)}")
     for p in postconditions:
         print(f"    • {p}")
-    print(f"\n  Session contracts:  {len(session_contracts)}")
+    print(f"\n  Session rules:  {len(session_contracts)}")
     for s in session_contracts:
         print(f"    • {s}")
     print(f"\n  Factories:          {len(factories)}")
@@ -1033,4 +1033,4 @@ if __name__ == "__main__":
         print(f"    • {c}")
     total = len(preconditions) + len(postconditions) + len(session_contracts) + len(factories) + len(compositions)
     print(f"\n  Total recipes:      {total}")
-    print("\n✓ All contracts compiled successfully.")
+    print("\n✓ All rules compiled successfully.")

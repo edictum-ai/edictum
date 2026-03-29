@@ -13,7 +13,7 @@ from edictum.approval import ApprovalStatus
 from edictum.audit import AuditAction, AuditEvent
 from edictum.envelope import Principal, create_envelope
 from edictum.findings import Finding, PostCallResult, build_findings
-from edictum.pipeline import GovernancePipeline
+from edictum.pipeline import CheckPipeline
 from edictum.session import Session
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class CrewAIAdapter:
     """Translate Edictum pipeline decisions into CrewAI hook format.
 
     The adapter does NOT contain governance logic -- that lives in
-    GovernancePipeline. The adapter only:
+    CheckPipeline. The adapter only:
     1. Creates envelopes from CrewAI hook context
     2. Manages pending state (envelope + span) between before/after hooks
     3. Translates PreDecision/PostDecision into CrewAI hook responses
@@ -44,7 +44,7 @@ class CrewAIAdapter:
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
     ):
         self._guard = guard
-        self._pipeline = GovernancePipeline(guard)
+        self._pipeline = CheckPipeline(guard)
         self._session_id = session_id or str(uuid.uuid4())
         self._session = Session(self._session_id, guard.backend)
         self._call_index = 0
@@ -186,7 +186,7 @@ class CrewAIAdapter:
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
             # Handle observe mode: convert deny to allow with warning
-            if self._guard.mode == "observe" and decision.action == "deny":
+            if self._guard.mode == "observe" and decision.action == "block":
                 await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
                 span.set_attribute("governance.would_deny_reason", decision.reason)
@@ -196,7 +196,7 @@ class CrewAIAdapter:
                 return None  # allow through
 
             # Handle deny
-            if decision.action == "deny":
+            if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
                 self._guard.telemetry.record_denial(envelope, decision.reason)
                 if self._guard._on_deny:
@@ -345,7 +345,7 @@ class CrewAIAdapter:
         post_result = PostCallResult(
             result=effective_response,
             postconditions_passed=post_decision.postconditions_passed,
-            findings=findings,
+            violations=findings,
         )
 
         # Call callback for side effects
@@ -360,7 +360,7 @@ class CrewAIAdapter:
 
     async def _emit_audit_pre(self, envelope: Any, decision: Any, audit_action: AuditAction | None = None) -> None:
         if audit_action is None:
-            audit_action = AuditAction.CALL_DENIED if decision.action == "deny" else AuditAction.CALL_ALLOWED
+            audit_action = AuditAction.CALL_DENIED if decision.action == "block" else AuditAction.CALL_ALLOWED
 
         await self._guard.audit_sink.emit(
             AuditEvent(
@@ -458,7 +458,7 @@ class CrewAIAdapter:
             tool_args=envelope.args,
             message=decision.approval_message or decision.reason or "",
             timeout=decision.approval_timeout,
-            timeout_effect=decision.approval_timeout_effect,
+            timeout_action=decision.approval_timeout_action,
             principal=principal_dict,
         )
         await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_REQUESTED)
@@ -471,7 +471,7 @@ class CrewAIAdapter:
         approved = approval_decision.approved
         if not approved and approval_decision.status == ApprovalStatus.TIMEOUT:
             await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_TIMEOUT)
-            if decision.approval_timeout_effect == "allow":
+            if decision.approval_timeout_action == "allow":
                 approved = True
         elif approval_decision.approved:
             await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_GRANTED)

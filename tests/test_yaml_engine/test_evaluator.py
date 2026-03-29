@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from edictum.envelope import Principal, ToolEnvelope, create_envelope
+from edictum.envelope import Principal, ToolCall, create_envelope
 from edictum.yaml_engine.evaluator import _PolicyError, evaluate_expression
 
 # --- Helpers ---
@@ -13,7 +13,7 @@ def _envelope(
     args: dict | None = None,
     environment: str = "production",
     principal: Principal | None = None,
-) -> ToolEnvelope:
+) -> ToolCall:
     return create_envelope(
         tool_name=tool_name,
         tool_input=args or {},

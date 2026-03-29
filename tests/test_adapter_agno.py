@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from edictum import Edictum, Verdict, precondition
+from edictum import Decision, Edictum, precondition
 from edictum.adapters.agno import AgnoAdapter
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
@@ -32,10 +32,10 @@ class TestAgnoAdapter:
 
     async def test_deny_returns_correct_format(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied")
+        def always_deny(tool_call):
+            return Decision.fail("denied")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = AgnoAdapter(guard)
 
         async def my_tool(**kwargs):
@@ -60,10 +60,10 @@ class TestAgnoAdapter:
 
     async def test_deny_clears_pending(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("no")
+        def always_deny(tool_call):
+            return Decision.fail("no")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = AgnoAdapter(guard)
 
         await adapter._pre("TestTool", {}, "call-1")
@@ -88,11 +88,11 @@ class TestAgnoAdapter:
 
     async def test_observe_mode_would_deny(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("would be denied")
+        def always_deny(tool_call):
+            return Decision.fail("would be denied")
 
         sink = NullAuditSink()
-        guard = make_guard(mode="observe", contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
         adapter = AgnoAdapter(guard)
 
         result = await adapter._pre("TestTool", {}, "call-1")
@@ -177,11 +177,11 @@ class TestAgnoAdapter:
         """Test observe mode allows denied calls through and emits CALL_WOULD_DENY + CALL_EXECUTED."""
 
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("would deny")
+        def always_deny(tool_call):
+            return Decision.fail("would block")
 
         sink = NullAuditSink()
-        guard = make_guard(mode="observe", contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
         adapter = AgnoAdapter(guard)
 
         def my_tool():

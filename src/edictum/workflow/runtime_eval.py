@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
-from edictum.envelope import ToolEnvelope
+from edictum.envelope import ToolCall
 from edictum.workflow.definition import WorkflowGate, WorkflowStage
 from edictum.workflow.evaluator import EvaluateRequest, FactResult, gate_record, parse_condition
 from edictum.workflow.result import WorkflowEvaluation, WorkflowState
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from edictum.workflow.runtime import WorkflowRuntime
 
 
-async def evaluate_runtime(runtime: WorkflowRuntime, session: Session, envelope: ToolEnvelope) -> WorkflowEvaluation:
+async def evaluate_runtime(runtime: WorkflowRuntime, session: Session, envelope: ToolCall) -> WorkflowEvaluation:
     state = await runtime.load_state(session)
     if not state.active_stage:
         return WorkflowEvaluation(action="allow")
@@ -79,7 +79,7 @@ async def evaluate_completion(
     runtime: WorkflowRuntime,
     stage: WorkflowStage,
     state: WorkflowState,
-    envelope: ToolEnvelope,
+    envelope: ToolCall,
     has_next: bool,
 ) -> tuple[WorkflowEvaluation, bool]:
     if stage.exit:
@@ -139,7 +139,7 @@ async def evaluate_gates(
     runtime: WorkflowRuntime,
     stage: WorkflowStage,
     state: WorkflowState,
-    envelope: ToolEnvelope,
+    envelope: ToolCall,
     gates: tuple[WorkflowGate, ...],
 ) -> tuple[WorkflowEvaluation, bool]:
     records: list[dict[str, Any]] = []

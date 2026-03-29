@@ -12,13 +12,13 @@ from edictum.gate.config import AuditConfig, GateConfig
 
 _MINIMAL_CONTRACTS = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
   description: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: noop
     type: pre
     tool: __never_match__
@@ -26,15 +26,15 @@ contracts:
       args.x:
         equals: __never__
     then:
-      effect: deny
+      action: block
       message: noop
 """
 
 
 def _config(tmp_path: Path) -> GateConfig:
-    cp = tmp_path / "contracts.yaml"
+    cp = tmp_path / "rules.yaml"
     cp.write_text(_MINIMAL_CONTRACTS)
-    return GateConfig(contracts=(str(cp),), audit=AuditConfig(enabled=False), fail_open=False)
+    return GateConfig(rules=(str(cp),), audit=AuditConfig(enabled=False), fail_open=False)
 
 
 @pytest.mark.security
@@ -44,29 +44,29 @@ class TestMaliciousStdin:
         huge = "x" * (10 * 1024 * 1024 + 1)
         stdout, _ = run_check(huge, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_null_bytes_in_tool_name(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
         stdin = json.dumps({"tool_name": "Bash\x00evil", "tool_input": {}})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_null_bytes_in_args(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
         stdin = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls\x00evil"}})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
-        # Should not crash — may allow or deny depending on contracts
+        # Should not crash — may allow or block depending on rules
         result = json.loads(stdout)
-        assert result["verdict"] in ("allow", "deny")
+        assert result["decision"] in ("allow", "block")
 
     def test_control_chars_in_tool_name(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
         stdin = json.dumps({"tool_name": "Bash\nInjected", "tool_input": {}})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_unicode_homoglyph_tool_name(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
@@ -75,7 +75,7 @@ class TestMaliciousStdin:
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
         # Should not be matched as "Bash" — treated as unknown tool
-        assert result["verdict"] in ("allow", "deny")
+        assert result["decision"] in ("allow", "block")
 
     def test_nested_json_bomb(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
@@ -86,27 +86,27 @@ class TestMaliciousStdin:
         stdin = json.dumps({"tool_name": "Bash", "tool_input": inner})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] in ("allow", "deny")
+        assert result["decision"] in ("allow", "block")
 
     def test_non_json_stdin(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
         stdout, _ = run_check(b"\x89PNG\r\n\x1a\n".decode("latin-1"), "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_empty_tool_input(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
         stdin = json.dumps({"tool_name": "Bash", "tool_input": {}})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "allow"
+        assert result["decision"] == "allow"
 
     def test_tool_input_not_dict(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
         stdin = json.dumps({"tool_name": "Bash", "tool_input": "string"})
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"
 
     def test_extra_keys_ignored(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
@@ -120,4 +120,4 @@ class TestMaliciousStdin:
         )
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
-        assert result["verdict"] == "allow"
+        assert result["decision"] == "allow"

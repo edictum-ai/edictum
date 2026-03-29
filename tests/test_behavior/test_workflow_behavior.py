@@ -12,20 +12,20 @@ from edictum.storage import MemoryBackend
 
 _BUNDLE = """
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: empty-bundle
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: noop-pre
     type: pre
     tool: Noop
     when:
-      input.path:
+      args.path:
         equals: never
     then:
-      effect: deny
+      action: block
       message: never
 """
 
@@ -113,7 +113,7 @@ stages:
         )
 
         dry_run = guard.evaluate("Edit", {"path": "src/app.py"})
-        assert dry_run.verdict == "allow"
+        assert dry_run.decision == "allow"
 
         runtime = guard._workflow_runtime
         assert runtime is not None

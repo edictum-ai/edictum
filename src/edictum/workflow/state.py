@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from edictum.envelope import ToolEnvelope
+from edictum.envelope import ToolCall
 from edictum.session import Session
 from edictum.workflow.result import WorkflowEvidence, WorkflowState
 
@@ -74,7 +74,7 @@ def record_approval(state: WorkflowState, stage_id: str) -> None:
     state.approvals[stage_id] = APPROVED_STATUS
 
 
-def record_result(state: WorkflowState, stage_id: str, envelope: ToolEnvelope) -> None:
+def record_result(state: WorkflowState, stage_id: str, envelope: ToolCall) -> None:
     state.ensure_defaults()
     if envelope.tool_name == "Read" and envelope.file_path:
         state.evidence.reads = _append_unique_capped(

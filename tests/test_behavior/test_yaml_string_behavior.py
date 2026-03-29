@@ -8,37 +8,37 @@ from edictum import Edictum, EdictumConfigError, EdictumDenied
 
 VALID_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-string-bundle
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-dotenv
     type: pre
     tool: read_file
     when:
       args.path: { contains: ".env" }
     then:
-      effect: deny
+      action: block
       message: "Denied: {args.path}"
 """
 
 VALID_YAML_OBSERVE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-observe
 defaults:
   mode: observe
-contracts:
+rules:
   - id: block-dotenv
     type: pre
     tool: read_file
     when:
       args.path: { contains: ".env" }
     then:
-      effect: deny
+      action: block
       message: "Denied: {args.path}"
 """
 
@@ -122,12 +122,12 @@ class TestFromYamlStringErrors:
     def test_schema_violation_raises(self):
         bad_yaml = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: bad
 defaults:
   mode: enforce
-contracts: []
+rules: []
 """
         with pytest.raises(EdictumConfigError, match="Schema validation failed"):
             Edictum.from_yaml_string(bad_yaml)
@@ -150,7 +150,7 @@ class TestFromYamlStringToolsMerge:
     def test_tools_parameter_applied(self):
         yaml_with_tools = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: tools-test
 defaults:
@@ -158,14 +158,14 @@ defaults:
 tools:
   read_file:
     side_effect: read
-contracts:
+rules:
   - id: block-dotenv
     type: pre
     tool: read_file
     when:
       args.path: { contains: ".env" }
     then:
-      effect: deny
+      action: block
       message: "Denied"
 """
         guard = Edictum.from_yaml_string(

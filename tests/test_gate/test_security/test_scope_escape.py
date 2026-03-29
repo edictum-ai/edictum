@@ -12,13 +12,13 @@ from edictum.gate.config import AuditConfig, GateConfig
 
 _MINIMAL_CONTRACTS = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test
   description: test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: noop
     type: pre
     tool: __never_match__
@@ -26,15 +26,15 @@ contracts:
       args.x:
         equals: __never__
     then:
-      effect: deny
+      action: block
       message: noop
 """
 
 
 def _config(tmp_path: Path) -> GateConfig:
-    cp = tmp_path / "contracts.yaml"
+    cp = tmp_path / "rules.yaml"
     cp.write_text(_MINIMAL_CONTRACTS)
-    return GateConfig(contracts=(str(cp),), audit=AuditConfig(enabled=False), fail_open=False)
+    return GateConfig(rules=(str(cp),), audit=AuditConfig(enabled=False), fail_open=False)
 
 
 @pytest.mark.security
@@ -89,7 +89,7 @@ class TestScopeEscape:
         config = _config(tmp_path)
         project = tmp_path / "project"
         project.mkdir()
-        # Use a path outside cwd that doesn't match any contract pattern
+        # Use a path outside cwd that doesn't match any rule pattern
         outside_file = str(tmp_path / "other" / "file.txt")
         stdin = json.dumps(
             {
@@ -100,8 +100,8 @@ class TestScopeEscape:
         )
         stdout, _ = run_check(stdin, "raw", config, str(project))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
-        assert result["contract_id"] == "gate-scope-enforcement"
+        assert result["decision"] == "block"
+        assert result["rule_id"] == "gate-scope-enforcement"
 
     def test_scope_read_not_blocked(self, tmp_path: Path) -> None:
         """Read outside cwd is NOT denied by scope enforcement (only Write/Edit)."""
@@ -115,7 +115,7 @@ class TestScopeEscape:
         stdout, _ = run_check(stdin, "raw", config, str(tmp_path))
         result = json.loads(stdout)
         # Read is not subject to scope enforcement
-        assert result["verdict"] == "allow"
+        assert result["decision"] == "allow"
 
     def test_edit_outside_cwd_denied(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
@@ -130,4 +130,4 @@ class TestScopeEscape:
         )
         stdout, _ = run_check(stdin, "raw", config, str(project))
         result = json.loads(stdout)
-        assert result["verdict"] == "deny"
+        assert result["decision"] == "block"

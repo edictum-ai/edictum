@@ -35,7 +35,7 @@ class NullAuditSink:
 class CapturingAuditSink:
     """Test fixture that records all emitted audit events.
 
-    Use to assert not just enforcement outcomes (allow/deny)
+    Use to assert not just enforcement outcomes (allow/block)
     but audit fidelity (correct AuditAction emitted).
     """
 
@@ -97,7 +97,7 @@ def guard(null_sink, backend):
 
 
 @pytest.fixture
-def envelope():
+def tool_call():
     return create_envelope("TestTool", {"key": "value"})
 
 

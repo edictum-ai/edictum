@@ -18,9 +18,9 @@ class TestLoadBundle:
     def test_valid_bundle_loads(self):
         data, bundle_hash = load_bundle(FIXTURES / "valid_bundle.yaml")
         assert data["apiVersion"] == "edictum/v1"
-        assert data["kind"] == "ContractBundle"
+        assert data["kind"] == "Ruleset"
         assert data["metadata"]["name"] == "test-bundle"
-        assert len(data["contracts"]) == 3
+        assert len(data["rules"]) == 3
 
     def test_valid_bundle_returns_hash(self):
         _, bundle_hash = load_bundle(FIXTURES / "valid_bundle.yaml")
@@ -38,22 +38,22 @@ class TestLoadBundle:
 
     def test_contract_types_parsed(self):
         data, _ = load_bundle(FIXTURES / "valid_bundle.yaml")
-        types = [c["type"] for c in data["contracts"]]
+        types = [c["type"] for c in data["rules"]]
         assert types == ["pre", "post", "session"]
 
     def test_pre_contract_structure(self):
         data, _ = load_bundle(FIXTURES / "valid_bundle.yaml")
-        pre = data["contracts"][0]
+        pre = data["rules"][0]
         assert pre["id"] == "block-sensitive-reads"
         assert pre["type"] == "pre"
         assert pre["tool"] == "read_file"
         assert "args.path" in pre["when"]
-        assert pre["then"]["effect"] == "deny"
+        assert pre["then"]["action"] == "block"
         assert pre["then"]["tags"] == ["secrets", "dlp"]
 
     def test_session_contract_structure(self):
         data, _ = load_bundle(FIXTURES / "valid_bundle.yaml")
-        session = data["contracts"][2]
+        session = data["rules"][2]
         assert session["id"] == "session-limits"
         assert session["type"] == "session"
         assert session["limits"]["max_tool_calls"] == 50
@@ -73,7 +73,7 @@ class TestSchemaValidation:
 
     def test_empty_contracts(self):
         with pytest.raises(EdictumConfigError, match="Schema validation failed"):
-            load_bundle(FIXTURES / "invalid_empty_contracts.yaml")
+            load_bundle(FIXTURES / "invalid_empty_rules.yaml")
 
     def test_file_not_found(self):
         with pytest.raises(FileNotFoundError):
@@ -81,10 +81,10 @@ class TestSchemaValidation:
 
 
 class TestDuplicateIdValidation:
-    """Tests for duplicate contract ID detection."""
+    """Tests for duplicate rule ID detection."""
 
     def test_duplicate_ids_rejected(self):
-        with pytest.raises(EdictumConfigError, match="Duplicate contract id"):
+        with pytest.raises(EdictumConfigError, match="Duplicate rule id"):
             load_bundle(FIXTURES / "invalid_duplicate_ids.yaml")
 
 
@@ -98,7 +98,7 @@ class TestRegexValidation:
     def test_valid_regex_accepted(self):
         data, _ = load_bundle(FIXTURES / "valid_bundle.yaml")
         # The valid bundle has matches_any with regex — should pass
-        post = data["contracts"][1]
+        post = data["rules"][1]
         assert "matches_any" in post["when"]["output.text"]
 
 

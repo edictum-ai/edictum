@@ -1,6 +1,6 @@
 """Behavior tests for mutable principal (set_principal + principal_resolver).
 
-Each test proves an observable effect of the mutable principal feature:
+Each test proves an observable action of the mutable principal feature:
 - set_principal() changes enforcement for subsequent calls
 - principal_resolver overrides the static principal per tool call
 - principal_resolver receives correct (tool_name, tool_input)
@@ -21,12 +21,12 @@ from tests.conftest import NullAuditSink
 
 REQUIRE_ADMIN_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: require-admin-bundle
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: require-admin
     type: pre
     tool: "*"
@@ -34,7 +34,7 @@ contracts:
       principal.role:
         not_equals: "admin"
     then:
-      effect: deny
+      action: block
       message: "Only admin role allowed"
 """
 
@@ -56,7 +56,7 @@ def _make_adapter(*, principal=None, principal_resolver=None):
 
 def _is_denied(result: dict) -> bool:
     hook = result.get("hookSpecificOutput", {})
-    return hook.get("permissionDecision") == "deny"
+    return hook.get("permissionDecision") == "block"
 
 
 class TestSetPrincipalChangesEnforcement:

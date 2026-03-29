@@ -1,5 +1,5 @@
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: test-bundle
@@ -8,7 +8,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: block-sensitive-reads
     type: pre
     tool: read_file
@@ -16,7 +16,7 @@ contracts:
       args.path:
         contains_any: [".env", ".secret"]
     then:
-      effect: deny
+      action: block
       message: "Sensitive file '{args.path}' denied."
       tags: [secrets, dlp]
 
@@ -27,7 +27,7 @@ contracts:
       output.text:
         matches_any: ['\b\d{3}-\d{2}-\d{4}\b']
     then:
-      effect: warn
+      action: warn
       message: "PII detected in output."
       tags: [pii]
 
@@ -37,6 +37,6 @@ contracts:
       max_tool_calls: 50
       max_attempts: 120
     then:
-      effect: deny
+      action: block
       message: "Session limit reached."
       tags: [rate-limit]

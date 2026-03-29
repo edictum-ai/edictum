@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from edictum import Edictum, Principal, Verdict, precondition
+from edictum import Decision, Edictum, Principal, precondition
 from edictum.adapters.google_adk import GoogleADKAdapter
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
@@ -49,10 +49,10 @@ class TestGoogleADKBehavior:
             tool_context=mock_context,
         )
 
-        envelope, _ = adapter._pending["fc-1"]
-        assert envelope.principal is not None
-        assert envelope.principal.user_id == "user-42"
-        assert envelope.principal.claims.get("adk_agent_name") == "research_agent"
+        tool_call, _ = adapter._pending["fc-1"]
+        assert tool_call.principal is not None
+        assert tool_call.principal.user_id == "user-42"
+        assert tool_call.principal.claims.get("adk_agent_name") == "research_agent"
 
     async def test_auto_principal_disabled_with_explicit(self):
         """Explicit principal blocks auto-resolution from ToolContext."""
@@ -73,9 +73,9 @@ class TestGoogleADKBehavior:
             tool_context=mock_context,
         )
 
-        envelope, _ = adapter._pending["fc-1"]
-        assert envelope.principal.user_id == "admin-1"
-        assert envelope.principal.role == "admin"
+        tool_call, _ = adapter._pending["fc-1"]
+        assert tool_call.principal.user_id == "admin-1"
+        assert tool_call.principal.role == "admin"
 
     async def test_error_callback_audit_emission(self):
         """_emit_error_audit emits CALL_FAILED audit event."""
@@ -130,10 +130,10 @@ class TestGoogleADKSecurity:
         """Even if reason contains exception-like text, format is safe."""
 
         @precondition("*")
-        def deny_with_long_reason(envelope):
-            return Verdict.fail("policy violation: unauthorized access")
+        def deny_with_long_reason(tool_call):
+            return Decision.fail("policy violation: unauthorized access")
 
-        guard = make_guard(contracts=[deny_with_long_reason])
+        guard = make_guard(rules=[deny_with_long_reason])
         adapter = GoogleADKAdapter(guard)
         result = await adapter._pre("TestTool", {}, "call-1")
 

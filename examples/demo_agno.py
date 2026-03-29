@@ -101,7 +101,7 @@ async def run_with_guard(client: OpenAI) -> None:
     Agno uses a wrap-around pattern: the hook receives (name, callable, args)
     and must call the callable itself or return a denial string.
     """
-    from contracts import ALL_CONTRACTS
+    from rules import ALL_CONTRACTS
 
     from edictum import Edictum, FileAuditSink
     from edictum.adapters.agno import AgnoAdapter
@@ -115,7 +115,7 @@ async def run_with_guard(client: OpenAI) -> None:
     guard = Edictum(
         environment="demo",
         mode="enforce",
-        contracts=ALL_CONTRACTS,
+        rules=ALL_CONTRACTS,
         tools=EDICTUM_TOOLS_CONFIG,
         audit_sink=FileAuditSink(audit_path),
     )

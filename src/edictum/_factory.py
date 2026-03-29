@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from edictum._exceptions import EdictumConfigError
 from edictum._validators import validate_custom_operators, validate_custom_selectors
@@ -18,7 +18,7 @@ from edictum.storage import StorageBackend
 if TYPE_CHECKING:
     from edictum._guard import Edictum
     from edictum.approval import ApprovalBackend
-    from edictum.envelope import ToolEnvelope
+    from edictum.envelope import ToolCall
     from edictum.workflow import WorkflowRuntime
     from edictum.yaml_engine.composer import CompositionReport
 
@@ -53,8 +53,8 @@ def _build_guard_from_compiled(
     redaction: RedactionPolicy | None,
     backend: StorageBackend | None,
     environment: str,
-    on_deny: Callable[[ToolEnvelope, str, str | None], None] | None,
-    on_allow: Callable[[ToolEnvelope], None] | None,
+    on_block: Callable[[ToolCall, str, str | None], None] | None,
+    on_allow: Callable[[ToolCall], None] | None,
     success_check: Callable[[str, Any], bool] | None,
     principal: Principal | None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None,
@@ -99,12 +99,12 @@ def _build_guard_from_compiled(
         mode=effective_mode,
         limits=compiled.limits,
         tools=merged_tools if merged_tools else None,
-        contracts=all_contracts,
+        rules=all_contracts,
         audit_sink=audit_sink,
         redaction=redaction,
         backend=backend,
         policy_version=policy_version,
-        on_deny=on_deny,
+        on_block=on_block,
         on_allow=on_allow,
         success_check=success_check,
         principal=principal,
@@ -130,6 +130,7 @@ def _load_workflow_runtime(
     if workflow_path is not None:
         definition = load_workflow(workflow_path)
     else:
+        assert workflow_content is not None
         definition = load_workflow_string(workflow_content)
     return WorkflowRuntime(
         definition,
@@ -147,10 +148,10 @@ def _from_yaml(
     backend: StorageBackend | None = None,
     environment: str = "production",
     return_report: bool = False,
-    on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-    on_allow: Callable[[ToolEnvelope], None] | None = None,
+    on_block: Callable[[ToolCall, str, str | None], None] | None = None,
+    on_allow: Callable[[ToolCall], None] | None = None,
     custom_operators: dict[str, Callable[[Any, Any], bool]] | None = None,
-    custom_selectors: dict[str, Callable[[ToolEnvelope], dict[str, Any]]] | None = None,
+    custom_selectors: dict[str, Callable[[ToolCall], dict[str, Any]]] | None = None,
     success_check: Callable[[str, Any], bool] | None = None,
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
@@ -232,7 +233,7 @@ def _from_yaml(
         redaction=redaction,
         backend=backend,
         environment=environment,
-        on_deny=on_deny,
+        on_block=on_block,
         on_allow=on_allow,
         success_check=success_check,
         principal=principal,
@@ -256,10 +257,10 @@ def _from_yaml_string(
     redaction: RedactionPolicy | None = None,
     backend: StorageBackend | None = None,
     environment: str = "production",
-    on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-    on_allow: Callable[[ToolEnvelope], None] | None = None,
+    on_block: Callable[[ToolCall, str, str | None], None] | None = None,
+    on_allow: Callable[[ToolCall], None] | None = None,
     custom_operators: dict[str, Callable[[Any, Any], bool]] | None = None,
-    custom_selectors: dict[str, Callable[[ToolEnvelope], dict[str, Any]]] | None = None,
+    custom_selectors: dict[str, Callable[[ToolCall], dict[str, Any]]] | None = None,
     success_check: Callable[[str, Any], bool] | None = None,
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
@@ -303,7 +304,7 @@ def _from_yaml_string(
         redaction=redaction,
         backend=backend,
         environment=environment,
-        on_deny=on_deny,
+        on_block=on_block,
         on_allow=on_allow,
         success_check=success_check,
         principal=principal,
@@ -324,10 +325,10 @@ def _from_template(
     redaction: RedactionPolicy | None = None,
     backend: StorageBackend | None = None,
     environment: str = "production",
-    on_deny: Callable[[ToolEnvelope, str, str | None], None] | None = None,
-    on_allow: Callable[[ToolEnvelope], None] | None = None,
+    on_block: Callable[[ToolCall, str, str | None], None] | None = None,
+    on_allow: Callable[[ToolCall], None] | None = None,
     custom_operators: dict[str, Callable[[Any, Any], bool]] | None = None,
-    custom_selectors: dict[str, Callable[[ToolEnvelope], dict[str, Any]]] | None = None,
+    custom_selectors: dict[str, Callable[[ToolCall], dict[str, Any]]] | None = None,
     success_check: Callable[[str, Any], bool] | None = None,
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
@@ -346,22 +347,25 @@ def _from_template(
     for directory in search_dirs:
         candidate = directory / f"{name}.yaml"
         if candidate.exists():
-            return cls.from_yaml(
-                candidate,
-                tools=tools,
-                mode=mode,
-                audit_sink=audit_sink,
-                redaction=redaction,
-                backend=backend,
-                environment=environment,
-                on_deny=on_deny,
-                on_allow=on_allow,
-                custom_operators=custom_operators,
-                custom_selectors=custom_selectors,
-                success_check=success_check,
-                principal=principal,
-                principal_resolver=principal_resolver,
-                approval_backend=approval_backend,
+            return cast(
+                Edictum,
+                cls.from_yaml(
+                    candidate,
+                    tools=tools,
+                    mode=mode,
+                    audit_sink=audit_sink,
+                    redaction=redaction,
+                    backend=backend,
+                    environment=environment,
+                    on_block=on_block,
+                    on_allow=on_allow,
+                    custom_operators=custom_operators,
+                    custom_selectors=custom_selectors,
+                    success_check=success_check,
+                    principal=principal,
+                    principal_resolver=principal_resolver,
+                    approval_backend=approval_backend,
+                ),
             )
 
     all_templates: set[str] = set()
@@ -433,7 +437,7 @@ def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
         redaction=first.redaction,
         backend=first.backend,
         policy_version=first.policy_version,
-        on_deny=first._on_deny,
+        on_block=first._on_block,
         on_allow=first._on_allow,
         success_check=first._success_check,
         approval_backend=first._approval_backend,
@@ -461,7 +465,7 @@ def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
             for contract in getattr(guard._state, attr):
                 cid = getattr(contract, "_edictum_id", None)
                 if cid and cid in seen:
-                    logger.warning("Duplicate contract id '%s' in from_multiple() — first wins", cid)
+                    logger.warning("Duplicate rule id '%s' in from_multiple() — first wins", cid)
                     continue
                 if cid:
                     seen.add(cid)

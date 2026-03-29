@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 
 from edictum import (
+    Decision,
     Edictum,
     EdictumConfigError,
     EdictumDenied,
     Principal,
-    Verdict,
     create_envelope,
     precondition,
 )
@@ -22,7 +22,7 @@ from edictum.adapters.langchain import LangChainAdapter
 from edictum.adapters.openai_agents import OpenAIAgentsAdapter
 from edictum.adapters.semantic_kernel import SemanticKernelAdapter
 from edictum.audit import AuditAction, AuditEvent
-from edictum.contracts import postcondition
+from edictum.rules import postcondition
 from edictum.session import Session
 from edictum.storage import MemoryBackend
 from edictum.types import HookRegistration
@@ -50,7 +50,7 @@ def _guard(**kwargs):
     return Edictum(**defaults)
 
 
-# ── Fix 1: Reject output.text in type: pre contracts at load time ──
+# ── Fix 1: Reject output.text in type: pre rules at load time ──
 
 
 class TestFix1OutputTextInPre:
@@ -60,7 +60,7 @@ class TestFix1OutputTextInPre:
 
     def test_output_text_in_post_allowed(self):
         data, _ = load_bundle(FIXTURES / "valid_bundle.yaml")
-        post = data["contracts"][1]
+        post = data["rules"][1]
         assert post["type"] == "post"
         assert "output.text" in post["when"]
 
@@ -69,12 +69,12 @@ class TestFix1OutputTextInPre:
         bundle.write_text(
             """
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: nested-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: nested-output
     type: pre
     tool: "*"
@@ -85,7 +85,7 @@ contracts:
         - args.path:
             contains: ".env"
     then:
-      effect: deny
+      action: block
       message: "denied"
 """
         )
@@ -143,23 +143,23 @@ class TestFix3PolicyError:
         """Type mismatch in YAML rule sets policy_error on AuditEvent."""
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "type-mismatch",
                     "type": "pre",
                     "tool": "*",
                     "when": {"args.count": {"gt": 5}},
-                    "then": {"effect": "deny", "message": "Count too high."},
+                    "then": {"action": "block", "message": "Count too high."},
                 }
             ],
         }
         compiled = compile_contracts(bundle_data)
         sink = NullSink()
         guard = _guard(
-            contracts=compiled.preconditions,
+            rules=compiled.preconditions,
             audit_sink=sink,
         )
 
@@ -174,7 +174,7 @@ class TestFix3PolicyError:
         assert denied[0].policy_error is True
 
 
-# ── Fix 4: Per-contract observe mode in adapters ──
+# ── Fix 4: Per-rule observe mode in adapters ──
 
 
 class TestFix4PerRuleObserve:
@@ -182,13 +182,13 @@ class TestFix4PerRuleObserve:
         """An observe-mode precondition in an enforce bundle should log, not block."""
 
         @precondition("*")
-        def observed_deny(envelope):
-            return Verdict.fail("observed violation")
+        def observed_deny(tool_call):
+            return Decision.fail("observed violation")
 
         observed_deny._edictum_mode = "observe"
 
         sink = NullSink()
-        guard = _guard(contracts=[observed_deny], audit_sink=sink)
+        guard = _guard(rules=[observed_deny], audit_sink=sink)
 
         async def noop(**kw):
             return "ok"
@@ -204,19 +204,19 @@ class TestFix4PerRuleObserve:
         """Enforced rule blocks even if an observed rule also fires."""
 
         @precondition("*")
-        def observed_deny(envelope):
-            return Verdict.fail("observed violation")
+        def observed_deny(tool_call):
+            return Decision.fail("observed violation")
 
         observed_deny._edictum_mode = "observe"
 
         @precondition("*")
-        def enforced_deny(envelope):
-            return Verdict.fail("enforced violation")
+        def enforced_deny(tool_call):
+            return Decision.fail("enforced violation")
 
         enforced_deny._edictum_mode = "enforce"
 
         sink = NullSink()
-        guard = _guard(contracts=[observed_deny, enforced_deny], audit_sink=sink)
+        guard = _guard(rules=[observed_deny, enforced_deny], audit_sink=sink)
 
         async def noop(**kw):
             return "ok"
@@ -226,13 +226,13 @@ class TestFix4PerRuleObserve:
 
     async def test_observe_mode_in_claude_adapter(self):
         @precondition("*")
-        def observed_deny(envelope):
-            return Verdict.fail("observed")
+        def observed_deny(tool_call):
+            return Decision.fail("observed")
 
         observed_deny._edictum_mode = "observe"
 
         sink = NullSink()
-        guard = _guard(contracts=[observed_deny], audit_sink=sink)
+        guard = _guard(rules=[observed_deny], audit_sink=sink)
         adapter = ClaudeAgentSDKAdapter(guard)
 
         result = await adapter._pre_tool_use(tool_name="TestTool", tool_input={}, tool_use_id="tu-1")
@@ -249,11 +249,11 @@ class TestFix4PerRuleObserve:
 class TestFix5ExceptionSafety:
     async def test_precondition_exception_denies_not_crashes(self):
         @precondition("*")
-        def bad_pre(envelope):
+        def bad_pre(tool_call):
             raise ValueError("kaboom")
 
         sink = NullSink()
-        guard = _guard(contracts=[bad_pre], audit_sink=sink)
+        guard = _guard(rules=[bad_pre], audit_sink=sink)
 
         async def noop(**kw):
             return "ok"
@@ -267,11 +267,11 @@ class TestFix5ExceptionSafety:
 
     async def test_postcondition_exception_warns_not_crashes(self):
         @postcondition("*")
-        def bad_post(envelope, result):
+        def bad_post(tool_call, result):
             raise RuntimeError("boom")
 
         sink = NullSink()
-        guard = _guard(contracts=[bad_post], audit_sink=sink)
+        guard = _guard(rules=[bad_post], audit_sink=sink)
 
         async def noop(**kw):
             return "ok"
@@ -284,7 +284,7 @@ class TestFix5ExceptionSafety:
         assert executed[0].policy_error is True
 
     async def test_hook_exception_denies(self):
-        def bad_hook(envelope):
+        def bad_hook(tool_call):
             raise TypeError("hook broke")
 
         hook = HookRegistration(phase="before", tool="*", callback=bad_hook)
@@ -354,15 +354,15 @@ class TestFix8PrincipalDeepCopy:
     def test_claims_deep_copied(self):
         claims = {"dept": "eng", "nested": {"level": 1}}
         principal = Principal(user_id="alice", claims=claims)
-        envelope = create_envelope("TestTool", {}, principal=principal)
+        tool_call = create_envelope("TestTool", {}, principal=principal)
 
         # Mutate original claims
         claims["dept"] = "sales"
         claims["nested"]["level"] = 99
 
         # Envelope should be unaffected
-        assert envelope.principal.claims["dept"] == "eng"
-        assert envelope.principal.claims["nested"]["level"] == 1
+        assert tool_call.principal.claims["dept"] == "eng"
+        assert tool_call.principal.claims["nested"]["level"] == 1
 
 
 # ── Fix 11: Session limits default comparison ──
@@ -373,22 +373,22 @@ class TestFix11SessionLimitsDefault:
         """max_attempts: 500 (same as default) should still be enforced."""
         bundle_data = {
             "apiVersion": "edictum/v1",
-            "kind": "ContractBundle",
+            "kind": "Ruleset",
             "metadata": {"name": "test"},
             "defaults": {"mode": "enforce"},
-            "contracts": [
+            "rules": [
                 {
                     "id": "session-default-limit",
                     "type": "session",
                     "limits": {"max_tool_calls": 1000, "max_attempts": 500},
-                    "then": {"effect": "deny", "message": "limit hit"},
+                    "then": {"action": "block", "message": "limit hit"},
                 }
             ],
         }
         compiled = compile_contracts(bundle_data)
         assert compiled.limits.max_attempts == 500
 
-        # The session contract should enforce the limit
+        # The session rule should enforce the limit
         fn = compiled.session_contracts[0]
         backend = MemoryBackend()
         session = Session("test", backend)
@@ -397,8 +397,8 @@ class TestFix11SessionLimitsDefault:
         for _ in range(500):
             await session.increment_attempts()
 
-        verdict = await fn(session)
-        assert not verdict.passed
+        decision = await fn(session)
+        assert not decision.passed
 
 
 # ── Fix 12: __all__ exports ──
@@ -486,9 +486,9 @@ class TestFix15ToolUseId:
         adapter = AgnoAdapter(guard)
 
         await adapter._pre("TestTool", {}, "my-call-id")
-        # Check the pending envelope
-        envelope, _ = adapter._pending["my-call-id"]
-        assert envelope.tool_use_id == "my-call-id"
+        # Check the pending tool_call
+        tool_call, _ = adapter._pending["my-call-id"]
+        assert tool_call.tool_use_id == "my-call-id"
 
     async def test_crewai_envelope_has_tool_use_id(self):
         import types
@@ -500,11 +500,11 @@ class TestFix15ToolUseId:
         ctx = types.SimpleNamespace(tool_name="TestTool", tool_input={})
         await adapter._before_hook(ctx)
 
-        # Pending envelope should have tool_use_id set
-        envelope = adapter._pending_envelope
-        assert envelope is not None
-        assert envelope.tool_use_id is not None
-        assert len(envelope.tool_use_id) > 0
+        # Pending tool_call should have tool_use_id set
+        tool_call = adapter._pending_envelope
+        assert tool_call is not None
+        assert tool_call.tool_use_id is not None
+        assert len(tool_call.tool_use_id) > 0
 
 
 # ── Fix 16: FileAuditSink async write ──

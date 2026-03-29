@@ -8,9 +8,9 @@
 [![Downloads](https://img.shields.io/pypi/dm/edictum)](https://pypi.org/project/edictum/)
 [![arXiv](https://img.shields.io/badge/arXiv-2602.16943-b31b1b.svg)](https://arxiv.org/abs/2602.16943)
 
-Runtime contract enforcement for AI agent tool calls.
+Runtime rule enforcement for AI agent tool calls.
 
-**Prompts are suggestions. Contracts are enforcement.** The LLM cannot talk its way past a contract.
+**Prompts are suggestions. Rules are enforcement.** The LLM cannot talk its way past a rule.
 
 **55us overhead** · **18 adapters across Python, TypeScript, Go** · **Zero runtime deps** · **Fail-closed by default**
 
@@ -27,31 +27,31 @@ from edictum import Edictum, EdictumDenied
 
 guard = Edictum.from_template("file-agent")
 result = guard.evaluate("read_file", {"path": ".env"})
-print(result.verdict)         # "deny"
-print(result.deny_reasons[0])  # "Sensitive file '.env' denied."
+print(result.decision)         # "block"
+print(result.block_reasons[0])  # "Sensitive file '.env' blocked."
 ```
 
-Full path -- your contract, your enforcement:
+Full path -- your rule, your enforcement:
 
 ```python
-guard = Edictum.from_yaml("contracts.yaml")
+guard = Edictum.from_yaml("rules.yaml")
 
 try:
     result = await guard.run("read_file", {"path": ".env"}, read_file)
 except EdictumDenied as e:
-    print(e.reason)  # "Sensitive file '.env' denied."
+    print(e.reason)  # "Sensitive file '.env' blocked."
 ```
 
-`contracts.yaml`:
+`rules.yaml`:
 
 ```yaml
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: file-safety
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-sensitive-reads
     type: pre
     tool: read_file
@@ -59,11 +59,11 @@ contracts:
       args.path:
         contains_any: [".env", ".secret", "credentials", ".pem", "id_rsa"]
     then:
-      effect: deny
-      message: "Sensitive file '{args.path}' denied."
+      action: block
+      message: "Sensitive file '{args.path}' blocked."
 ```
 
-Contracts are YAML. Enforcement is deterministic -- no LLM in the evaluation path, just pattern matching against tool names and arguments. The agent cannot bypass a matched contract. Contract errors, type mismatches, and missing fields all fail closed (deny). Tool calls with no matching contracts are allowed by default -- add a catch-all `tool: "*"` contract for deny-by-default.
+Rules are YAML. Enforcement is deterministic -- no LLM in the evaluation path, just pattern matching against tool names and arguments. The agent cannot bypass a matched rule. Rule errors, type mismatches, and missing fields all fail closed (block). Tool calls with no matching rules are allowed by default -- add a catch-all `tool: "*"` rule for block-by-default.
 
 ## The Problem
 
@@ -112,29 +112,29 @@ See [Adapter docs](https://docs.edictum.ai/docs/adapters/overview) for all 8 fra
 
 ## What You Can Do
 
-**Contracts** -- four types covering the full tool call lifecycle:
+**Rules** -- four types covering the full tool call lifecycle:
 
-- **Preconditions** deny dangerous calls before execution
-- **Postconditions** scan tool output -- warn, redact PII, or deny
-- **Session contracts** cap total calls, per-tool calls, and retry attempts
-- **Sandbox contracts** allowlist file paths, commands, and domains
+- **Preconditions** block dangerous calls before execution
+- **Postconditions** scan tool output -- warn, redact PII, or block
+- **Session rules** cap total calls, per-tool calls, and retry attempts
+- **Sandbox rules** allowlist file paths, commands, and domains
 
 **Principal-aware enforcement** -- role-gate tools with claims and `env.*` context. `set_principal()` for mid-session role changes.
 
-**Callbacks** -- `on_deny` / `on_allow` for logging, alerting, or approval workflows.
+**Callbacks** -- block/allow lifecycle callbacks for logging, alerting, or approval workflows.
 
 **Test and validate:**
 
-- `edictum validate` -- catch schema errors at load time
-- `edictum test` -- YAML test cases with expected verdicts
 - `guard.evaluate()` -- dry-run without executing the tool
+- Load rules in tests and assert decisions directly from Python
+- For CLI workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go) -- that is the canonical Edictum CLI
 
 **Ship safely:**
 
-- Observe mode -- log what would be denied, then enforce
+- Observe mode -- log what would be blocked, then enforce
 - Multi-file composition with deterministic merge
 - Custom YAML operators and selectors
-- `edictum diff` and `edictum replay` for contract drift detection
+- For CLI-based diff/replay workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go)
 
 **Audit and observability:**
 
@@ -147,7 +147,7 @@ See [Adapter docs](https://docs.edictum.ai/docs/adapters/overview) for all 8 fra
 
 ```python
 guard = Edictum.from_template("file-agent")
-# Blocks .env, .pem, credentials, id_rsa reads. Denies rm -rf, chmod 777, destructive shell commands.
+# Blocks .env, .pem, credentials, id_rsa reads. Blocks rm -rf, chmod 777, destructive shell commands.
 
 guard = Edictum.from_template("research-agent")
 # Postcondition PII scanning on tool output. Session limits (100 calls, 20 per tool).
@@ -161,20 +161,21 @@ guard = Edictum.from_template("nanobot-agent")
 
 ## Edictum Gate
 
-Pre-execution governance for coding assistants. Sits between the assistant and the OS, evaluating every tool call against contracts.
+Pre-execution governance for coding assistants. Sits between the assistant and the OS, evaluating every tool call against rules.
 
 ```bash
 pip install edictum[gate]
-edictum gate init
 ```
 
-Supports Claude Code, Cursor, Copilot CLI, Gemini CLI, and OpenCode. Self-protection contracts prevent the assistant from disabling governance. Optional sync to [Edictum Console](https://github.com/edictum-ai/edictum-console) for centralized audit.
+The Python package ships the Gate library and integrations. For command-line workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go) -- that is the canonical Edictum CLI.
+
+Supports Claude Code, Cursor, Copilot CLI, Gemini CLI, and OpenCode. Self-protection rules prevent the assistant from disabling governance. Optional sync to [Edictum Console](https://github.com/edictum-ai/edictum-console) for centralized audit.
 
 See the [Gate guide](https://docs.edictum.ai/docs/guides/gate) for setup.
 
 ## Edictum Console
 
-Optional self-hostable operations console for governed agents. Contract management, live hot-reload via SSE, human-in-the-loop approvals, audit event feeds, and fleet monitoring.
+Optional self-hostable operations console for governed agents. Rule management, live hot-reload via SSE, human-in-the-loop approvals, audit event feeds, and fleet monitoring.
 
 ```python
 guard = await Edictum.from_server(
@@ -194,9 +195,7 @@ Edictum was evaluated across six regulated domains in the GAP benchmark (6 LLMs,
 
 Used to audit [OpenClaw](https://github.com/OpenClaw)'s 36,000-skill registry -- found live C2 malware on first scan.
 
-```bash
-edictum skill scan ./skills/
-```
+For CLI-based scanning and other command-line workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go).
 
 ## Install
 
@@ -204,14 +203,15 @@ Requires Python 3.11+.
 
 ```bash
 pip install edictum              # core (zero deps)
-pip install edictum[yaml]        # + YAML contract parsing
+pip install edictum[yaml]        # + YAML rule parsing
 pip install edictum[otel]        # + OpenTelemetry span emission
-pip install edictum[cli]         # + validate/check/diff/replay CLI
-pip install edictum[gate]        # + coding assistant governance
+pip install edictum[gate]        # + coding assistant governance library
 pip install edictum[verified]    # + Ed25519 bundle signature verification
 pip install edictum[server]      # + server SDK (connect to Edictum Console)
-pip install edictum[all]         # everything
+pip install edictum[all]         # everything in this Python package
 ```
+
+For CLI workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go).
 
 ## How It Compares
 
@@ -221,7 +221,7 @@ pip install edictum[all]         # everything
 | API gateways / MCP proxies | Network transport | Yes -- at the proxy | Partial |
 | Security scanners | Post-hoc analysis | No -- detection only | Yes |
 | Manual if-statements | Per-tool, ad hoc | Yes -- scattered logic | No |
-| **Edictum** | **Tool call contracts** | **Yes -- deterministic pipeline** | **Yes -- structured + redacted** |
+| **Edictum** | **Tool call rules** | **Yes -- deterministic pipeline** | **Yes -- structured + redacted** |
 
 ## Use Cases
 
@@ -242,7 +242,7 @@ pip install edictum[all]         # everything
 | [edictum-ts](https://github.com/edictum-ai/edictum-ts) | TypeScript | Core + adapters (Claude SDK, LangChain, OpenAI Agents, OpenClaw, Vercel AI) |
 | [edictum-go](https://github.com/edictum-ai/edictum-go) | Go | Core + adapters (ADK Go, Anthropic, Eino, Genkit, LangChain Go) |
 | [edictum-console](https://github.com/edictum-ai/edictum-console) | Python + React | Self-hostable ops console: HITL, audit, fleet monitoring |
-| [edictum-schemas](https://github.com/edictum-ai/edictum-schemas) | JSON Schema | Contract bundle schema + cross-SDK conformance fixtures |
+| [edictum-schemas](https://github.com/edictum-ai/edictum-schemas) | JSON Schema | Rule bundle schema + cross-SDK conformance fixtures |
 | [edictum-demo](https://github.com/edictum-ai/edictum-demo) | Python | Scenario demos, adversarial tests, benchmarks, Grafana observability |
 | [Documentation](https://docs.edictum.ai) | MDX | Full docs site |
 | [edictum.ai](https://edictum.ai) | -- | Official website |

@@ -54,7 +54,7 @@ class AutoApproveBackend:
         message: str,
         *,
         timeout: int = 300,
-        timeout_effect: str = "deny",
+        timeout_action: str = "block",
         principal: dict | None = None,
         metadata: dict | None = None,
     ) -> ApprovalRequest:
@@ -64,7 +64,7 @@ class AutoApproveBackend:
             tool_args=tool_args,
             message=message,
             timeout=timeout,
-            timeout_effect=timeout_effect,
+            timeout_action=timeout_action,
             principal=principal,
             metadata=metadata or {},
         )

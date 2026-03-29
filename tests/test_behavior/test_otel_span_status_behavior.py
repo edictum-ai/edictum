@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from edictum import Edictum, Verdict, precondition
+from edictum import Decision, Edictum, precondition
 from edictum._runner import _ERROR_ACTIONS
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
@@ -226,7 +226,7 @@ ALL_PRE_POST = _all_pre_post_configs()
 ALL_PRE_POST_IDS = [c[0] for c in ALL_PRE_POST]
 
 
-# --- Test 4: Adapter deny path calls set_span_error ---
+# --- Test 4: Adapter block path calls set_span_error ---
 
 
 @pytest.mark.parametrize("name,cls,pre_fn", ALL_PRE, ids=ALL_PRE_IDS)
@@ -234,10 +234,10 @@ async def test_adapter_deny_calls_set_span_error(name, cls, pre_fn):
     """All adapters call set_span_error when precondition denies."""
 
     @precondition("*")
-    def block_all(envelope):
-        return Verdict.fail("test denial")
+    def block_all(tool_call):
+        return Decision.fail("test denial")
 
-    guard = _make_guard(contracts=[block_all])
+    guard = _make_guard(rules=[block_all])
     adapter = cls(guard)
 
     with patch.object(guard.telemetry, "set_span_error") as mock_error:

@@ -14,7 +14,7 @@ from edictum.approval import ApprovalStatus
 from edictum.audit import AuditAction, AuditEvent
 from edictum.envelope import create_envelope
 from edictum.otel import has_otel
-from edictum.pipeline import GovernancePipeline, PreDecision
+from edictum.pipeline import CheckPipeline, PreDecision
 from edictum.session import Session
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ async def _run(
     """Framework-agnostic entrypoint."""
     session_id = session_id or self._session_id
     session = Session(session_id, self.backend)
-    pipeline = GovernancePipeline(self)
+    pipeline = CheckPipeline(self)
 
     # Allow per-call environment override; fall back to guard-level default
     env = envelope_kwargs.pop("environment", self.environment)
@@ -123,7 +123,7 @@ async def _run(
                 span.set_attribute("governance.action", "approved")
 
         # Determine if this is a real deny or just per-contract observed denials
-        real_deny = pre.action == "deny" and not pre.observed
+        real_deny = pre.action == "block" and not pre.observed
 
         # Skip pre-execution audit for approval-granted path (already handled above)
         if pre.action == "pending_approval":
@@ -294,7 +294,7 @@ async def _emit_run_pre_audit(self: Edictum, envelope, session, action: AuditAct
 
 async def _resolve_pending_approval(
     self: Edictum,
-    pipeline: GovernancePipeline,
+    pipeline: CheckPipeline,
     session: Session,
     envelope,
     pre: PreDecision,
@@ -314,7 +314,7 @@ async def _resolve_pending_approval(
             tool_args=envelope.args,
             message=current.approval_message or current.reason or "",
             timeout=current.approval_timeout,
-            timeout_effect=current.approval_timeout_effect,
+            timeout_action=current.approval_timeout_action,
             principal=principal_dict,
         )
         await _emit_run_pre_audit(self, envelope, session, AuditAction.CALL_APPROVAL_REQUESTED, current)
@@ -325,7 +325,7 @@ async def _resolve_pending_approval(
         approved = False
         if decision.status == ApprovalStatus.TIMEOUT:
             await _emit_run_pre_audit(self, envelope, session, AuditAction.CALL_APPROVAL_TIMEOUT, current)
-            if current.approval_timeout_effect == "allow":
+            if current.approval_timeout_action == "allow":
                 approved = True
         elif decision.approved:
             await _emit_run_pre_audit(self, envelope, session, AuditAction.CALL_APPROVAL_GRANTED, current)
@@ -382,6 +382,8 @@ def _emit_otel_governance_span(self: Edictum, audit_event: AuditEvent) -> None:
 
     with self._gov_tracer.start_as_current_span("edictum.evaluate") as span:
         span.set_attribute("edictum.tool.name", audit_event.tool_name)
+        span.set_attribute("edictum.decision", audit_event.action.value)
+        span.set_attribute("edictum.decision.reason", audit_event.reason or "")
         span.set_attribute("edictum.verdict", audit_event.action.value)
         span.set_attribute("edictum.verdict.reason", audit_event.reason or "")
         span.set_attribute("edictum.decision.source", audit_event.decision_source or "")

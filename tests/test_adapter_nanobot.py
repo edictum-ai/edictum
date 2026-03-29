@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock
 
-from edictum import Edictum, Principal, Verdict, postcondition, precondition
+from edictum import Decision, Edictum, Principal, postcondition, precondition
 from edictum.adapters.nanobot import GovernedToolRegistry, NanobotAdapter
 from edictum.approval import ApprovalDecision, ApprovalRequest, ApprovalStatus
 from edictum.audit import AuditAction
@@ -74,10 +74,10 @@ class TestGovernedToolRegistry:
 
     async def test_execute_denied_enforce(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("not allowed")
+        def always_deny(tool_call):
+            return Decision.fail("not allowed")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         inner = make_registry()
         governed = GovernedToolRegistry(inner, guard)
 
@@ -87,11 +87,11 @@ class TestGovernedToolRegistry:
 
     async def test_execute_denied_observe(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("would be denied")
+        def always_deny(tool_call):
+            return Decision.fail("would be denied")
 
         sink = NullAuditSink()
-        guard = make_guard(mode="observe", contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
         inner = make_registry()
         governed = GovernedToolRegistry(inner, guard)
 
@@ -103,12 +103,12 @@ class TestGovernedToolRegistry:
 
     async def test_execute_approval_flow(self):
         @precondition("*")
-        def require_approval(envelope):
-            return Verdict.fail("needs approval")
+        def require_approval(tool_call):
+            return Decision.fail("needs approval")
 
-        require_approval._edictum_effect = "approve"
+        require_approval._edictum_effect = "ask"
         require_approval._edictum_timeout = 60
-        require_approval._edictum_timeout_effect = "deny"
+        require_approval._edictum_timeout_action = "block"
 
         mock_backend = AsyncMock()
         mock_backend.request_approval.return_value = ApprovalRequest(
@@ -124,7 +124,7 @@ class TestGovernedToolRegistry:
             status=ApprovalStatus.APPROVED,
         )
 
-        guard = make_guard(contracts=[require_approval], approval_backend=mock_backend)
+        guard = make_guard(rules=[require_approval], approval_backend=mock_backend)
         inner = make_registry()
         governed = GovernedToolRegistry(inner, guard)
 
@@ -135,12 +135,12 @@ class TestGovernedToolRegistry:
 
     async def test_execute_approval_denied(self):
         @precondition("*")
-        def require_approval(envelope):
-            return Verdict.fail("needs approval")
+        def require_approval(tool_call):
+            return Decision.fail("needs approval")
 
-        require_approval._edictum_effect = "approve"
+        require_approval._edictum_effect = "ask"
         require_approval._edictum_timeout = 60
-        require_approval._edictum_timeout_effect = "deny"
+        require_approval._edictum_timeout_action = "block"
 
         mock_backend = AsyncMock()
         mock_backend.request_approval.return_value = ApprovalRequest(
@@ -156,7 +156,7 @@ class TestGovernedToolRegistry:
             status=ApprovalStatus.DENIED,
         )
 
-        guard = make_guard(contracts=[require_approval], approval_backend=mock_backend)
+        guard = make_guard(rules=[require_approval], approval_backend=mock_backend)
         inner = make_registry()
         governed = GovernedToolRegistry(inner, guard)
 
@@ -166,12 +166,12 @@ class TestGovernedToolRegistry:
 
     async def test_execute_no_approval_backend(self):
         @precondition("*")
-        def require_approval(envelope):
-            return Verdict.fail("needs approval")
+        def require_approval(tool_call):
+            return Decision.fail("needs approval")
 
-        require_approval._edictum_effect = "approve"
+        require_approval._edictum_effect = "ask"
 
-        guard = make_guard(contracts=[require_approval])
+        guard = make_guard(rules=[require_approval])
         inner = make_registry()
         governed = GovernedToolRegistry(inner, guard)
 
@@ -222,12 +222,12 @@ class TestGovernedToolRegistry:
 
     async def test_set_principal(self):
         @precondition("*")
-        def require_admin(envelope):
-            if envelope.principal is None or envelope.principal.role != "admin":
-                return Verdict.fail("admin required")
-            return Verdict.pass_()
+        def require_admin(tool_call):
+            if tool_call.principal is None or tool_call.principal.role != "admin":
+                return Decision.fail("admin required")
+            return Decision.pass_()
 
-        guard = make_guard(contracts=[require_admin])
+        guard = make_guard(rules=[require_admin])
         inner = make_registry()
         governed = GovernedToolRegistry(inner, guard, principal=Principal(role="viewer"))
 
@@ -244,11 +244,11 @@ class TestGovernedToolRegistry:
 
     async def test_postcondition_warnings(self):
         @postcondition("*")
-        def detect_issue(envelope, result):
-            return Verdict.fail("issue found in output")
+        def detect_issue(tool_call, result):
+            return Decision.fail("issue found in output")
 
         sink = NullAuditSink()
-        guard = make_guard(contracts=[detect_issue], audit_sink=sink)
+        guard = make_guard(rules=[detect_issue], audit_sink=sink)
         inner = make_registry()
         governed = GovernedToolRegistry(inner, guard)
 
@@ -273,13 +273,13 @@ class TestGovernedToolRegistry:
         assert AuditAction.CALL_ALLOWED in actions
         assert AuditAction.CALL_EXECUTED in actions
 
-    async def test_audit_events_on_deny(self):
+    async def test_audit_events_on_block(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied")
+        def always_deny(tool_call):
+            return Decision.fail("denied")
 
         sink = NullAuditSink()
-        guard = make_guard(contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(rules=[always_deny], audit_sink=sink)
         inner = make_registry()
         governed = GovernedToolRegistry(inner, guard)
 
@@ -288,18 +288,18 @@ class TestGovernedToolRegistry:
         actions = [e.action for e in sink.events]
         assert AuditAction.CALL_DENIED in actions
 
-    async def test_on_deny_callback(self):
+    async def test_on_block_callback(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("not allowed")
+        def always_deny(tool_call):
+            return Decision.fail("not allowed")
 
-        on_deny = MagicMock()
-        guard = make_guard(contracts=[always_deny], on_deny=on_deny)
+        on_block = MagicMock()
+        guard = make_guard(rules=[always_deny], on_block=on_block)
         inner = make_registry()
         governed = GovernedToolRegistry(inner, guard)
 
         await governed.execute("read_file", {"path": "/tmp/test.txt"})
-        assert on_deny.call_count == 1
+        assert on_block.call_count == 1
 
     async def test_on_allow_callback(self):
         on_allow = MagicMock()
@@ -326,15 +326,15 @@ class TestGovernedToolRegistry:
 
     async def test_principal_resolver(self):
         @precondition("*")
-        def require_admin(envelope):
-            if envelope.principal is None or envelope.principal.role != "admin":
-                return Verdict.fail("admin required")
-            return Verdict.pass_()
+        def require_admin(tool_call):
+            if tool_call.principal is None or tool_call.principal.role != "admin":
+                return Decision.fail("admin required")
+            return Decision.pass_()
 
         def resolver(tool_name, tool_input):
             return Principal(role="admin")
 
-        guard = make_guard(contracts=[require_admin])
+        guard = make_guard(rules=[require_admin])
         inner = make_registry()
         governed = GovernedToolRegistry(inner, guard, principal=Principal(role="viewer"), principal_resolver=resolver)
 
@@ -392,24 +392,24 @@ class TestNanobotTemplate:
 
     def test_nanobot_template_has_expected_contracts(self):
         guard = Edictum.from_template("nanobot-agent")
-        contract_ids = set()
+        rule_ids = set()
         for c in guard._state.preconditions:
             cid = getattr(c, "_edictum_id", None)
             if cid:
-                contract_ids.add(cid)
+                rule_ids.add(cid)
         for c in guard._state.session_contracts:
             cid = getattr(c, "_edictum_id", None)
             if cid:
-                contract_ids.add(cid)
+                rule_ids.add(cid)
 
         expected = {
-            "approve-exec",
-            "approve-spawn",
-            "approve-cron",
-            "deny-write-outside-workspace",
-            "deny-edit-outside-workspace",
-            "deny-sensitive-reads",
-            "approve-mcp-tools",
+            "ask-exec",
+            "ask-spawn",
+            "ask-cron",
+            "block-write-outside-workspace",
+            "block-edit-outside-workspace",
+            "block-sensitive-reads",
+            "ask-mcp-tools",
             "session-limits",
         }
-        assert expected.issubset(contract_ids), f"Missing contracts: {expected - contract_ids}"
+        assert expected.issubset(rule_ids), f"Missing rules: {expected - rule_ids}"

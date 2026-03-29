@@ -27,7 +27,7 @@ class ApprovalRequest:
     tool_args: dict[str, Any]
     message: str
     timeout: int  # seconds
-    timeout_effect: str = "deny"  # deny | allow
+    timeout_action: str = "block"  # block | allow
     principal: dict | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -55,7 +55,7 @@ class ApprovalBackend(Protocol):
         message: str,
         *,
         timeout: int = 300,
-        timeout_effect: str = "deny",
+        timeout_action: str = "block",
         principal: dict | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ApprovalRequest: ...
@@ -86,7 +86,7 @@ class LocalApprovalBackend:
         message: str,
         *,
         timeout: int = 300,
-        timeout_effect: str = "deny",
+        timeout_action: str = "block",
         principal: dict | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ApprovalRequest:
@@ -97,7 +97,7 @@ class LocalApprovalBackend:
             tool_args=tool_args,
             message=message,
             timeout=timeout,
-            timeout_effect=timeout_effect,
+            timeout_action=timeout_action,
             principal=principal,
             metadata=metadata or {},
         )
@@ -125,8 +125,8 @@ class LocalApprovalBackend:
                 timeout=effective_timeout,
             )
         except TimeoutError:
-            timeout_effect = request.timeout_effect if request else "deny"
-            approved = timeout_effect == "allow"
+            timeout_action = request.timeout_action if request else "block"
+            approved = timeout_action == "allow"
             return ApprovalDecision(
                 approved=approved,
                 status=ApprovalStatus.TIMEOUT,

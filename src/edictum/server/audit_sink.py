@@ -69,7 +69,7 @@ class ServerAuditSink:
             "call_id": event.call_id,
             "agent_id": self._client.agent_id,
             "tool_name": event.tool_name,
-            "verdict": event.action.value,
+            "decision": event.action.value,
             "mode": event.mode,
             "timestamp": event.timestamp.isoformat(),
             "payload": {

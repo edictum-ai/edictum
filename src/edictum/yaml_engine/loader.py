@@ -20,20 +20,22 @@ except ImportError as _exc:
 MAX_BUNDLE_SIZE = 1_048_576  # 1 MB
 
 # Lazy-loaded schema singleton
-_schema_cache: dict | None = None
+_schema_cache: dict[str, dict] = {}
 
 
-def _get_schema() -> dict:
-    """Load and cache the JSON Schema for validation."""
+def _get_schema(version: str) -> dict:
+    """Load and cache a JSON Schema for validation."""
+    import json
+
     global _schema_cache  # noqa: PLW0603
-    if _schema_cache is None:
-        import json
-
+    if version not in _schema_cache:
         schema_text = (
-            _resources.files("edictum.yaml_engine").joinpath("edictum-v1.schema.json").read_text(encoding="utf-8")
+            _resources.files("edictum.yaml_engine")
+            .joinpath(f"edictum-{version}.schema.json")
+            .read_text(encoding="utf-8")
         )
-        _schema_cache = json.loads(schema_text)
-    return _schema_cache
+        _schema_cache[version] = json.loads(schema_text)
+    return _schema_cache[version]
 
 
 @dataclass(frozen=True)
@@ -52,33 +54,34 @@ def _compute_hash(raw_bytes: bytes) -> BundleHash:
 
 
 def _validate_schema(data: dict) -> None:
-    """Validate parsed YAML against the Edictum JSON Schema."""
+    """Validate parsed YAML against the Edictum v2 JSON Schema."""
     from edictum import EdictumConfigError
 
-    schema = _get_schema()
+    schema = _get_schema("v2")
+
     try:
         jsonschema.validate(instance=data, schema=schema)
-    except jsonschema.ValidationError as e:
-        raise EdictumConfigError(f"Schema validation failed: {e.message}") from e
+    except jsonschema.ValidationError as error:
+        raise EdictumConfigError(f"Schema validation failed: {error.message}") from error
 
 
 def _validate_unique_ids(data: dict) -> None:
-    """Ensure all contract IDs are unique within the bundle."""
+    """Ensure all rule IDs are unique within the bundle."""
     from edictum import EdictumConfigError
 
     ids: set[str] = set()
-    for contract in data.get("contracts", []):
-        contract_id = contract.get("id")
-        if contract_id in ids:
-            raise EdictumConfigError(f"Duplicate contract id: '{contract_id}'")
-        ids.add(contract_id)
+    for rule in data.get("rules", []):
+        rule_id = rule.get("id")
+        if rule_id in ids:
+            raise EdictumConfigError(f"Duplicate rule id: '{rule_id}'")
+        ids.add(rule_id)
 
 
 def _validate_regexes(data: dict) -> None:
     """Compile all regex patterns at load time to catch invalid patterns early."""
 
-    for contract in data.get("contracts", []):
-        when = contract.get("when")
+    for rule in data.get("rules", []):
+        when = rule.get("when")
         if when:
             _validate_expression_regexes(when)
 
@@ -114,16 +117,16 @@ def _validate_expression_regexes(expr: dict | Any) -> None:
 
 
 def _validate_pre_selectors(data: dict) -> None:
-    """Reject output.text selectors in type: pre contracts (spec violation)."""
+    """Reject output.text selectors in type: pre rules (spec violation)."""
     from edictum import EdictumConfigError
 
-    for contract in data.get("contracts", []):
-        if contract.get("type") != "pre":
+    for rule in data.get("rules", []):
+        if rule.get("type") != "pre":
             continue
-        when = contract.get("when")
+        when = rule.get("when")
         if when and _expression_has_selector(when, "output.text"):
             raise EdictumConfigError(
-                f"Contract '{contract.get('id', '?')}': output.text selector is not available in type: pre contracts"
+                f"Rule '{rule.get('id', '?')}': output.text selector is not available in type: pre rules"
             )
 
 
@@ -152,37 +155,60 @@ def _try_compile_regex(pattern: str) -> None:
 
 
 def _validate_sandbox_contracts(data: dict) -> None:
-    """Validate sandbox contract field dependencies."""
+    """Validate sandbox rule field dependencies."""
     from edictum import EdictumConfigError
 
-    for contract in data.get("contracts", []):
-        if contract.get("type") != "sandbox":
+    for rule in data.get("rules", []):
+        if rule.get("type") != "sandbox":
             continue
-        cid = contract.get("id", "?")
+        rid = rule.get("id", "?")
         # not_within requires within
-        if "not_within" in contract and "within" not in contract:
-            raise EdictumConfigError(f"Contract '{cid}': not_within requires within to also be set")
+        if "not_within" in rule and "within" not in rule:
+            raise EdictumConfigError(f"Rule '{rid}': not_within requires within to also be set")
         # not_allows requires allows
-        if "not_allows" in contract and "allows" not in contract:
-            raise EdictumConfigError(f"Contract '{cid}': not_allows requires allows to also be set")
+        if "not_allows" in rule and "allows" not in rule:
+            raise EdictumConfigError(f"Rule '{rid}': not_allows requires allows to also be set")
         # not_allows.domains requires allows.domains
-        if "not_allows" in contract and "domains" in contract.get("not_allows", {}):
-            if "domains" not in contract.get("allows", {}):
-                raise EdictumConfigError(f"Contract '{cid}': not_allows.domains requires allows.domains to also be set")
+        if "not_allows" in rule and "domains" in rule.get("not_allows", {}):
+            if "domains" not in rule.get("allows", {}):
+                raise EdictumConfigError(f"Rule '{rid}': not_allows.domains requires allows.domains to also be set")
+
+
+def _load_data(raw_bytes: bytes) -> tuple[dict, BundleHash]:
+    from edictum import EdictumConfigError
+
+    bundle_hash = _compute_hash(raw_bytes)
+
+    try:
+        data = yaml.safe_load(raw_bytes)
+    except yaml.YAMLError as e:
+        raise EdictumConfigError(f"YAML parse error: {e}") from e
+
+    if not isinstance(data, dict):
+        raise EdictumConfigError("YAML document must be a mapping")
+
+    _validate_schema(data)
+    normalized = data
+    _validate_unique_ids(normalized)
+    _validate_regexes(normalized)
+    _validate_pre_selectors(normalized)
+    _validate_sandbox_contracts(normalized)
+
+    return normalized, bundle_hash
 
 
 def load_bundle(source: str | Path) -> tuple[dict, BundleHash]:
-    """Load and validate a YAML contract bundle.
+    """Load and validate a YAML rules bundle.
 
     Args:
         source: Path to a YAML file.
 
     Returns:
-        Tuple of (parsed bundle dict, bundle hash).
+        Tuple of (parsed normalized bundle dict, bundle hash).
 
     Raises:
         EdictumConfigError: If the YAML is invalid, fails schema validation,
-            has duplicate contract IDs, or contains invalid regex patterns.
+            has duplicate rule IDs, or contains invalid regex patterns.
         FileNotFoundError: If the file does not exist.
     """
     from edictum import EdictumConfigError
@@ -194,27 +220,11 @@ def load_bundle(source: str | Path) -> tuple[dict, BundleHash]:
         raise EdictumConfigError(f"Bundle file too large ({file_size} bytes, max {MAX_BUNDLE_SIZE})")
 
     raw_bytes = path.read_bytes()
-    bundle_hash = _compute_hash(raw_bytes)
-
-    try:
-        data = yaml.safe_load(raw_bytes)
-    except yaml.YAMLError as e:
-        raise EdictumConfigError(f"YAML parse error: {e}") from e
-
-    if not isinstance(data, dict):
-        raise EdictumConfigError("YAML document must be a mapping")
-
-    _validate_schema(data)
-    _validate_unique_ids(data)
-    _validate_regexes(data)
-    _validate_pre_selectors(data)
-    _validate_sandbox_contracts(data)
-
-    return data, bundle_hash
+    return _load_data(raw_bytes)
 
 
 def load_bundle_string(content: str | bytes) -> tuple[dict, BundleHash]:
-    """Load and validate a YAML contract bundle from a string or bytes.
+    """Load and validate a YAML rules bundle from a string or bytes.
 
     Like :func:`load_bundle` but accepts YAML content directly instead of
     a file path. Useful when YAML is generated programmatically or fetched
@@ -224,11 +234,11 @@ def load_bundle_string(content: str | bytes) -> tuple[dict, BundleHash]:
         content: YAML content as a string or bytes.
 
     Returns:
-        Tuple of (parsed bundle dict, bundle hash).
+        Tuple of (parsed normalized bundle dict, bundle hash).
 
     Raises:
         EdictumConfigError: If the YAML is invalid, fails schema validation,
-            has duplicate contract IDs, or contains invalid regex patterns.
+            has duplicate rule IDs, or contains invalid regex patterns.
     """
     from edictum import EdictumConfigError
 
@@ -240,20 +250,4 @@ def load_bundle_string(content: str | bytes) -> tuple[dict, BundleHash]:
     if len(raw_bytes) > MAX_BUNDLE_SIZE:
         raise EdictumConfigError(f"Bundle content too large ({len(raw_bytes)} bytes, max {MAX_BUNDLE_SIZE})")
 
-    bundle_hash = _compute_hash(raw_bytes)
-
-    try:
-        data = yaml.safe_load(raw_bytes)
-    except yaml.YAMLError as e:
-        raise EdictumConfigError(f"YAML parse error: {e}") from e
-
-    if not isinstance(data, dict):
-        raise EdictumConfigError("YAML document must be a mapping")
-
-    _validate_schema(data)
-    _validate_unique_ids(data)
-    _validate_regexes(data)
-    _validate_pre_selectors(data)
-    _validate_sandbox_contracts(data)
-
-    return data, bundle_hash
+    return _load_data(raw_bytes)

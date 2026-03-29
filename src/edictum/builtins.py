@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from edictum.contracts import Verdict, precondition
-from edictum.envelope import ToolEnvelope
+from edictum.envelope import ToolCall
+from edictum.rules import Decision, precondition
 
 
 def deny_sensitive_reads(
@@ -39,34 +39,34 @@ def deny_sensitive_reads(
     commands = sensitive_commands or default_commands
 
     @precondition("*")
-    def _deny_sensitive(envelope: ToolEnvelope) -> Verdict:
+    def _deny_sensitive(tool_call: ToolCall) -> Decision:
         # Check file paths
-        if envelope.file_path:
+        if tool_call.file_path:
             for pattern in paths:
-                if pattern in envelope.file_path:
-                    return Verdict.fail(
-                        f"Access to sensitive path denied: {envelope.file_path}. "
+                if pattern in tool_call.file_path:
+                    return Decision.fail(
+                        f"Access to sensitive path denied: {tool_call.file_path}. "
                         "This file may contain secrets or credentials."
                     )
 
         # Check bash commands
-        if envelope.bash_command:
-            cmd = envelope.bash_command.strip()
+        if tool_call.bash_command:
+            cmd = tool_call.bash_command.strip()
             for blocked in commands:
                 if cmd == blocked or cmd.startswith(blocked + " "):
-                    return Verdict.fail(
+                    return Decision.fail(
                         f"Sensitive command denied: {blocked}. "
                         "This command may expose secrets or environment variables."
                     )
             # Check if bash is reading a sensitive path
             for pattern in paths:
                 if pattern in cmd:
-                    return Verdict.fail(
+                    return Decision.fail(
                         f"Bash command accesses sensitive path: {pattern}. "
                         "This file may contain secrets or credentials."
                     )
 
-        return Verdict.pass_()
+        return Decision.pass_()
 
     _deny_sensitive.__name__ = "deny_sensitive_reads"
     return _deny_sensitive

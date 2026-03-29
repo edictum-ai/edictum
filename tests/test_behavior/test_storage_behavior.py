@@ -1,6 +1,6 @@
 """Behavior tests for StorageBackend and MemoryBackend.
 
-Every accepted parameter must have an observable effect.
+Every accepted parameter must have an observable action.
 If a parameter is accepted but ignored, these tests fail.
 """
 
@@ -15,7 +15,7 @@ from edictum.storage import MemoryBackend
 
 
 class TestMemoryBackendParameterEffects:
-    """Every parameter accepted by MemoryBackend must have an observable effect."""
+    """Every parameter accepted by MemoryBackend must have an observable action."""
 
     def test_set_does_not_accept_ttl(self):
         """MemoryBackend.set() must not have a ttl parameter.

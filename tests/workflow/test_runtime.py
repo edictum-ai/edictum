@@ -125,20 +125,20 @@ async def test_guard_run_workflow_evidence_and_approval(tmp_path: Path):
     guard = Edictum.from_yaml_string(
         """
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: empty-bundle
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: noop-pre
     type: pre
     tool: Noop
     when:
-      input.path:
+      args.path:
         equals: never
     then:
-      effect: deny
+      action: block
       message: never
 """,
         backend=MemoryBackend(),

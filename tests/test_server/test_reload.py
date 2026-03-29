@@ -1,4 +1,4 @@
-"""Tests for Edictum.reload() — atomic contract swapping."""
+"""Tests for Edictum.reload() — atomic rule swapping."""
 
 from __future__ import annotations
 
@@ -8,48 +8,48 @@ from edictum import Edictum, EdictumConfigError
 
 BUNDLE_V1 = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-v1
 defaults:
   mode: enforce
-contracts:
-  - id: deny-rm
+rules:
+  - id: block-rm
     type: pre
     tool: bash
     when:
       args.command:
         contains: "rm -rf"
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied."
 """
 
 BUNDLE_V2 = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-v2
 defaults:
   mode: enforce
-contracts:
-  - id: deny-curl
+rules:
+  - id: block-curl
     type: pre
     tool: bash
     when:
       args.command:
         contains: "curl"
     then:
-      effect: deny
+      action: block
       message: "Network access denied."
-  - id: deny-wget
+  - id: block-wget
     type: pre
     tool: bash
     when:
       args.command:
         contains: "wget"
     then:
-      effect: deny
+      action: block
       message: "Network access denied."
 """
 
@@ -59,7 +59,7 @@ INVALID_YAML = "not: valid: yaml: ["
 class TestReload:
     @pytest.mark.asyncio
     async def test_reload_swaps_contracts(self):
-        """reload() replaces all contracts with the new bundle."""
+        """reload() replaces all rules with the new bundle."""
         guard = Edictum.from_yaml_string(BUNDLE_V1)
 
         assert len(guard._state.preconditions) == 1
@@ -81,7 +81,7 @@ class TestReload:
 
     @pytest.mark.asyncio
     async def test_reload_preserves_on_invalid_yaml(self):
-        """reload() raises on invalid YAML but preserves existing contracts."""
+        """reload() raises on invalid YAML but preserves existing rules."""
         guard = Edictum.from_yaml_string(BUNDLE_V1)
         original_contracts = guard._state.preconditions
         original_version = guard.policy_version
@@ -89,7 +89,7 @@ class TestReload:
         with pytest.raises(EdictumConfigError):
             await guard.reload(INVALID_YAML)
 
-        # Existing contracts preserved
+        # Existing rules preserved
         assert guard._state.preconditions is original_contracts
         assert guard.policy_version == original_version
 
@@ -106,26 +106,26 @@ class TestReload:
 
     @pytest.mark.asyncio
     async def test_reload_clears_old_contracts(self):
-        """reload() fully replaces — old contracts are gone."""
+        """reload() fully replaces — old rules are gone."""
         guard = Edictum.from_yaml_string(BUNDLE_V1)
 
-        # V1 has deny-rm
+        # V1 has block-rm
         result = guard.evaluate("bash", {"command": "rm -rf /"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
         await guard.reload(BUNDLE_V2)
 
-        # V2 does not have deny-rm, so it should allow
+        # V2 does not have block-rm, so it should allow
         result = guard.evaluate("bash", {"command": "rm -rf /"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
-        # V2 has deny-curl
+        # V2 has block-curl
         result = guard.evaluate("bash", {"command": "curl evil.com"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     @pytest.mark.asyncio
     async def test_in_flight_evaluation_unaffected(self):
-        """Snapshot of contract list taken before reload is unaffected."""
+        """Snapshot of rule list taken before reload is unaffected."""
         guard = Edictum.from_yaml_string(BUNDLE_V1)
 
         # Simulate an in-flight evaluation holding a reference
@@ -133,28 +133,28 @@ class TestReload:
 
         await guard.reload(BUNDLE_V2)
 
-        # The snapshot still holds the old contracts
+        # The snapshot still holds the old rules
         assert len(snapshot) == 1
-        # The guard now has the new contracts
+        # The guard now has the new rules
         assert len(guard._state.preconditions) == 2
 
     @pytest.mark.asyncio
     async def test_reload_with_session_contracts(self):
-        """reload() handles bundles with session contracts."""
+        """reload() handles bundles with session rules."""
         bundle_with_session = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-session
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: max-calls
     type: session
     limits:
       max_tool_calls: 50
     then:
-      effect: deny
+      action: block
       message: "Session limit reached."
 """
         guard = Edictum.from_yaml_string(BUNDLE_V1)
@@ -162,5 +162,5 @@ contracts:
 
         await guard.reload(bundle_with_session)
 
-        # Session contract limit is reflected in limits
+        # Session rule limit is reflected in limits
         assert guard.limits.max_tool_calls == 50

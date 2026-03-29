@@ -32,7 +32,7 @@ class TestServerApprovalBackend:
             tool_args={"path": "/etc/config"},
             message="Approve file deletion?",
             timeout=60,
-            timeout_effect="deny",
+            timeout_action="block",
         )
 
         assert request.approval_id == "approval-123"
@@ -40,7 +40,7 @@ class TestServerApprovalBackend:
         assert request.tool_args == {"path": "/etc/config"}
         assert request.message == "Approve file deletion?"
         assert request.timeout == 60
-        assert request.timeout_effect == "deny"
+        assert request.timeout_action == "block"
 
         mock_client.post.assert_called_once_with(
             "/api/v1/approvals",
@@ -50,7 +50,7 @@ class TestServerApprovalBackend:
                 "tool_args": {"path": "/etc/config"},
                 "message": "Approve file deletion?",
                 "timeout": 60,
-                "timeout_effect": "deny",
+                "timeout_action": "block",
             },
         )
 
@@ -59,9 +59,9 @@ class TestServerApprovalBackend:
         mock_client.post.return_value = {"id": "approval-abc", "status": "pending"}
         backend = ServerApprovalBackend(mock_client)
 
-        await backend.request_approval("tool", {}, "msg", timeout_effect="allow")
+        await backend.request_approval("tool", {}, "msg", timeout_action="allow")
         assert "approval-abc" in backend._pending
-        assert backend._pending["approval-abc"].timeout_effect == "allow"
+        assert backend._pending["approval-abc"].timeout_action == "allow"
 
     @pytest.mark.asyncio
     async def test_wait_for_decision_approved(self, mock_client):
@@ -105,19 +105,19 @@ class TestServerApprovalBackend:
         mock_client.get.return_value = {"status": "timeout"}
 
         backend = ServerApprovalBackend(mock_client, poll_interval=0.01)
-        await backend.request_approval("tool", {}, "msg", timeout_effect="deny")
+        await backend.request_approval("tool", {}, "msg", timeout_action="block")
 
         decision = await backend.wait_for_decision("approval-3")
         assert decision.approved is False
         assert decision.status == ApprovalStatus.TIMEOUT
 
     @pytest.mark.asyncio
-    async def test_wait_for_decision_timeout_effect_allow(self, mock_client):
+    async def test_wait_for_decision_timeout_action_allow(self, mock_client):
         mock_client.post.return_value = {"id": "approval-4", "status": "pending"}
         mock_client.get.return_value = {"status": "timeout"}
 
         backend = ServerApprovalBackend(mock_client, poll_interval=0.01)
-        await backend.request_approval("tool", {}, "msg", timeout_effect="allow")
+        await backend.request_approval("tool", {}, "msg", timeout_action="allow")
 
         decision = await backend.wait_for_decision("approval-4")
         assert decision.approved is True

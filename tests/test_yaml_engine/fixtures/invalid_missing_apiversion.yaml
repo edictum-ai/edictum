@@ -1,4 +1,4 @@
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: test-bundle
@@ -6,7 +6,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: test
     type: pre
     tool: read_file
@@ -14,5 +14,5 @@ contracts:
       args.path:
         contains: ".env"
     then:
-      effect: deny
+      action: block
       message: "denied"

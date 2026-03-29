@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from edictum import Edictum, Verdict, postcondition
+from edictum import Decision, Edictum, postcondition
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import CapturingAuditSink
@@ -18,10 +18,10 @@ def _make_observe_postcondition(name: str):
     """Create a postcondition marked as observe-mode (observe_alongside)."""
 
     @postcondition("*")
-    def check(envelope, response):
+    def check(tool_call, response):
         if "sensitive" in str(response):
-            return Verdict.fail(f"Observe-mode detected sensitive output [{name}]")
-        return Verdict.pass_()
+            return Decision.fail(f"Observe-mode detected sensitive output [{name}]")
+        return Decision.pass_()
 
     check.__name__ = name
     check._edictum_observe = True
@@ -51,13 +51,13 @@ class TestObserveModePostconditionsEvaluated:
 
     @pytest.mark.asyncio
     async def test_observe_postcondition_produces_warning(self):
-        """A failing observe-mode postcondition produces a warning, not a deny."""
+        """A failing observe-mode postcondition produces a warning, not a block."""
         sink = CapturingAuditSink()
         guard = _make_guard_with_observe_postconditions(sink)
 
         # The tool "succeeds" but returns sensitive data
         result = await guard.run("TestTool", {}, lambda: "sensitive data here")
-        # Tool call allowed (observe mode doesn't deny)
+        # Tool call allowed (observe mode doesn't block)
         assert result == "sensitive data here"
 
     @pytest.mark.asyncio
@@ -73,8 +73,8 @@ class TestObserveModePostconditionsEvaluated:
         assert len(post_events) == 1
 
         # The observe-mode postcondition should appear in contracts_evaluated
-        contracts = post_events[0].contracts_evaluated
-        observe_contracts = [c for c in contracts if c.get("observed")]
+        rules = post_events[0].contracts_evaluated
+        observe_contracts = [c for c in rules if c.get("observed")]
         assert len(observe_contracts) == 1
         assert observe_contracts[0]["name"] == "pii_check"
         assert observe_contracts[0]["passed"] is False
@@ -89,18 +89,18 @@ class TestObserveModePostconditionsEvaluated:
         assert result == "clean data"
 
         post_events = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
-        contracts = post_events[0].contracts_evaluated
-        observe_contracts = [c for c in contracts if c.get("observed")]
+        rules = post_events[0].contracts_evaluated
+        observe_contracts = [c for c in rules if c.get("observed")]
         assert len(observe_contracts) == 1
         assert observe_contracts[0]["passed"] is True
 
     @pytest.mark.security
     @pytest.mark.asyncio
     async def test_per_contract_observe_postcondition_does_not_affect_postconditions_passed(self):
-        """A per-contract mode:observe postcondition (from get_postconditions path)
+        """A per-rule mode:observe postcondition (from get_postconditions path)
         must NOT set postconditions_passed=False.
 
-        This tests the FIRST loop in post_execute — per-contract observe mode
+        This tests the FIRST loop in post_execute — per-rule observe mode
         where contract_mode == "observe". Different from observe_alongside which
         goes through get_observe_postconditions.
         """
@@ -111,12 +111,12 @@ class TestObserveModePostconditionsEvaluated:
             backend=MemoryBackend(),
         )
 
-        # Create an observe-mode postcondition (per-contract, NOT observe_alongside)
+        # Create an observe-mode postcondition (per-rule, NOT observe_alongside)
         @postcondition("*")
-        def pii_check(envelope, response):
+        def pii_check(tool_call, response):
             if "sensitive" in str(response):
-                return Verdict.fail("PII detected in output")
-            return Verdict.pass_()
+                return Decision.fail("PII detected in output")
+            return Decision.pass_()
 
         pii_check._edictum_mode = "observe"
 
@@ -132,7 +132,7 @@ class TestObserveModePostconditionsEvaluated:
 
         post_events = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
         assert post_events[0].postconditions_passed is True, (
-            "Per-contract observe-mode postcondition set postconditions_passed=False. "
+            "Per-rule observe-mode postcondition set postconditions_passed=False. "
             "This triggers on_postcondition_warn in all adapters, violating observe-mode safety."
         )
 
@@ -142,7 +142,7 @@ class TestObserveModePostconditionsEvaluated:
         """A failing observe-mode postcondition must NOT set postconditions_passed=False.
 
         postconditions_passed propagates to on_postcondition_warn in all 7 adapters.
-        If observe-mode contracts set it to False, observe mode silently becomes
+        If observe-mode rules set it to False, observe mode silently becomes
         enforcement — violating the core guarantee.
         """
         sink = CapturingAuditSink()

@@ -22,9 +22,9 @@ class TestLoadGateConfig:
 
     def test_load_custom_config(self, tmp_path: Path) -> None:
         config_path = tmp_path / "gate.yaml"
-        config_path.write_text("contracts:\n  - /tmp/test.yaml\nfail_open: true\n")
+        config_path.write_text("rules:\n  - /tmp/test.yaml\nfail_open: true\n")
         config = load_gate_config(config_path)
-        assert config.contracts == ("/tmp/test.yaml",)
+        assert config.rules == ("/tmp/test.yaml",)
         assert config.fail_open is True
 
     def test_agent_id_resolution(self) -> None:
@@ -35,7 +35,7 @@ class TestLoadGateConfig:
 
     def test_contracts_path_default(self) -> None:
         config = GateConfig()
-        assert len(config.contracts) == 1
+        assert len(config.rules) == 1
 
     def test_fail_open_default_false(self) -> None:
         config = GateConfig()
@@ -48,14 +48,14 @@ class TestLoadGateConfig:
 
     def test_console_config_optional(self, tmp_path: Path) -> None:
         config_path = tmp_path / "gate.yaml"
-        config_path.write_text("contracts:\n  - /tmp/test.yaml\n")
+        config_path.write_text("rules:\n  - /tmp/test.yaml\n")
         config = load_gate_config(config_path)
         assert config.console is None
 
     def test_console_config_present(self, tmp_path: Path) -> None:
         config_path = tmp_path / "gate.yaml"
         config_path.write_text(
-            "contracts:\n  - /tmp/test.yaml\nconsole:\n  url: https://example.com\n  api_key: test-key\n"
+            "rules:\n  - /tmp/test.yaml\nconsole:\n  url: https://example.com\n  api_key: test-key\n"
         )
         config = load_gate_config(config_path)
         assert config.console is not None

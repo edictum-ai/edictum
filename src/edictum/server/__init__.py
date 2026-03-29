@@ -13,7 +13,7 @@ def __getattr__(name: str):
         "ServerApprovalBackend": "edictum.server.approval_backend",
         "ServerAuditSink": "edictum.server.audit_sink",
         "ServerBackend": "edictum.server.backend",
-        "ServerContractSource": "edictum.server.contract_source",
+        "ServerContractSource": "edictum.server.rule_source",
         "BundleVerificationError": "edictum.server.verification",
         "verify_bundle_signature": "edictum.server.verification",
     }

@@ -2,7 +2,7 @@
 
 Regression tests for the command chaining bypass: if the first token of a
 chained command is allowlisted (e.g. ``echo ; rm -rf /``), the sandbox
-must still deny because the shell would execute the second command.
+must still block because the shell would execute the second command.
 
 The fix: _extract_command() checks for shell separators/metacharacters
 BEFORE first-token extraction and returns a sentinel that never matches
@@ -38,54 +38,54 @@ def _bash_envelope(cmd: str):
 
 SANDBOX_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: command-chaining-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: exec-sandbox
     type: sandbox
     tools: [exec]
     allows:
       commands: [echo, ls, cat, head, curl, git]
     within: [/workspace]
-    outside: deny
+    outside: block
     message: "Sandbox violation"
 """
 
 # Sandbox with allowed_commands only — no path constraint.
 COMMANDS_ONLY_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: commands-only-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: cmd-sandbox
     type: sandbox
     tools: [exec]
     allows:
       commands: [echo]
-    outside: deny
+    outside: block
     message: "Command not allowed"
 """
 
 # Sandbox with within: only — no allowed_commands.
 WITHIN_ONLY_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: within-only-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: path-sandbox
     type: sandbox
     tools: [exec]
     within: [/workspace]
-    outside: deny
+    outside: block
     message: "Path violation"
 """
 
@@ -200,8 +200,8 @@ class TestExtractCommandSentinel:
         assert _extract_command(_bash_envelope(cmd)) == expected
 
     def test_no_command_key_returns_none(self):
-        envelope = create_envelope("exec", {"path": "/workspace"})
-        assert _extract_command(envelope) is None
+        tool_call = create_envelope("exec", {"path": "/workspace"})
+        assert _extract_command(tool_call) is None
 
 
 # =============================================================================
@@ -248,7 +248,7 @@ class TestSandboxDeniesCommandChaining:
     def test_chained_command_denied(self, cmd):
         guard = _guard(SANDBOX_YAML)
         result = guard.evaluate("exec", {"command": cmd})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
 
 class TestSandboxDeniesViaPathCheck:
@@ -268,7 +268,7 @@ class TestSandboxDeniesViaPathCheck:
     def test_redirect_denied_by_path_check(self, cmd):
         guard = _guard(SANDBOX_YAML)
         result = guard.evaluate("exec", {"command": cmd})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_known_gap_redirect_allowed_without_path_constraint(self):  # noqa: N802
         """KNOWN LIMITATION: without within:/not_within:, output redirects
@@ -277,8 +277,8 @@ class TestSandboxDeniesViaPathCheck:
         within: configuration to catch redirect targets."""
         guard = _guard(COMMANDS_ONLY_YAML)
         result = guard.evaluate("exec", {"command": "echo payload > /etc/crontab"})
-        # Gap: ideally "deny", but "allow" without within: config.
-        assert result.verdict == "allow"
+        # Gap: ideally "block", but "allow" without within: config.
+        assert result.decision == "allow"
 
 
 class TestSandboxAllowsSafeCommands:
@@ -297,16 +297,16 @@ class TestSandboxAllowsSafeCommands:
     def test_safe_command_allowed(self, cmd):
         guard = _guard(SANDBOX_YAML)
         result = guard.evaluate("exec", {"command": cmd})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
     def test_command_not_in_allowlist_denied(self):
         guard = _guard(SANDBOX_YAML)
         result = guard.evaluate("exec", {"command": "rm -rf /"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
 
 class TestWithinOnlySandboxSeparatorProtection:
-    """Path-only sandboxes (no allows.commands) still deny shell separators.
+    """Path-only sandboxes (no allows.commands) still block shell separators.
 
     The sentinel check runs unconditionally — commands containing shell
     separators are denied even when no command allowlist is configured.
@@ -323,9 +323,9 @@ class TestWithinOnlySandboxSeparatorProtection:
     def test_separator_denied_in_within_only_sandbox(self, cmd):
         guard = _guard(WITHIN_ONLY_YAML)
         result = guard.evaluate("exec", {"command": cmd})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_safe_command_still_allowed(self):
         guard = _guard(WITHIN_ONLY_YAML)
         result = guard.evaluate("exec", {"command": "cat /workspace/file.txt"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"

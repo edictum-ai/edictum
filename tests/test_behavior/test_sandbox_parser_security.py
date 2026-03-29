@@ -35,48 +35,48 @@ def _guard(yaml: str) -> Edictum:
 
 WITHIN_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: parser-path-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: exec-sandbox
     type: sandbox
     tools: [exec]
     allows:
       commands: [cat, echo, cmd, head]
     within: [/workspace]
-    outside: deny
+    outside: block
     message: "Path outside sandbox"
 """
 
 DOMAIN_ALLOW_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: parser-domain-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: exec-sandbox
     type: sandbox
     tools: [exec]
     allows:
       commands: [curl, wget]
       domains: [github.com, example.com]
-    outside: deny
+    outside: block
     message: "Domain not allowed"
 """
 
 DOMAIN_BLOCK_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: parser-domain-block-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: exec-sandbox
     type: sandbox
     tools: [exec]
@@ -85,18 +85,18 @@ contracts:
       domains: ['*']
     not_allows:
       domains: [evil.com]
-    outside: deny
+    outside: block
     message: "Domain denied"
 """
 
 COMBINED_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: parser-combined-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: exec-sandbox
     type: sandbox
     tools: [exec]
@@ -104,7 +104,7 @@ contracts:
       commands: [curl]
       domains: [github.com]
     within: [/workspace]
-    outside: deny
+    outside: block
     message: "Outside sandbox"
 """
 
@@ -121,25 +121,25 @@ class TestQuotedPathBypass:
         """cat '/etc/shadow' -- single-quoted path must be denied."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "cat '/etc/shadow'"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_quoted_double_path_denied(self):
         """cat "/etc/shadow" -- double-quoted path must be denied."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": 'cat "/etc/shadow"'})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_legitimate_quoted_path_in_workspace_allowed(self):
         """cat '/workspace/file.txt' -- quoted path within sandbox is allowed."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "cat '/workspace/file.txt'"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
     def test_legitimate_unquoted_path_still_works(self):
         """cat /workspace/file.txt -- regression: unquoted paths still work."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "cat /workspace/file.txt"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
 
 class TestRedirectionPathBypass:
@@ -149,25 +149,25 @@ class TestRedirectionPathBypass:
         """cat </etc/shadow -- input redirection path must be denied."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "cat </etc/shadow"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_redirection_output_path_denied(self):
         """echo x >/etc/passwd -- output redirection path must be denied."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "echo x >/etc/passwd"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_redirection_append_path_denied(self):
         """echo x >>/etc/passwd -- append redirection path must be denied."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "echo x >>/etc/passwd"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_fd_redirection_path_denied(self):
         """cmd 2>/etc/log -- fd redirection path must be denied."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "cmd 2>/etc/log"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
 
 class TestLeadingRedirectBypass:
@@ -177,25 +177,25 @@ class TestLeadingRedirectBypass:
         """> echo bad_cmd -- redirect target 'echo' must not match allowed command 'echo'."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "> echo /workspace/file"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_leading_double_redirect_command_denied(self):
         """>> echo bad_cmd -- append redirect target must also be denied."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": ">> echo /workspace/file"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_leading_input_redirect_command_denied(self):
         """< cat /workspace/file -- input redirect prefix must be denied."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "< cat /workspace/file"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_leading_fd_redirect_command_denied(self):
         """2> echo /workspace/file -- fd redirect prefix must be denied."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "2> echo /workspace/file"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
 
 class TestMixedBypassVectors:
@@ -205,13 +205,13 @@ class TestMixedBypassVectors:
         """cat '/workspace/ok' >/etc/shadow -- quoted OK path + redirect to bad path."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "cat '/workspace/ok' >/etc/shadow"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_unclosed_quote_fails_closed(self):
         """cat '/etc/shadow -- unclosed quote must still be denied (fail-closed)."""
         guard = _guard(WITHIN_YAML)
         result = guard.evaluate("exec", {"command": "cat '/etc/shadow"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
 
 class TestExtractPathsShellAwareness:
@@ -219,29 +219,29 @@ class TestExtractPathsShellAwareness:
 
     def test_single_quoted_path_extracted(self):
         """shlex.split strips single quotes, exposing the path."""
-        envelope = create_envelope("exec", {"command": "cat '/etc/shadow'"})
-        paths = _extract_paths(envelope)
+        tool_call = create_envelope("exec", {"command": "cat '/etc/shadow'"})
+        paths = _extract_paths(tool_call)
         resolved = [p for p in paths if p.endswith("/etc/shadow") or "shadow" in p]
         assert len(resolved) > 0
 
     def test_double_quoted_path_extracted(self):
         """shlex.split strips double quotes, exposing the path."""
-        envelope = create_envelope("exec", {"command": 'cat "/etc/shadow"'})
-        paths = _extract_paths(envelope)
+        tool_call = create_envelope("exec", {"command": 'cat "/etc/shadow"'})
+        paths = _extract_paths(tool_call)
         resolved = [p for p in paths if p.endswith("/etc/shadow") or "shadow" in p]
         assert len(resolved) > 0
 
     def test_redirection_path_extracted(self):
         """shlex.split separates < from the path."""
-        envelope = create_envelope("exec", {"command": "cat </etc/shadow"})
-        paths = _extract_paths(envelope)
+        tool_call = create_envelope("exec", {"command": "cat </etc/shadow"})
+        paths = _extract_paths(tool_call)
         resolved = [p for p in paths if p.endswith("/etc/shadow") or "shadow" in p]
         assert len(resolved) > 0
 
     def test_output_redirection_path_extracted(self):
         """shlex.split separates > from path or the path is extracted from >/path."""
-        envelope = create_envelope("exec", {"command": "echo x >/etc/passwd"})
-        paths = _extract_paths(envelope)
+        tool_call = create_envelope("exec", {"command": "echo x >/etc/passwd"})
+        paths = _extract_paths(tool_call)
         resolved = [p for p in paths if "passwd" in p]
         assert len(resolved) > 0
 
@@ -258,43 +258,43 @@ class TestCommandDomainBypass:
         """curl https://evil.com -- domain must be checked against allowlist."""
         guard = _guard(DOMAIN_ALLOW_YAML)
         result = guard.evaluate("exec", {"command": "curl https://evil.com"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_curl_flagged_url_domain_enforced(self):
         """curl -L https://evil.com/path -- flags before URL must not hide it."""
         guard = _guard(DOMAIN_ALLOW_YAML)
         result = guard.evaluate("exec", {"command": "curl -L https://evil.com/path"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_wget_url_domain_enforced(self):
         """wget https://evil.com -- wget URL must also be checked."""
         guard = _guard(DOMAIN_ALLOW_YAML)
         result = guard.evaluate("exec", {"command": "wget https://evil.com"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_curl_allowed_domain_passes(self):
         """curl https://github.com -- allowed domain must pass."""
         guard = _guard(DOMAIN_ALLOW_YAML)
         result = guard.evaluate("exec", {"command": "curl https://github.com"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
     def test_quoted_url_in_command_enforced(self):
         """curl 'https://evil.com' -- quoted URL must also be checked."""
         guard = _guard(DOMAIN_ALLOW_YAML)
         result = guard.evaluate("exec", {"command": "curl 'https://evil.com'"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_direct_url_arg_still_works(self):
         """args={"url": "https://evil.com"} -- regression: direct URL args still checked."""
         guard = _guard(DOMAIN_ALLOW_YAML)
         result = guard.evaluate("exec", {"url": "https://evil.com"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_blocked_domain_in_command(self):
         """curl https://evil.com with not_allows.domains=[evil.com] -- must be denied."""
         guard = _guard(DOMAIN_BLOCK_YAML)
         result = guard.evaluate("exec", {"command": "curl https://evil.com"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
 
 class TestExtractUrlsShellAwareness:
@@ -302,20 +302,20 @@ class TestExtractUrlsShellAwareness:
 
     def test_command_string_url_extracted(self):
         """'curl https://evil.com' is tokenized; URL extracted from token."""
-        envelope = create_envelope("exec", {"command": "curl https://evil.com"})
-        urls = _extract_urls(envelope)
+        tool_call = create_envelope("exec", {"command": "curl https://evil.com"})
+        urls = _extract_urls(tool_call)
         assert any("evil.com" in u for u in urls)
 
     def test_bare_url_still_extracted(self):
         """Direct URL value is still extracted (regression)."""
-        envelope = create_envelope("web_fetch", {"url": "https://github.com/repo"})
-        urls = _extract_urls(envelope)
+        tool_call = create_envelope("web_fetch", {"url": "https://github.com/repo"})
+        urls = _extract_urls(tool_call)
         assert "https://github.com/repo" in urls
 
     def test_non_url_string_with_protocol_ignored(self):
         """String with :// but no valid hostname is not returned as URL."""
-        envelope = create_envelope("exec", {"command": "echo '://' something"})
-        urls = _extract_urls(envelope)
+        tool_call = create_envelope("exec", {"command": "echo '://' something"})
+        urls = _extract_urls(tool_call)
         assert len(urls) == 0
 
 
@@ -326,10 +326,10 @@ class TestCombinedPathAndDomain:
         """curl with path and URL -- both checks apply."""
         guard = _guard(COMBINED_YAML)
         result = guard.evaluate("exec", {"command": "curl https://evil.com -o /workspace/file"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_no_command_arg_unchanged(self):
         """Non-command tools are unaffected by shell tokenization."""
         guard = _guard(COMBINED_YAML)
         result = guard.evaluate("read_file", {"path": "/workspace/file.txt"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"

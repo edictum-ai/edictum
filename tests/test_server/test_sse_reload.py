@@ -18,48 +18,48 @@ def _b64(yaml_str: str) -> str:
 
 BUNDLE_V1 = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-v1
 defaults:
   mode: enforce
-contracts:
-  - id: deny-rm
+rules:
+  - id: block-rm
     type: pre
     tool: bash
     when:
       args.command:
         contains: "rm -rf"
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied."
 """
 
 BUNDLE_V2 = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-v2
 defaults:
   mode: enforce
-contracts:
-  - id: deny-curl
+rules:
+  - id: block-curl
     type: pre
     tool: bash
     when:
       args.command:
         contains: "curl"
     then:
-      effect: deny
+      action: block
       message: "Network access denied."
-  - id: deny-wget
+  - id: block-wget
     type: pre
     tool: bash
     when:
       args.command:
         contains: "wget"
     then:
-      effect: deny
+      action: block
       message: "Network access denied."
 """
 
@@ -70,14 +70,14 @@ def _server_patches():
         patch("edictum.server.audit_sink.ServerAuditSink"),
         patch("edictum.server.approval_backend.ServerApprovalBackend"),
         patch("edictum.server.backend.ServerBackend"),
-        patch("edictum.server.contract_source.ServerContractSource"),
+        patch("edictum.server.rule_source.ServerContractSource"),
     )
 
 
 class TestSSEReload:
     @pytest.mark.asyncio
     async def test_sse_event_triggers_reload(self):
-        """SSE contract_update event triggers reload with new contracts."""
+        """SSE contract_update event triggers reload with new rules."""
         p_client, p_sink, p_approval, p_backend, p_source = _server_patches()
         with p_client as mock_cls, p_sink, p_approval, p_backend, p_source as mock_src_cls:
             client = MagicMock()
@@ -149,7 +149,7 @@ class TestSSEReload:
                 auto_watch=True,
             )
 
-            assert len(guard._state.preconditions) == 1  # V1: deny-rm only
+            assert len(guard._state.preconditions) == 1  # V1: block-rm only
 
             await asyncio.wait_for(update_received.wait(), timeout=2.0)
             await asyncio.sleep(0.05)
@@ -161,7 +161,7 @@ class TestSSEReload:
 
     @pytest.mark.asyncio
     async def test_sse_invalid_yaml_preserves_contracts(self):
-        """SSE event with invalid YAML keeps existing contracts."""
+        """SSE event with invalid YAML keeps existing rules."""
         p_client, p_sink, p_approval, p_backend, p_source = _server_patches()
         with p_client as mock_cls, p_sink, p_approval, p_backend, p_source as mock_src_cls:
             client = MagicMock()
@@ -285,13 +285,13 @@ class TestSSEReload:
                 auto_watch=True,
             )
 
-            # Initial: V1 has 1 contract (deny-rm)
+            # Initial: V1 has 1 rule (block-rm)
             assert len(guard._state.preconditions) == 1
 
             await asyncio.wait_for(update_received.wait(), timeout=2.0)
             await asyncio.sleep(0.05)
 
-            # After assignment change: V2 has 2 contracts (deny-curl, deny-wget)
+            # After assignment change: V2 has 2 rules (block-curl, block-wget)
             assert len(guard._state.preconditions) == 2
 
             # Verify client.get was called twice

@@ -1,8 +1,8 @@
 """Server-backed storage backend for distributed session state.
 
-Fail-closed contract: when the server is unreachable or returns a
+Fail-closed rule: when the server is unreachable or returns a
 non-404 error, methods raise rather than returning defaults.  The
-governance pipeline treats unhandled exceptions as deny decisions,
+governance pipeline treats unhandled exceptions as block decisions,
 so propagating errors here ensures that session-based rate limits
 cannot be silently bypassed by a network outage.
 """

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from edictum.envelope import ToolEnvelope
+from edictum.envelope import ToolCall
 from edictum.session import Session
 from edictum.workflow.definition import WorkflowDefinition, WorkflowStage
 from edictum.workflow.evaluator import (
@@ -60,7 +60,7 @@ class WorkflowRuntime:
     async def save_state(self, session: Session, state: WorkflowState) -> None:
         await save_state(session, self.definition, state)
 
-    async def evaluate(self, session: Session, envelope: ToolEnvelope) -> WorkflowEvaluation:
+    async def evaluate(self, session: Session, envelope: ToolCall) -> WorkflowEvaluation:
         async with self._lock:
             return await evaluate_runtime(self, session, envelope)
 
@@ -88,7 +88,7 @@ class WorkflowRuntime:
             record_approval(state, stage_id)
             await self.save_state(session, state)
 
-    async def record_result(self, session: Session, stage_id: str, envelope: ToolEnvelope) -> list[dict[str, Any]]:
+    async def record_result(self, session: Session, stage_id: str, envelope: ToolCall) -> list[dict[str, Any]]:
         if not stage_id:
             return []
         async with self._lock:
@@ -101,7 +101,7 @@ class WorkflowRuntime:
     def evaluate_current_stage(
         self,
         stage: WorkflowStage,
-        envelope: ToolEnvelope,
+        envelope: ToolCall,
     ) -> tuple[bool, WorkflowEvaluation, WorkflowEvaluation | None]:
         if stage_is_boundary_only(stage):
             return False, WorkflowEvaluation(), None
@@ -208,7 +208,7 @@ class WorkflowRuntime:
         self,
         stage: WorkflowStage,
         state: WorkflowState,
-        envelope: ToolEnvelope,
+        envelope: ToolCall,
         has_next: bool,
     ) -> tuple[WorkflowEvaluation, bool]:
         return await evaluate_completion(self, stage, state, envelope, has_next)
@@ -217,7 +217,7 @@ class WorkflowRuntime:
         self,
         stage: WorkflowStage,
         state: WorkflowState,
-        envelope: ToolEnvelope,
+        envelope: ToolCall,
         gates,
     ) -> tuple[WorkflowEvaluation, bool]:
         return await evaluate_gates(self, stage, state, envelope, gates)
@@ -226,7 +226,7 @@ class WorkflowRuntime:
         self,
         state: WorkflowState,
         stage_id: str,
-        envelope: ToolEnvelope,
+        envelope: ToolCall,
     ) -> list[dict[str, Any]]:
         if state.active_stage != stage_id:
             return []
@@ -258,7 +258,7 @@ class WorkflowRuntime:
         return idx
 
 
-def tool_allowed(stage, envelope: ToolEnvelope) -> bool:
+def tool_allowed(stage, envelope: ToolCall) -> bool:
     if not stage.tools:
         return True
     return envelope.tool_name in stage.tools
@@ -268,7 +268,7 @@ def stage_is_boundary_only(stage) -> bool:
     return not stage.tools and not stage.checks and (stage.approval is not None or bool(stage.exit))
 
 
-def evaluate_check(check, envelope: ToolEnvelope) -> tuple[bool, str]:
+def evaluate_check(check, envelope: ToolCall) -> tuple[bool, str]:
     command = envelope.bash_command or ""
     if check.command_matches_re is not None and check.command_matches is not None:
         return bool(check.command_matches_re.search(command)), check.command_matches

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from edictum import Edictum, Verdict, postcondition, precondition
+from edictum import Decision, Edictum, postcondition, precondition
 from edictum.adapters.claude_agent_sdk import ClaudeAgentSDKAdapter
 from edictum.audit import AuditAction
 from edictum.findings import Finding
@@ -37,17 +37,17 @@ class TestClaudeAgentSDKAdapter:
 
     async def test_deny_returns_sdk_format(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied")
+        def always_deny(tool_call):
+            return Decision.fail("denied")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = ClaudeAgentSDKAdapter(guard)
         result = await adapter._pre_tool_use(
             tool_name="TestTool",
             tool_input={},
             tool_use_id="tu-1",
         )
-        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert result["hookSpecificOutput"]["permissionDecision"] == "block"
         assert result["hookSpecificOutput"]["permissionDecisionReason"] == "denied"
         assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
 
@@ -69,10 +69,10 @@ class TestClaudeAgentSDKAdapter:
 
     async def test_deny_clears_pending(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("no")
+        def always_deny(tool_call):
+            return Decision.fail("no")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = ClaudeAgentSDKAdapter(guard)
 
         await adapter._pre_tool_use(
@@ -98,11 +98,11 @@ class TestClaudeAgentSDKAdapter:
 
     async def test_observe_mode_would_deny(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("would be denied")
+        def always_deny(tool_call):
+            return Decision.fail("would be denied")
 
         sink = NullAuditSink()
-        guard = make_guard(mode="observe", contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
         adapter = ClaudeAgentSDKAdapter(guard)
 
         result = await adapter._pre_tool_use(
@@ -141,13 +141,13 @@ class TestClaudeAgentSDKAdapter:
         assert AuditAction.CALL_EXECUTED in actions
 
     async def test_post_tool_warnings_in_output(self):
-        from edictum.contracts import postcondition as postc
+        from edictum.rules import postcondition as postc
 
         @postc("TestTool")
-        def bad_result(envelope, result):
-            return Verdict.fail("Result was bad")
+        def bad_result(tool_call, result):
+            return Decision.fail("Result was bad")
 
-        guard = make_guard(contracts=[bad_result])
+        guard = make_guard(rules=[bad_result])
         adapter = ClaudeAgentSDKAdapter(guard)
 
         await adapter._pre_tool_use(tool_name="TestTool", tool_input={}, tool_use_id="tu-1")
@@ -193,10 +193,10 @@ class TestEdictumRun:
 
     async def test_run_deny_raises(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied by precondition")
+        def always_deny(tool_call):
+            return Decision.fail("denied by precondition")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
 
         async def my_tool(**kwargs):
             return "ok"
@@ -209,11 +209,11 @@ class TestEdictumRun:
 
     async def test_run_deny_emits_audit_no_execute(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied")
+        def always_deny(tool_call):
+            return Decision.fail("denied")
 
         sink = NullAuditSink()
-        guard = make_guard(contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(rules=[always_deny], audit_sink=sink)
 
         async def my_tool(**kwargs):
             return "ok"
@@ -245,11 +245,11 @@ class TestEdictumRun:
 
     async def test_run_observe_mode_full_trail(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("would deny")
+        def always_deny(tool_call):
+            return Decision.fail("would block")
 
         sink = NullAuditSink()
-        guard = make_guard(mode="observe", contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
 
         async def my_tool(**kwargs):
             return "ok"
@@ -282,14 +282,14 @@ class TestClaudeSDKPostconditionCallback:
         assert "post_tool_use" in hooks
 
     async def test_postcondition_callback_invoked_on_warn(self):
-        """Callback should be invoked when postconditions produce findings."""
+        """Callback should be invoked when postconditions produce violations."""
 
         @postcondition("TestTool")
-        def detect_pii(envelope, result):
-            return Verdict.fail("PII detected in output")
+        def detect_pii(tool_call, result):
+            return Decision.fail("PII detected in output")
 
         callback = MagicMock(return_value="redacted")
-        guard = make_guard(contracts=[detect_pii])
+        guard = make_guard(rules=[detect_pii])
         adapter = ClaudeAgentSDKAdapter(guard)
         hooks = adapter.to_hook_callables(on_postcondition_warn=callback)
 
@@ -297,13 +297,13 @@ class TestClaudeSDKPostconditionCallback:
         await hooks["post_tool_use"](tool_use_id="tu-1", tool_response="Patient SSN: 123-45-6789")
 
         callback.assert_called_once()
-        # Verify callback args: (result, findings)
+        # Verify callback args: (result, violations)
         call_args = callback.call_args[0]
         assert call_args[0] == "Patient SSN: 123-45-6789"
-        findings = call_args[1]
-        assert len(findings) >= 1
-        assert isinstance(findings[0], Finding)
-        assert "PII detected" in findings[0].message
+        violations = call_args[1]
+        assert len(violations) >= 1
+        assert isinstance(violations[0], Finding)
+        assert "PII detected" in violations[0].message
 
     async def test_postcondition_callback_not_called_when_passing(self):
         """Callback should NOT be invoked when postconditions pass."""
@@ -321,13 +321,13 @@ class TestClaudeSDKPostconditionCallback:
         """Callback exception should be caught, not break the hook."""
 
         @postcondition("TestTool")
-        def detect_issue(envelope, result):
-            return Verdict.fail("issue found")
+        def detect_issue(tool_call, result):
+            return Decision.fail("issue found")
 
-        def exploding_callback(result, findings):
+        def exploding_callback(result, violations):
             raise RuntimeError("callback exploded")
 
-        guard = make_guard(contracts=[detect_issue])
+        guard = make_guard(rules=[detect_issue])
         adapter = ClaudeAgentSDKAdapter(guard)
         hooks = adapter.to_hook_callables(on_postcondition_warn=exploding_callback)
 
@@ -341,15 +341,15 @@ class TestClaudeSDKPostconditionCallback:
         """Callback should receive Finding objects with correct attributes."""
 
         @postcondition("TestTool")
-        def detect_secret(envelope, result):
-            return Verdict.fail("API token exposed in output")
+        def detect_secret(tool_call, result):
+            return Decision.fail("API token exposed in output")
 
         received_findings = []
 
-        def capture_callback(result, findings):
-            received_findings.extend(findings)
+        def capture_callback(result, violations):
+            received_findings.extend(violations)
 
-        guard = make_guard(contracts=[detect_secret])
+        guard = make_guard(rules=[detect_secret])
         adapter = ClaudeAgentSDKAdapter(guard)
         hooks = adapter.to_hook_callables(on_postcondition_warn=capture_callback)
 
@@ -359,5 +359,5 @@ class TestClaudeSDKPostconditionCallback:
         assert len(received_findings) == 1
         f = received_findings[0]
         assert isinstance(f, Finding)
-        assert f.contract_id == "detect_secret"
+        assert f.rule_id == "detect_secret"
         assert "API token" in f.message

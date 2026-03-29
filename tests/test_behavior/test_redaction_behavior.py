@@ -75,7 +75,7 @@ class TestRedactionPolicyBashPatternsMerge:
 
 
 class TestRedactionPolicySecretDetection:
-    """detect_secret_values parameter must have observable effect."""
+    """detect_secret_values parameter must have observable action."""
 
     def test_detect_secret_values_true_catches_api_keys(self):
         """With detection on, API key patterns must be redacted in values."""

@@ -20,12 +20,12 @@ import pytest
 from edictum import (
     AuditAction,
     CollectingAuditSink,
+    Decision,
     Edictum,
     EdictumDenied,
     FileAuditSink,
     Principal,
-    ToolEnvelope,
-    Verdict,
+    ToolCall,
     precondition,
 )
 
@@ -35,7 +35,7 @@ from edictum import (
 
 DEVOPS_AGENT_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: devops-agent-test
@@ -44,7 +44,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: block-sensitive-reads
     type: pre
     tool: read_file
@@ -52,7 +52,7 @@ contracts:
       args.path:
         contains_any: [".env", ".secret", "kubeconfig", "credentials", ".pem", "id_rsa"]
     then:
-      effect: deny
+      action: block
       message: "Sensitive file '{args.path}' denied. Skip and continue."
       tags: [secrets, dlp]
 
@@ -65,7 +65,7 @@ contracts:
         - args.command: { matches: '\\bmkfs\\b' }
         - args.command: { contains: '> /dev/' }
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied: '{args.command}'. Use a safer alternative."
       tags: [destructive, safety]
 
@@ -77,7 +77,7 @@ contracts:
         - environment: { equals: production }
         - principal.role: { not_in: [senior_engineer, sre, admin] }
     then:
-      effect: deny
+      action: block
       message: "Production deploys require senior role (sre/admin)."
       tags: [change-control, production]
 
@@ -89,7 +89,7 @@ contracts:
         - environment: { equals: production }
         - principal.ticket_ref: { exists: false }
     then:
-      effect: deny
+      action: block
       message: "Production changes require a ticket reference."
       tags: [change-control, compliance]
 
@@ -101,7 +101,7 @@ contracts:
         matches_any:
           - '\\b\\d{3}-\\d{2}-\\d{4}\\b'
     then:
-      effect: warn
+      action: warn
       message: "PII pattern detected in output. Redact before using."
       tags: [pii, compliance]
 
@@ -113,14 +113,14 @@ contracts:
       max_calls_per_tool:
         deploy_service: 2
     then:
-      effect: deny
+      action: block
       message: "Session limit reached. Summarize progress and stop."
       tags: [rate-limit]
 """
 
 OBSERVE_MODE_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: observe-test
@@ -128,14 +128,14 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: enforced-rule
     type: pre
     tool: bash
     when:
       args.command: { contains: "rm -rf" }
     then:
-      effect: deny
+      action: block
       message: "Denied by enforced rule."
       tags: [enforced]
 
@@ -146,14 +146,14 @@ contracts:
     when:
       args.command: { contains: "curl" }
     then:
-      effect: deny
+      action: block
       message: "Would block curl (observe mode)."
       tags: [observed]
 """
 
 DISABLED_RULE_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: disabled-test
@@ -161,14 +161,14 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: active-rule
     type: pre
     tool: bash
     when:
       args.command: { contains: "rm" }
     then:
-      effect: deny
+      action: block
       message: "Denied."
       tags: [active]
 
@@ -179,14 +179,14 @@ contracts:
     when:
       args.command: { contains: "ls" }
     then:
-      effect: deny
+      action: block
       message: "This should never fire."
       tags: [disabled]
 """
 
 EDGE_CASES_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: edge-cases
@@ -194,14 +194,14 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: claims-check
     type: pre
     tool: deploy_service
     when:
       principal.claims.department: { equals: restricted }
     then:
-      effect: deny
+      action: block
       message: "Department '{principal.claims.department}' cannot deploy."
       tags: [claims]
 
@@ -211,7 +211,7 @@ contracts:
     when:
       args.config.timeout: { gt: 300 }
     then:
-      effect: deny
+      action: block
       message: "Timeout too high: {args.config.timeout}s."
       tags: [validation]
 
@@ -221,7 +221,7 @@ contracts:
     when:
       environment: { equals: locked }
     then:
-      effect: deny
+      action: block
       message: "Environment is locked. No tool calls allowed."
       tags: [lockdown]
 
@@ -230,7 +230,7 @@ contracts:
     limits:
       max_tool_calls: 3
     then:
-      effect: deny
+      action: block
       message: "Session capped at 3 executions."
       tags: [rate-limit]
 """
@@ -250,12 +250,12 @@ def expected_hash(content: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 1. YAML → Pipeline → Verdict (basic contract evaluation)
+# 1. YAML → Pipeline → Decision (basic rule evaluation)
 # ---------------------------------------------------------------------------
 
 
 class TestYAMLToPipelineBasic:
-    """Verify YAML-loaded contracts produce correct verdicts through the full pipeline."""
+    """Verify YAML-loaded rules produce correct verdicts through the full pipeline."""
 
     @pytest.fixture
     def guard(self) -> tuple[Edictum, CollectingAuditSink]:
@@ -322,7 +322,7 @@ class TestYAMLToPipelineBasic:
 
     @pytest.mark.asyncio
     async def test_unrelated_tool_passes(self, guard):
-        """A tool not targeted by any contract should pass."""
+        """A tool not targeted by any rule should pass."""
         g, sink = guard
         result = await g.run(
             "send_email",
@@ -333,12 +333,12 @@ class TestYAMLToPipelineBasic:
 
 
 # ---------------------------------------------------------------------------
-# 2. Principal-aware contracts (Streams A + B integration)
+# 2. Principal-aware rules (Streams A + B integration)
 # ---------------------------------------------------------------------------
 
 
 class TestPrincipalIntegration:
-    """Verify YAML contracts correctly evaluate principal fields from Stream B."""
+    """Verify YAML rules correctly evaluate principal fields from Stream B."""
 
     @pytest.fixture
     def guard(self) -> tuple[Edictum, CollectingAuditSink]:
@@ -524,7 +524,7 @@ class TestPostconditionIntegration:
 
 
 class TestSessionLimitsIntegration:
-    """Verify session contracts track state across multiple tool calls."""
+    """Verify session rules track state across multiple tool calls."""
 
     @pytest.mark.asyncio
     async def test_session_tool_call_limit(self):
@@ -614,12 +614,12 @@ class TestSessionLimitsIntegration:
 
 
 # ---------------------------------------------------------------------------
-# 5. Observe mode (per-contract and bundle-level)
+# 5. Observe mode (per-rule and bundle-level)
 # ---------------------------------------------------------------------------
 
 
 class TestObserveModeIntegration:
-    """Verify observe mode correctly downgrades deny → would_deny."""
+    """Verify observe mode correctly downgrades block → would_deny."""
 
     @pytest.mark.asyncio
     async def test_per_rule_observe_mode(self):
@@ -939,29 +939,29 @@ class TestEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# 9. Python contracts ↔ YAML contracts equivalence
+# 9. Python rules ↔ YAML rules equivalence
 # ---------------------------------------------------------------------------
 
 
 class TestPythonYAMLEquivalence:
-    """Verify YAML-loaded contracts produce identical verdicts to hand-written Python."""
+    """Verify YAML-loaded rules produce identical verdicts to hand-written Python."""
 
     @pytest.mark.asyncio
     async def test_sensitive_read_equivalence(self):
-        """Same policy expressed in Python and YAML should produce same verdict."""
+        """Same policy expressed in Python and YAML should produce same decision."""
 
         # Python version
         @precondition("read_file")
-        def py_block_sensitive(envelope: ToolEnvelope) -> Verdict:
-            path = envelope.args.get("path", "")
+        def py_block_sensitive(tool_call: ToolCall) -> Decision:
+            path = tool_call.args.get("path", "")
             for pattern in [".env", ".secret", "kubeconfig", "credentials", ".pem", "id_rsa"]:
                 if pattern in path:
-                    return Verdict.fail(f"Sensitive file '{path}' denied. Skip and continue.")
-            return Verdict.pass_()
+                    return Decision.fail(f"Sensitive file '{path}' denied. Skip and continue.")
+            return Decision.pass_()
 
         py_sink = CollectingAuditSink()
         py_guard = Edictum(
-            contracts=[py_block_sensitive],
+            rules=[py_block_sensitive],
             audit_sink=py_sink,
         )
 
@@ -970,7 +970,7 @@ class TestPythonYAMLEquivalence:
         yaml_path = write_yaml(DEVOPS_AGENT_YAML)
         yaml_guard = Edictum.from_yaml(str(yaml_path), audit_sink=yaml_sink)
 
-        # Test: both should deny .env
+        # Test: both should block .env
         with pytest.raises(EdictumDenied):
             await py_guard.run(
                 "read_file",
@@ -1043,16 +1043,16 @@ class TestTemplateLoading:
 
 
 # ---------------------------------------------------------------------------
-# 11. Multiple contracts on same tool (evaluation order)
+# 11. Multiple rules on same tool (evaluation order)
 # ---------------------------------------------------------------------------
 
 
 class TestMultipleContractsOnSameTool:
-    """When multiple contracts target the same tool, all must pass."""
+    """When multiple rules target the same tool, all must pass."""
 
     @pytest.mark.asyncio
     async def test_first_failing_contract_denies(self):
-        """If the first matching contract fails, tool is denied
+        """If the first matching rule fails, tool is denied
         (we don't need to evaluate the rest)."""
         path = write_yaml(DEVOPS_AGENT_YAML)
         sink = CollectingAuditSink()
@@ -1060,7 +1060,7 @@ class TestMultipleContractsOnSameTool:
 
         # deploy_service in production without role AND without ticket
         # Both prod-deploy-requires-senior and prod-requires-ticket match.
-        # The first one evaluated should deny.
+        # The first one evaluated should block.
         no_creds = Principal(user_id="nobody", role="intern")
         with pytest.raises(EdictumDenied) as exc_info:
             await guard.run(
@@ -1070,7 +1070,7 @@ class TestMultipleContractsOnSameTool:
                 environment="production",
                 principal=no_creds,
             )
-        # Should be denied by one of the two prod contracts
+        # Should be denied by one of the two prod rules
         assert exc_info.value.decision_name in [
             "prod-deploy-requires-senior",
             "prod-requires-ticket",

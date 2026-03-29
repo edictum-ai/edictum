@@ -31,7 +31,7 @@ OPENCODE_TOOL_MAP: dict[str, str] = {
 }
 
 # OpenCode uses different arg key names than edictum-native.
-# Map them so contracts using args.file_path / args.command work.
+# Map them so rules using args.file_path / args.command work.
 OPENCODE_ARG_MAP: dict[str, str] = {
     "filePath": "file_path",
 }
@@ -58,24 +58,22 @@ class OpenCodeFormat:
         cwd = data.get("directory", os.getcwd())
         return tool_name, tool_input, cwd
 
-    def format_output(
-        self, verdict: str, contract_id: str | None, reason: str | None, evaluated: int
-    ) -> tuple[str, int]:
-        """Format verdict for OpenCode.
+    def format_output(self, decision: str, rule_id: str | None, reason: str | None, evaluated: int) -> tuple[str, int]:
+        """Format decision for OpenCode.
 
         Allow: {"allow": true}.
         Deny: {"allow": false, "reason": "..."}.
         """
-        if verdict != "deny":
+        if decision != "block":
             return json.dumps({"allow": True}), 0
 
         deny_reason = ""
-        if contract_id and reason:
-            deny_reason = f"Contract '{contract_id}': {reason}"
+        if rule_id and reason:
+            deny_reason = f"Rule '{rule_id}': {reason}"
         elif reason:
             deny_reason = reason
-        elif contract_id:
-            deny_reason = f"Denied by contract '{contract_id}'"
+        elif rule_id:
+            deny_reason = f"Denied by rule '{rule_id}'"
 
         output = {
             "allow": False,

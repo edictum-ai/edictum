@@ -60,7 +60,7 @@ class TestServerAuditSink:
         assert events[0]["call_id"] == "call-1"
         assert events[0]["agent_id"] == "test-agent"
         assert events[0]["tool_name"] == "read_file"
-        assert events[0]["verdict"] == "call_allowed"
+        assert events[0]["decision"] == "call_allowed"
 
     @pytest.mark.asyncio
     async def test_batch_flush(self, mock_client):
@@ -96,7 +96,7 @@ class TestServerAuditSink:
         payload = mock_client.post.call_args[0][1]["events"][0]
         assert payload["call_id"] == "call-42"
         assert payload["tool_name"] == "write_file"
-        assert payload["verdict"] == "call_denied"
+        assert payload["decision"] == "call_denied"
         assert payload["mode"] == "enforce"
         assert payload["payload"]["side_effect"] == "irreversible"
         assert payload["payload"]["environment"] == "staging"

@@ -14,127 +14,127 @@ from edictum import Edictum, EdictumConfigError, EdictumDenied
 
 YAML_METADATA_REGION = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: metadata-region
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-eu-region
     type: pre
     tool: deploy
     when:
       metadata.region: { equals: "eu-west-1" }
     then:
-      effect: deny
+      action: block
       message: "Deploy denied in region {metadata.region}"
 """
 
 YAML_METADATA_NESTED = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: metadata-nested
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-low-tier
     type: pre
     tool: expensive_tool
     when:
       metadata.tenant.tier: { equals: "free" }
     then:
-      effect: deny
+      action: block
       message: "Free tier cannot use expensive tools"
 """
 
 YAML_METADATA_LIST = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: metadata-flags
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-experimental
     type: pre
     tool: beta_tool
     when:
       metadata.feature_flags: { contains: "experimental_only" }
     then:
-      effect: deny
+      action: block
       message: "Experimental flag present"
 """
 
 YAML_METADATA_POST = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: metadata-post
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: warn-on-region
     type: post
     tool: query_data
     when:
       metadata.region: { equals: "eu-west-1" }
     then:
-      effect: warn
+      action: warn
       message: "EU region data accessed"
 """
 
 YAML_CUSTOM_SELECTOR = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: custom-selector
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-high-risk
     type: pre
     tool: transfer
     when:
       risk.score: { gt: 80 }
     then:
-      effect: deny
+      action: block
       message: "Risk score {risk.score} exceeds threshold"
 """
 
 YAML_CUSTOM_SELECTOR_NESTED = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: custom-nested
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-restricted-dept
     type: pre
     tool: access_records
     when:
       department.classification.level: { equals: "restricted" }
     then:
-      effect: deny
+      action: block
       message: "Restricted department access denied"
 """
 
 YAML_MULTI_CUSTOM_SELECTORS = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: multi-custom
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-high-risk
     type: pre
     tool: transfer
     when:
       risk.score: { gt: 80 }
     then:
-      effect: deny
+      action: block
       message: "High risk denied"
   - id: block-restricted-dept
     type: pre
@@ -142,7 +142,7 @@ contracts:
     when:
       dept.code: { equals: "CLASSIFIED" }
     then:
-      effect: deny
+      action: block
       message: "Classified department denied"
 """
 
@@ -153,7 +153,7 @@ contracts:
 
 
 class TestMetadataSelectorDenies:
-    """metadata.* selector resolves envelope metadata and triggers deny."""
+    """metadata.* selector resolves tool_call metadata and triggers block."""
 
     @pytest.mark.asyncio
     async def test_matching_metadata_denied(self):
@@ -233,7 +233,7 @@ class TestMetadataContainsOperator:
 
 
 class TestMetadataPostcondition:
-    """metadata.* works in postcondition contracts."""
+    """metadata.* works in postcondition rules."""
 
     @pytest.mark.asyncio
     async def test_metadata_in_postcondition(self):
@@ -244,7 +244,7 @@ class TestMetadataPostcondition:
             _dummy_tool,
             metadata={"region": "eu-west-1"},
         )
-        # Warn effect doesn't raise, but postcondition fires
+        # Warn action doesn't raise, but postcondition fires
         assert result is not None
 
 
@@ -259,14 +259,14 @@ class TestMetadataMessageExpansion:
 
 
 class TestMetadataDryRunEvaluation:
-    """guard.evaluate() works with metadata.* via envelope metadata."""
+    """guard.evaluate() works with metadata.* via tool_call metadata."""
 
     def test_evaluate_with_metadata_denied(self):
-        """evaluate() doesn't accept metadata directly, but contracts compile."""
+        """evaluate() doesn't accept metadata directly, but rules compile."""
         guard = Edictum.from_yaml_string(YAML_METADATA_REGION)
         # evaluate() creates envelopes without metadata, so this won't match
         result = guard.evaluate("deploy", {})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +275,7 @@ class TestMetadataDryRunEvaluation:
 
 
 class TestCustomSelectorDenies:
-    """Custom selector resolves data from the callable and triggers deny."""
+    """Custom selector resolves data from the callable and triggers block."""
 
     @pytest.mark.asyncio
     async def test_high_risk_denied(self):
@@ -323,7 +323,7 @@ class TestCustomSelectorNestedPath:
 
 
 class TestCustomSelectorReceivesEnvelope:
-    """Custom selector callable receives the correct ToolEnvelope."""
+    """Custom selector callable receives the correct ToolCall."""
 
     @pytest.mark.asyncio
     async def test_callable_receives_envelope(self):
@@ -336,9 +336,9 @@ class TestCustomSelectorReceivesEnvelope:
         with pytest.raises(EdictumDenied):
             await guard.run("transfer", {"amount": 500}, _dummy_tool)
         spy.assert_called()
-        envelope = spy.call_args[0][0]
-        assert envelope.tool_name == "transfer"
-        assert envelope.args["amount"] == 500
+        tool_call = spy.call_args[0][0]
+        assert tool_call.tool_name == "transfer"
+        assert tool_call.args["amount"] == 500
 
 
 class TestCustomSelectorMissingField:
@@ -464,7 +464,7 @@ class TestFromYamlFilePath:
 
     @pytest.mark.asyncio
     async def test_from_yaml_with_custom_selectors(self, tmp_path):
-        yaml_file = tmp_path / "contracts.yaml"
+        yaml_file = tmp_path / "rules.yaml"
         yaml_file.write_text(YAML_CUSTOM_SELECTOR)
 
         guard = Edictum.from_yaml(
@@ -498,7 +498,7 @@ class TestDryRunWithCustomSelectors:
         )
         # evaluate() creates envelopes, custom selectors fire on them
         result = guard.evaluate("transfer", {"amount": 1000})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_evaluate_allows_with_custom_selectors(self):
         guard = Edictum.from_yaml_string(
@@ -506,7 +506,7 @@ class TestDryRunWithCustomSelectors:
             custom_selectors={"risk": lambda env: {"score": 10}},
         )
         result = guard.evaluate("transfer", {"amount": 1000})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
 
 # ---------------------------------------------------------------------------

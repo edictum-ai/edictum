@@ -1,4 +1,4 @@
-"""Pre/Post Conditions — contract decorators for tool governance."""
+"""Pre/Post Conditions — rule decorators for tool governance."""
 
 from __future__ import annotations
 
@@ -8,17 +8,17 @@ from typing import Any
 
 
 @dataclass
-class Verdict:
+class Decision:
     passed: bool
     message: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def pass_(cls) -> Verdict:
+    def pass_(cls) -> Decision:
         return cls(passed=True)
 
     @classmethod
-    def fail(cls, message: str, **metadata: Any) -> Verdict:
+    def fail(cls, message: str, **metadata: Any) -> Decision:
         """Fail with an actionable message (truncated to 500 chars).
 
         Make it SPECIFIC and INSTRUCTIVE -- the agent uses it to self-correct.
@@ -29,7 +29,7 @@ class Verdict:
 
 
 def precondition(tool: str, when: Callable | None = None):
-    """Before execution. Safe to deny -- tool hasn't run yet."""
+    """Before execution. Safe to block -- tool hasn't run yet."""
 
     def decorator(func: Callable) -> Callable:
         func._edictum_type = "precondition"
@@ -60,16 +60,16 @@ def session_contract(func: Callable) -> Callable:
     """Cross-turn governance using persisted atomic counters.
 
     The decorated function **must** accept a ``session`` parameter —
-    the pipeline calls ``contract(session)`` at evaluation time.
+    the pipeline calls ``rule(session)`` at evaluation time.
 
-    Session methods are ASYNC. Session contracts must be async:
+    Session methods are ASYNC. Session rules must be async:
 
         @session_contract
-        async def max_operations(session: Session) -> Verdict:
+        async def max_operations(session: Session) -> Decision:
             count = await session.execution_count()
             if count >= 200:
-                return Verdict.fail("Session limit reached.")
-            return Verdict.pass_()
+                return Decision.fail("Session limit reached.")
+            return Decision.pass_()
     """
     func._edictum_type = "session_contract"
     return func

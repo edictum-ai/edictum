@@ -1,4 +1,4 @@
-"""Protocol compliance tests -- verify implementations match protocol contracts."""
+"""Protocol compliance tests -- verify implementations match protocol rules."""
 
 from __future__ import annotations
 

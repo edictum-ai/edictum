@@ -64,7 +64,7 @@ REJECTION_DIR = _find_rejection_dir()
 # jsonschema reports two classes of error that omit the field name the
 # fixture expects:
 #
-#   oneOf dispatch — contract-level structural errors produce
+#   oneOf dispatch — rule-level structural errors produce
 #       "is not valid under any of the given schemas"
 #
 #   value-level reporting — top-level field errors name the bad value
@@ -77,7 +77,7 @@ REJECTION_DIR = _find_rejection_dir()
 
 _ERROR_MSG_XFAIL: frozenset[str] = frozenset(
     {
-        # contract-structure: oneOf dispatch
+        # rule-structure: oneOf dispatch
         "rej-014",
         "rej-016",
         "rej-017",

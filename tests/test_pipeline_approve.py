@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from edictum import (
+    Decision,
     Edictum,
     EdictumDenied,
-    Verdict,
     precondition,
 )
 from edictum.approval import (
@@ -19,68 +19,68 @@ from edictum.approval import (
     LocalApprovalBackend,
 )
 from edictum.envelope import create_envelope
-from edictum.pipeline import GovernancePipeline
+from edictum.pipeline import CheckPipeline
 from edictum.session import Session
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
 
 
 def _make_approval_precondition(tool: str = "*"):
-    """Create a precondition with effect=approve."""
+    """Create a precondition with action=ask."""
 
     @precondition(tool)
-    def requires_approval(envelope):
-        return Verdict.fail("Requires human approval")
+    def requires_approval(tool_call):
+        return Decision.fail("Requires human approval")
 
-    requires_approval._edictum_effect = "approve"
+    requires_approval._edictum_effect = "ask"
     requires_approval._edictum_timeout = 60
-    requires_approval._edictum_timeout_effect = "deny"
+    requires_approval._edictum_timeout_action = "block"
     return requires_approval
 
 
 class TestPreDecisionApproval:
-    """Pre contract with effect=approve returns pending_approval."""
+    """Pre rule with action=ask returns pending_approval."""
 
     async def test_approve_effect_returns_pending_approval(self):
         backend = MemoryBackend()
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_precondition()],
+            rules=[_make_approval_precondition()],
             audit_sink=NullAuditSink(),
             backend=backend,
         )
         session = Session("test", backend)
         await session.increment_attempts()
-        pipeline = GovernancePipeline(guard)
-        envelope = create_envelope("TestTool", {})
+        pipeline = CheckPipeline(guard)
+        tool_call = create_envelope("TestTool", {})
 
-        decision = await pipeline.pre_execute(envelope, session)
+        decision = await pipeline.pre_execute(tool_call, session)
 
         assert decision.action == "pending_approval"
         assert decision.reason == "Requires human approval"
 
     async def test_approval_timeout_propagated(self):
-        contract = _make_approval_precondition()
-        contract._edictum_timeout = 120
-        contract._edictum_timeout_effect = "allow"
+        rule = _make_approval_precondition()
+        rule._edictum_timeout = 120
+        rule._edictum_timeout_action = "allow"
 
         backend = MemoryBackend()
         guard = Edictum(
             environment="test",
-            contracts=[contract],
+            rules=[rule],
             audit_sink=NullAuditSink(),
             backend=backend,
         )
         session = Session("test", backend)
         await session.increment_attempts()
-        pipeline = GovernancePipeline(guard)
-        envelope = create_envelope("TestTool", {})
+        pipeline = CheckPipeline(guard)
+        tool_call = create_envelope("TestTool", {})
 
-        decision = await pipeline.pre_execute(envelope, session)
+        decision = await pipeline.pre_execute(tool_call, session)
 
         assert decision.action == "pending_approval"
         assert decision.approval_timeout == 120
-        assert decision.approval_timeout_effect == "allow"
+        assert decision.approval_timeout_action == "allow"
         assert decision.approval_message == "Requires human approval"
 
 
@@ -91,7 +91,7 @@ class TestRunApprovalBackend:
     async def test_no_backend_raises_denied(self):
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_precondition()],
+            rules=[_make_approval_precondition()],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
         )
@@ -107,7 +107,7 @@ class TestRunApprovalBackend:
             tool_args={},
             message="Requires human approval",
             timeout=60,
-            timeout_effect="deny",
+            timeout_action="block",
         )
         mock_backend.wait_for_decision.return_value = ApprovalDecision(
             approved=True,
@@ -116,7 +116,7 @@ class TestRunApprovalBackend:
 
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_precondition()],
+            rules=[_make_approval_precondition()],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
             approval_backend=mock_backend,
@@ -136,7 +136,7 @@ class TestRunApprovalBackend:
             tool_args={},
             message="Requires human approval",
             timeout=60,
-            timeout_effect="deny",
+            timeout_action="block",
         )
         mock_backend.wait_for_decision.return_value = ApprovalDecision(
             approved=False,
@@ -146,7 +146,7 @@ class TestRunApprovalBackend:
 
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_precondition()],
+            rules=[_make_approval_precondition()],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
             approval_backend=mock_backend,
@@ -163,7 +163,7 @@ class TestRunApprovalBackend:
             tool_args={},
             message="Requires human approval",
             timeout=60,
-            timeout_effect="deny",
+            timeout_action="block",
         )
         mock_backend.wait_for_decision.return_value = ApprovalDecision(
             approved=False,
@@ -173,7 +173,7 @@ class TestRunApprovalBackend:
 
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_precondition()],
+            rules=[_make_approval_precondition()],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
             approval_backend=mock_backend,
@@ -193,7 +193,7 @@ class TestRunApprovalBackend:
             tool_args={},
             message="Requires human approval",
             timeout=60,
-            timeout_effect="deny",
+            timeout_action="block",
         )
         mock_backend.wait_for_decision.return_value = ApprovalDecision(
             approved=True,
@@ -203,7 +203,7 @@ class TestRunApprovalBackend:
         sink = NullAuditSink()
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_precondition()],
+            rules=[_make_approval_precondition()],
             audit_sink=sink,
             backend=MemoryBackend(),
             approval_backend=mock_backend,
@@ -226,7 +226,7 @@ class TestRunApprovalBackend:
             tool_args={},
             message="Requires human approval",
             timeout=60,
-            timeout_effect="deny",
+            timeout_action="block",
         )
         mock_backend.wait_for_decision.return_value = ApprovalDecision(
             approved=True,
@@ -236,7 +236,7 @@ class TestRunApprovalBackend:
         on_allow = MagicMock()
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_precondition()],
+            rules=[_make_approval_precondition()],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
             approval_backend=mock_backend,
@@ -246,10 +246,10 @@ class TestRunApprovalBackend:
         await guard.run("TestTool", {}, lambda: "result")
         assert on_allow.call_count == 1, f"on_allow fired {on_allow.call_count} times, expected 1"
 
-    async def test_timeout_effect_allow_executes_tool(self):
-        """When timeout_effect is 'allow', a timed-out approval should execute the tool."""
-        contract = _make_approval_precondition()
-        contract._edictum_timeout_effect = "allow"
+    async def test_timeout_action_allow_executes_tool(self):
+        """When timeout_action is 'allow', a timed-out approval should execute the tool."""
+        rule = _make_approval_precondition()
+        rule._edictum_timeout_action = "allow"
 
         mock_backend = AsyncMock()
         mock_backend.request_approval.return_value = ApprovalRequest(
@@ -258,7 +258,7 @@ class TestRunApprovalBackend:
             tool_args={},
             message="Requires human approval",
             timeout=60,
-            timeout_effect="allow",
+            timeout_action="allow",
         )
         mock_backend.wait_for_decision.return_value = ApprovalDecision(
             approved=False,
@@ -268,7 +268,7 @@ class TestRunApprovalBackend:
 
         guard = Edictum(
             environment="test",
-            contracts=[contract],
+            rules=[rule],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
             approval_backend=mock_backend,
@@ -284,7 +284,7 @@ class TestRunApprovalBackend:
         backend = LocalApprovalBackend()
         guard = Edictum(
             environment="test",
-            contracts=[_make_approval_precondition()],
+            rules=[_make_approval_precondition()],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
             approval_backend=backend,
@@ -298,17 +298,17 @@ class TestRunApprovalBackend:
 
 
 class TestYamlApproveEffect:
-    """YAML contract with effect: approve compiles correctly."""
+    """YAML rule with action: ask compiles correctly."""
 
     def test_yaml_approve_compiles(self):
         yaml_content = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
-  name: test-approve
+  name: test-ask
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: require-approval
     type: pre
     tool: dangerous_tool
@@ -316,21 +316,21 @@ contracts:
       args.action:
         equals: delete
     then:
-      effect: approve
+      action: ask
       message: "Deletion requires approval"
       timeout: 120
-      timeout_effect: allow
+      timeout_action: allow
 """
         guard = Edictum.from_yaml_string(yaml_content, audit_sink=NullAuditSink())
 
-        envelope = create_envelope("dangerous_tool", {"action": "delete"})
-        preconditions = guard.get_preconditions(envelope)
+        tool_call = create_envelope("dangerous_tool", {"action": "delete"})
+        preconditions = guard.get_preconditions(tool_call)
         assert len(preconditions) == 1
 
         fn = preconditions[0]
-        assert fn._edictum_effect == "approve"
+        assert fn._edictum_effect == "ask"
         assert fn._edictum_timeout == 120
-        assert fn._edictum_timeout_effect == "allow"
+        assert fn._edictum_timeout_action == "allow"
 
 
 class TestWildcardToolMatching:
@@ -338,30 +338,30 @@ class TestWildcardToolMatching:
 
     def test_glob_pattern_matches(self):
         @precondition("mcp_*")
-        def deny_mcp(envelope):
-            return Verdict.fail("MCP denied")
+        def deny_mcp(tool_call):
+            return Decision.fail("MCP denied")
 
         guard = Edictum(
             environment="test",
-            contracts=[deny_mcp],
+            rules=[deny_mcp],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
         )
 
-        envelope = create_envelope("mcp_postgres_query", {})
-        assert len(guard.get_preconditions(envelope)) == 1
+        tool_call = create_envelope("mcp_postgres_query", {})
+        assert len(guard.get_preconditions(tool_call)) == 1
 
     def test_glob_pattern_no_match(self):
         @precondition("read_*")
-        def deny_reads(envelope):
-            return Verdict.fail("Read denied")
+        def deny_reads(tool_call):
+            return Decision.fail("Read denied")
 
         guard = Edictum(
             environment="test",
-            contracts=[deny_reads],
+            rules=[deny_reads],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
         )
 
-        envelope = create_envelope("write_file", {})
-        assert len(guard.get_preconditions(envelope)) == 0
+        tool_call = create_envelope("write_file", {})
+        assert len(guard.get_preconditions(tool_call)) == 0

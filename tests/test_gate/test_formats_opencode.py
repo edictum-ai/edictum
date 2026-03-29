@@ -23,7 +23,7 @@ class TestOpenCodeParse:
         assert cwd == "/project"
 
     def test_parse_stdin_read_with_file_path_normalization(self) -> None:
-        """OpenCode uses filePath, contracts use file_path."""
+        """OpenCode uses filePath, rules use file_path."""
         data = {
             "tool": "read",
             "args": {"filePath": "/project/src/main.py"},
@@ -65,8 +65,8 @@ class TestOpenCodeOutput:
         assert code == 0
 
     def test_format_deny(self) -> None:
-        stdout, code = self.fmt.format_output("deny", "test-contract", "Not allowed", 5)
+        stdout, code = self.fmt.format_output("block", "test-rule", "Not allowed", 5)
         result = json.loads(stdout)
         assert result["allow"] is False
-        assert "test-contract" in result["reason"]
+        assert "test-rule" in result["reason"]
         assert "Not allowed" in result["reason"]

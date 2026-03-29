@@ -1,4 +1,4 @@
-"""Tests for ToolEnvelope, create_envelope, ToolRegistry, BashClassifier."""
+"""Tests for ToolCall, create_envelope, ToolRegistry, BashClassifier."""
 
 from __future__ import annotations
 
@@ -15,63 +15,63 @@ from edictum.envelope import (
 class TestCreateEnvelope:
     def test_deep_copy_isolation(self):
         original = {"nested": {"key": "value"}, "list": [1, 2, 3]}
-        envelope = create_envelope("TestTool", original)
+        tool_call = create_envelope("TestTool", original)
         original["nested"]["key"] = "mutated"
         original["list"].append(4)
-        assert envelope.args["nested"]["key"] == "value"
-        assert envelope.args["list"] == [1, 2, 3]
+        assert tool_call.args["nested"]["key"] == "value"
+        assert tool_call.args["list"] == [1, 2, 3]
 
     def test_metadata_deep_copy(self):
         meta = {"info": {"nested": True}}
-        envelope = create_envelope("TestTool", {}, metadata=meta)
+        tool_call = create_envelope("TestTool", {}, metadata=meta)
         meta["info"]["nested"] = False
-        assert envelope.metadata["info"]["nested"] is True
+        assert tool_call.metadata["info"]["nested"] is True
 
     def test_frozen_immutability(self):
-        envelope = create_envelope("TestTool", {"key": "value"})
+        tool_call = create_envelope("TestTool", {"key": "value"})
         with pytest.raises(AttributeError):
-            envelope.tool_name = "Modified"
+            tool_call.tool_name = "Modified"
 
     def test_factory_defaults(self):
-        envelope = create_envelope("TestTool", {})
-        assert envelope.tool_name == "TestTool"
-        assert envelope.args == {}
-        assert envelope.run_id == ""
-        assert envelope.call_index == 0
-        assert envelope.side_effect == SideEffect.IRREVERSIBLE
-        assert envelope.idempotent is False
-        assert envelope.environment == "production"
-        assert envelope.call_id  # should be a UUID
+        tool_call = create_envelope("TestTool", {})
+        assert tool_call.tool_name == "TestTool"
+        assert tool_call.args == {}
+        assert tool_call.run_id == ""
+        assert tool_call.call_index == 0
+        assert tool_call.side_effect == SideEffect.IRREVERSIBLE
+        assert tool_call.idempotent is False
+        assert tool_call.environment == "production"
+        assert tool_call.call_id  # should be a UUID
 
     def test_run_id_and_call_index(self):
-        envelope = create_envelope("TestTool", {}, run_id="run-1", call_index=5)
-        assert envelope.run_id == "run-1"
-        assert envelope.call_index == 5
+        tool_call = create_envelope("TestTool", {}, run_id="run-1", call_index=5)
+        assert tool_call.run_id == "run-1"
+        assert tool_call.call_index == 5
 
     def test_bash_command_extraction(self):
-        envelope = create_envelope("Bash", {"command": "ls -la /tmp"})
-        assert envelope.bash_command == "ls -la /tmp"
-        assert envelope.side_effect == SideEffect.READ
+        tool_call = create_envelope("Bash", {"command": "ls -la /tmp"})
+        assert tool_call.bash_command == "ls -la /tmp"
+        assert tool_call.side_effect == SideEffect.READ
 
     def test_read_file_path_extraction(self):
-        envelope = create_envelope("Read", {"file_path": "/tmp/test.txt"})
-        assert envelope.file_path == "/tmp/test.txt"
+        tool_call = create_envelope("Read", {"file_path": "/tmp/test.txt"})
+        assert tool_call.file_path == "/tmp/test.txt"
 
     def test_write_file_path_extraction(self):
-        envelope = create_envelope("Write", {"file_path": "/tmp/out.txt"})
-        assert envelope.file_path == "/tmp/out.txt"
+        tool_call = create_envelope("Write", {"file_path": "/tmp/out.txt"})
+        assert tool_call.file_path == "/tmp/out.txt"
 
     def test_camel_case_file_path(self):
-        envelope = create_envelope("Read", {"filePath": "/tmp/test.txt"})
-        assert envelope.file_path == "/tmp/test.txt"
+        tool_call = create_envelope("Read", {"filePath": "/tmp/test.txt"})
+        assert tool_call.file_path == "/tmp/test.txt"
 
     def test_camel_case_write_file_path(self):
-        envelope = create_envelope("Edit", {"filePath": "/app/.env"})
-        assert envelope.file_path == "/app/.env"
+        tool_call = create_envelope("Edit", {"filePath": "/app/.env"})
+        assert tool_call.file_path == "/app/.env"
 
     def test_glob_path_extraction(self):
-        envelope = create_envelope("Glob", {"path": "/src"})
-        assert envelope.file_path == "/src"
+        tool_call = create_envelope("Glob", {"path": "/src"})
+        assert tool_call.file_path == "/src"
 
     def test_non_serializable_args_fallback(self):
         """Falls back to copy.deepcopy for non-JSON-serializable args."""
@@ -80,15 +80,15 @@ class TestCreateEnvelope:
             def __init__(self, val):
                 self.val = val
 
-        envelope = create_envelope("TestTool", {"obj": Custom(42)})
-        assert envelope.args["obj"].val == 42
+        tool_call = create_envelope("TestTool", {"obj": Custom(42)})
+        assert tool_call.args["obj"].val == 42
 
     def test_with_registry(self):
         registry = ToolRegistry()
         registry.register("MyTool", SideEffect.READ, idempotent=True)
-        envelope = create_envelope("MyTool", {}, registry=registry)
-        assert envelope.side_effect == SideEffect.READ
-        assert envelope.idempotent is True
+        tool_call = create_envelope("MyTool", {}, registry=registry)
+        assert tool_call.side_effect == SideEffect.READ
+        assert tool_call.idempotent is True
 
 
 class TestToolRegistry:

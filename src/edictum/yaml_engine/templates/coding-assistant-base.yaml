@@ -1,16 +1,16 @@
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: coding-assistant-base
   description: >
-    Opinionated starting contracts for coding assistant governance.
+    Opinionated starting rules for coding assistant governance.
     Covers secret file access, destructive commands, git safety,
     system modifications, and package installations.
     Customize to fit your workflow — this file is yours.
 
 # Observe mode logs what WOULD be denied without blocking anything.
-# Switch to 'enforce' when you're confident in your contract set.
+# Switch to 'enforce' when you're confident in your rule set.
 defaults:
   mode: observe
 
@@ -38,12 +38,12 @@ tools:
   "mcp_*":
     side_effect: irreversible
 
-contracts:
+rules:
   # -- Secret Protection -------------------------------------------------------
-  # One contract per tool — Python fnmatch does NOT support {a,b,c} brace
+  # One rule per tool — Python fnmatch does NOT support {a,b,c} brace
   # expansion, so a single `tool: '{Read,Write,Edit}'` would never match.
-  # Bash/shell access to secrets is covered by deny-env-dump-commands below.
-  - id: deny-secret-file-reads
+  # Bash/shell access to secrets is covered by block-env-dump-commands below.
+  - id: block-secret-file-reads
     type: pre
     tool: Read
     when:
@@ -62,11 +62,11 @@ contracts:
           - '\.npmrc$'
           - '\.pypirc$'
     then:
-      effect: deny
+      action: block
       message: "Denied: this file may contain secrets"
       tags: [security, secrets]
 
-  - id: deny-secret-file-writes
+  - id: block-secret-file-writes
     type: pre
     tool: Write
     when:
@@ -85,11 +85,11 @@ contracts:
           - '\.npmrc$'
           - '\.pypirc$'
     then:
-      effect: deny
+      action: block
       message: "Denied: this file may contain secrets"
       tags: [security, secrets]
 
-  - id: deny-secret-file-edits
+  - id: block-secret-file-edits
     type: pre
     tool: Edit
     when:
@@ -108,11 +108,11 @@ contracts:
           - '\.npmrc$'
           - '\.pypirc$'
     then:
-      effect: deny
+      action: block
       message: "Denied: this file may contain secrets"
       tags: [security, secrets]
 
-  - id: deny-env-dump-commands
+  - id: block-env-dump-commands
     type: pre
     tool: Bash
     when:
@@ -123,12 +123,12 @@ contracts:
           - 'echo\s+\$(AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|API_KEY|SECRET_KEY|DATABASE_URL|DB_PASSWORD|PRIVATE_KEY|TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|GITHUB_TOKEN)'
           - 'export\s+-p'
     then:
-      effect: deny
+      action: block
       message: "Denied: environment variable access is restricted"
       tags: [security, secrets]
 
   # -- Destructive Command Protection ------------------------------------------
-  - id: deny-destructive-commands
+  - id: block-destructive-commands
     type: pre
     tool: Bash
     when:
@@ -142,12 +142,12 @@ contracts:
           - 'chmod\s+777'
           - ':(){.*};:'
     then:
-      effect: deny
+      action: block
       message: "Denied: destructive command"
       tags: [security, destructive]
 
   # -- Git Safety ---------------------------------------------------------------
-  - id: deny-dangerous-git
+  - id: block-dangerous-git
     type: pre
     tool: Bash
     when:
@@ -160,19 +160,19 @@ contracts:
           - 'git\s+checkout\s+\.'
           - 'git\s+branch\s+-D'
     then:
-      effect: deny
+      action: block
       message: "Denied: destructive git operation"
       tags: [git, destructive]
 
   # -- Scope Enforcement --------------------------------------------------------
   # NOTE: Scope enforcement is handled programmatically in gate/check.py,
-  # NOT via YAML contracts. The _check_scope() function compares
+  # NOT via YAML rules. The _check_scope() function compares
   # os.path.realpath(file_path) against the working directory from stdin.
-  # This runs AFTER standard contract evaluation as an additional gate-level
+  # This runs AFTER standard rule evaluation as an additional gate-level
   # check. It cannot be expressed in YAML because cwd is a runtime value
-  # from the assistant's stdin, not a contract field.
+  # from the assistant's stdin, not a rule field.
 
-  - id: deny-system-commands
+  - id: block-system-commands
     type: pre
     tool: Bash
     when:
@@ -184,12 +184,12 @@ contracts:
           - '/etc/'
           - '/usr/local/bin/'
     then:
-      effect: deny
+      action: block
       message: "Denied: system modification"
       tags: [security, system]
 
   # -- Package Install Protection -----------------------------------------------
-  - id: deny-package-installs
+  - id: block-package-installs
     type: pre
     tool: Bash
     when:
@@ -203,7 +203,7 @@ contracts:
           - 'cargo\s+install\b'
           - 'go\s+install\b'
     then:
-      effect: deny
+      action: block
       message: "Denied: package installation"
       tags: [audit, packages]
 
@@ -212,7 +212,7 @@ contracts:
   # Gate configuration is managed by humans in a terminal — if you need
   # changes, tell the human what to modify and where.
 
-  - id: deny-gate-config-reads
+  - id: block-gate-config-reads
     mode: enforce
     type: pre
     tool: Read
@@ -224,14 +224,14 @@ contracts:
           - '\.cursor/hooks\.json$'
           - '\.gemini/settings\.json$'
     then:
-      effect: deny
+      action: block
       message: >-
         Denied: this is a Gate infrastructure file. Gate configuration is
         managed by humans, not by the governed assistant. Tell the human
         what needs to change and they will update it in their terminal.
       tags: [security, gate-protection]
 
-  - id: deny-gate-config-writes
+  - id: block-gate-config-writes
     mode: enforce
     type: pre
     tool: Write
@@ -243,14 +243,14 @@ contracts:
           - '\.cursor/hooks\.json$'
           - '\.gemini/settings\.json$'
     then:
-      effect: deny
+      action: block
       message: >-
         Denied: this is a Gate infrastructure file. Gate configuration is
         managed by humans, not by the governed assistant. Tell the human
         what needs to change and they will update it in their terminal.
       tags: [security, gate-protection]
 
-  - id: deny-gate-config-edits
+  - id: block-gate-config-edits
     mode: enforce
     type: pre
     tool: Edit
@@ -262,14 +262,14 @@ contracts:
           - '\.cursor/hooks\.json$'
           - '\.gemini/settings\.json$'
     then:
-      effect: deny
+      action: block
       message: >-
         Denied: this is a Gate infrastructure file. Gate configuration is
         managed by humans, not by the governed assistant. Tell the human
         what needs to change and they will update it in their terminal.
       tags: [security, gate-protection]
 
-  - id: deny-gate-config-bash-tampering
+  - id: block-gate-config-bash-tampering
     mode: enforce
     type: pre
     tool: Bash
@@ -281,7 +281,7 @@ contracts:
           - 'hooks\.json'
           - 'edictum\s+gate\s+uninstall'
     then:
-      effect: deny
+      action: block
       message: >-
         Denied: Gate infrastructure cannot be modified by the assistant.
         Gate configuration is managed by humans in a terminal. Tell the

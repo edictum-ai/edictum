@@ -1,4 +1,4 @@
-"""Compiler — convert parsed YAML contracts into contract callables and OperationLimits."""
+"""Compiler — convert parsed YAML rules into rule callables and OperationLimits."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from edictum.contracts import Verdict
-from edictum.envelope import ToolEnvelope
+from edictum.envelope import ToolCall
 from edictum.limits import OperationLimits
+from edictum.rules import Decision
 from edictum.yaml_engine.evaluator import BUILTIN_OPERATOR_NAMES, _PolicyError, evaluate_expression
 
 # Placeholder pattern for message templating: {selector}
@@ -19,27 +19,27 @@ _PLACEHOLDER_CAP = 200
 def _validate_operators(bundle: dict, custom_operators: dict[str, Any] | None) -> None:
     """Validate that all operators used in the bundle are known (built-in or custom)."""
     known = BUILTIN_OPERATOR_NAMES | frozenset(custom_operators or {})
-    for contract in bundle.get("contracts", []):
-        when = contract.get("when")
+    for rule in bundle.get("rules", []):
+        when = rule.get("when")
         if when:
-            _validate_expression_operators(when, known, contract["id"])
+            _validate_expression_operators(when, known, rule["id"])
 
 
-def _validate_expression_operators(expr: dict | Any, known: frozenset[str], contract_id: str) -> None:
+def _validate_expression_operators(expr: dict | Any, known: frozenset[str], rule_id: str) -> None:
     """Recursively validate operator names in an expression tree."""
     if not isinstance(expr, dict):
         return
 
     if "all" in expr:
         for sub in expr["all"]:
-            _validate_expression_operators(sub, known, contract_id)
+            _validate_expression_operators(sub, known, rule_id)
         return
     if "any" in expr:
         for sub in expr["any"]:
-            _validate_expression_operators(sub, known, contract_id)
+            _validate_expression_operators(sub, known, rule_id)
         return
     if "not" in expr:
-        _validate_expression_operators(expr["not"], known, contract_id)
+        _validate_expression_operators(expr["not"], known, rule_id)
         return
 
     # Leaf node: selector -> operator
@@ -49,12 +49,12 @@ def _validate_expression_operators(expr: dict | Any, known: frozenset[str], cont
                 if op_name not in known:
                     from edictum import EdictumConfigError
 
-                    raise EdictumConfigError(f"Contract '{contract_id}': unknown operator '{op_name}'")
+                    raise EdictumConfigError(f"Rule '{rule_id}': unknown operator '{op_name}'")
 
 
 @dataclass(frozen=True)
 class CompiledBundle:
-    """Result of compiling a YAML contract bundle."""
+    """Result of compiling a YAML rule bundle."""
 
     preconditions: list = field(default_factory=list)
     postconditions: list = field(default_factory=list)
@@ -71,7 +71,7 @@ def compile_contracts(
     custom_operators: dict[str, Any] | None = None,
     custom_selectors: dict[str, Any] | None = None,
 ) -> CompiledBundle:
-    """Compile a validated YAML bundle into contract objects.
+    """Compile a validated YAML bundle into rule objects.
 
     Args:
         bundle: A validated bundle dict (output of load_bundle).
@@ -79,7 +79,7 @@ def compile_contracts(
             Each callable receives ``(field_value, operator_value)`` and
             returns ``bool``.
         custom_selectors: Optional mapping of selector prefixes to resolver
-            callables. Each callable receives a ``ToolEnvelope`` and returns
+            callables. Each callable receives a ``ToolCall`` and returns
             a ``dict`` that is searched via dotted-path resolution.
 
     Returns:
@@ -95,30 +95,30 @@ def compile_contracts(
     sandbox_contracts: list = []
     limits = OperationLimits()
 
-    for contract in bundle.get("contracts", []):
-        # Skip disabled contracts
-        if not contract.get("enabled", True):
+    for rule in bundle.get("rules", []):
+        # Skip disabled rules
+        if not rule.get("enabled", True):
             continue
 
-        contract_type = contract["type"]
-        contract_mode = contract.get("mode", default_mode)
+        contract_type = rule["type"]
+        contract_mode = rule.get("mode", default_mode)
 
         if contract_type == "pre":
-            fn = _compile_pre(contract, contract_mode, custom_operators, custom_selectors)
+            fn = _compile_pre(rule, contract_mode, custom_operators, custom_selectors)
             preconditions.append(fn)
         elif contract_type == "post":
-            fn = _compile_post(contract, contract_mode, custom_operators, custom_selectors)
+            fn = _compile_post(rule, contract_mode, custom_operators, custom_selectors)
             postconditions.append(fn)
         elif contract_type == "sandbox":
             from edictum.yaml_engine.sandbox_compiler import _compile_sandbox
 
-            fn = _compile_sandbox(contract, contract_mode)
+            fn = _compile_sandbox(rule, contract_mode)
             sandbox_contracts.append(fn)
         elif contract_type == "session":
-            is_observe = contract.get("_observe", False)
+            is_observe = rule.get("_observe", False)
             if not is_observe:
-                limits = _merge_session_limits(contract, limits)
-            fn = _compile_session(contract, contract_mode, limits)
+                limits = _merge_session_limits(rule, limits)
+            fn = _compile_session(rule, contract_mode, limits)
             session_contracts.append(fn)
 
     tools = bundle.get("tools", {})
@@ -167,29 +167,29 @@ def _precompile_regexes(expr: dict | Any) -> dict | Any:
 
 
 def _compile_pre(
-    contract: dict,
+    rule: dict,
     mode: str,
     custom_operators: dict[str, Any] | None = None,
     custom_selectors: dict[str, Any] | None = None,
 ) -> Any:
-    """Compile a pre-contract into a precondition callable."""
-    contract_id = contract["id"]
-    tool = contract["tool"]
-    when_expr = _precompile_regexes(contract["when"])
-    then = contract["then"]
+    """Compile a pre-rule into a precondition callable."""
+    rule_id = rule["id"]
+    tool = rule["tool"]
+    when_expr = _precompile_regexes(rule["when"])
+    then = rule["then"]
     message_template = then["message"]
     tags = then.get("tags", [])
     then_metadata = then.get("metadata", {})
 
-    def precondition_fn(envelope: ToolEnvelope) -> Verdict:
+    def precondition_fn(tool_call: ToolCall) -> Decision:
         try:
             result = evaluate_expression(
-                when_expr, envelope, custom_operators=custom_operators, custom_selectors=custom_selectors
+                when_expr, tool_call, custom_operators=custom_operators, custom_selectors=custom_selectors
             )
         except Exception as exc:
-            # Fail-closed: evaluation error triggers the contract
-            msg = _expand_message(message_template, envelope, custom_selectors=custom_selectors)
-            return Verdict.fail(
+            # Fail-closed: evaluation error triggers the rule
+            msg = _expand_message(message_template, tool_call, custom_selectors=custom_selectors)
+            return Decision.fail(
                 msg,
                 tags=tags,
                 policy_error=True,
@@ -198,27 +198,27 @@ def _compile_pre(
             )
 
         if isinstance(result, _PolicyError):
-            msg = _expand_message(message_template, envelope, custom_selectors=custom_selectors)
-            return Verdict.fail(msg, tags=tags, policy_error=True, **then_metadata)
+            msg = _expand_message(message_template, tool_call, custom_selectors=custom_selectors)
+            return Decision.fail(msg, tags=tags, policy_error=True, **then_metadata)
 
         if result:
-            msg = _expand_message(message_template, envelope, custom_selectors=custom_selectors)
-            return Verdict.fail(msg, tags=tags, **then_metadata)
+            msg = _expand_message(message_template, tool_call, custom_selectors=custom_selectors)
+            return Decision.fail(msg, tags=tags, **then_metadata)
 
-        return Verdict.pass_()
+        return Decision.pass_()
 
     # Stamp metadata so Edictum can filter/route
-    precondition_fn.__name__ = contract_id
+    precondition_fn.__name__ = rule_id
     precondition_fn._edictum_type = "precondition"
     precondition_fn._edictum_tool = tool
     precondition_fn._edictum_when = None  # filtering done inside
     precondition_fn._edictum_mode = mode
-    precondition_fn._edictum_id = contract_id
+    precondition_fn._edictum_id = rule_id
     precondition_fn._edictum_source = "yaml_precondition"
-    precondition_fn._edictum_effect = then.get("effect", "deny")
+    precondition_fn._edictum_effect = then.get("action", "block")
     precondition_fn._edictum_timeout = then.get("timeout", 300)
-    precondition_fn._edictum_timeout_effect = then.get("timeout_effect", "deny")
-    if contract.get("_observe"):
+    precondition_fn._edictum_timeout_action = then.get("timeout_action", "block")
+    if rule.get("_observe"):
         precondition_fn._edictum_observe = True
 
     return precondition_fn
@@ -263,36 +263,36 @@ def _extract_output_patterns(expr: dict | Any) -> list[re.Pattern]:
 
 
 def _compile_post(
-    contract: dict,
+    rule: dict,
     mode: str,
     custom_operators: dict[str, Any] | None = None,
     custom_selectors: dict[str, Any] | None = None,
 ) -> Any:
-    """Compile a post-contract into a postcondition callable."""
-    contract_id = contract["id"]
-    tool = contract["tool"]
-    when_expr = _precompile_regexes(contract["when"])
-    then = contract["then"]
-    effect = then.get("effect", "warn")
+    """Compile a post-rule into a postcondition callable."""
+    rule_id = rule["id"]
+    tool = rule["tool"]
+    when_expr = _precompile_regexes(rule["when"])
+    then = rule["then"]
+    action = then.get("action", "warn")
     message_template = then["message"]
     tags = then.get("tags", [])
     then_metadata = then.get("metadata", {})
 
-    def postcondition_fn(envelope: ToolEnvelope, response: Any) -> Verdict:
+    def postcondition_fn(tool_call: ToolCall, response: Any) -> Decision:
         output_text = str(response) if response is not None else None
         try:
             result = evaluate_expression(
                 when_expr,
-                envelope,
+                tool_call,
                 output_text=output_text,
                 custom_operators=custom_operators,
                 custom_selectors=custom_selectors,
             )
         except Exception as exc:
             msg = _expand_message(
-                message_template, envelope, output_text=output_text, custom_selectors=custom_selectors
+                message_template, tool_call, output_text=output_text, custom_selectors=custom_selectors
             )
-            return Verdict.fail(
+            return Decision.fail(
                 msg,
                 tags=tags,
                 policy_error=True,
@@ -302,73 +302,73 @@ def _compile_post(
 
         if isinstance(result, _PolicyError):
             msg = _expand_message(
-                message_template, envelope, output_text=output_text, custom_selectors=custom_selectors
+                message_template, tool_call, output_text=output_text, custom_selectors=custom_selectors
             )
-            return Verdict.fail(msg, tags=tags, policy_error=True, **then_metadata)
+            return Decision.fail(msg, tags=tags, policy_error=True, **then_metadata)
 
         if result:
             msg = _expand_message(
-                message_template, envelope, output_text=output_text, custom_selectors=custom_selectors
+                message_template, tool_call, output_text=output_text, custom_selectors=custom_selectors
             )
-            return Verdict.fail(msg, tags=tags, **then_metadata)
+            return Decision.fail(msg, tags=tags, **then_metadata)
 
-        return Verdict.pass_()
+        return Decision.pass_()
 
-    postcondition_fn.__name__ = contract_id
+    postcondition_fn.__name__ = rule_id
     postcondition_fn._edictum_type = "postcondition"
     postcondition_fn._edictum_tool = tool
     postcondition_fn._edictum_when = None
     postcondition_fn._edictum_mode = mode
-    postcondition_fn._edictum_id = contract_id
+    postcondition_fn._edictum_id = rule_id
     postcondition_fn._edictum_source = "yaml_postcondition"
-    postcondition_fn._edictum_effect = effect
+    postcondition_fn._edictum_effect = action
     postcondition_fn._edictum_redact_patterns = _extract_output_patterns(when_expr)
-    if contract.get("_observe"):
+    if rule.get("_observe"):
         postcondition_fn._edictum_observe = True
 
     return postcondition_fn
 
 
-def _compile_session(contract: dict, mode: str, limits: OperationLimits) -> Any:
-    """Compile a session contract into a session_contract callable."""
-    contract_id = contract["id"]
-    then = contract["then"]
+def _compile_session(rule: dict, mode: str, limits: OperationLimits) -> Any:
+    """Compile a session rule into a session_contract callable."""
+    rule_id = rule["id"]
+    then = rule["then"]
     message_template = then["message"]
     tags = then.get("tags", [])
     then_metadata = then.get("metadata", {})
 
-    async def session_contract_fn(session: Any) -> Verdict:
+    async def session_contract_fn(session: Any) -> Decision:
         from edictum.session import Session as _Session
 
         if isinstance(session, _Session):
             exec_count = await session.execution_count()
             if exec_count >= limits.max_tool_calls:
-                return Verdict.fail(message_template, tags=tags, **then_metadata)
+                return Decision.fail(message_template, tags=tags, **then_metadata)
             attempt_count = await session.attempt_count()
             if attempt_count >= limits.max_attempts:
-                return Verdict.fail(message_template, tags=tags, **then_metadata)
-        return Verdict.pass_()
+                return Decision.fail(message_template, tags=tags, **then_metadata)
+        return Decision.pass_()
 
-    session_contract_fn.__name__ = contract_id
+    session_contract_fn.__name__ = rule_id
     session_contract_fn._edictum_type = "session_contract"
     session_contract_fn._edictum_mode = mode
-    session_contract_fn._edictum_id = contract_id
+    session_contract_fn._edictum_id = rule_id
     session_contract_fn._edictum_message = message_template
     session_contract_fn._edictum_tags = tags
     session_contract_fn._edictum_then_metadata = then_metadata
     session_contract_fn._edictum_source = "yaml_session"
-    if contract.get("_observe"):
+    if rule.get("_observe"):
         session_contract_fn._edictum_observe = True
 
     return session_contract_fn
 
 
-def _merge_session_limits(contract: dict, existing: OperationLimits) -> OperationLimits:
-    """Merge session contract limits into existing OperationLimits.
+def _merge_session_limits(rule: dict, existing: OperationLimits) -> OperationLimits:
+    """Merge session rule limits into existing OperationLimits.
 
     Picks the more restrictive value (lower) for each limit.
     """
-    session_limits = contract["limits"]
+    session_limits = rule["limits"]
 
     max_tool_calls = existing.max_tool_calls
     max_attempts = existing.max_attempts
@@ -396,7 +396,7 @@ def _merge_session_limits(contract: dict, existing: OperationLimits) -> Operatio
 
 def _expand_message(
     template: str,
-    envelope: ToolEnvelope,
+    tool_call: ToolCall,
     output_text: str | None = None,
     *,
     custom_selectors: dict[str, Any] | None = None,
@@ -413,7 +413,7 @@ def _expand_message(
 
     def replacer(match: re.Match) -> str:
         selector = match.group(1)
-        value = _resolve_selector(selector, envelope, output_text, custom_selectors)
+        value = _resolve_selector(selector, tool_call, output_text, custom_selectors)
         if value is _MISSING or value is None:
             return match.group(0)  # Keep placeholder as-is
         text = str(value)

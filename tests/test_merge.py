@@ -30,12 +30,12 @@ def _make_guard_with_yaml(tmp_path, name, contracts_yaml):
 
 GUARD_A_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: guard-a
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-bash
     type: pre
     tool: Bash
@@ -43,18 +43,18 @@ contracts:
       args.command:
         exists: true
     then:
-      effect: deny
+      action: block
       message: "Bash denied by guard A."
 """
 
 GUARD_B_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: guard-b
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-write
     type: pre
     tool: Write
@@ -62,18 +62,18 @@ contracts:
       args.path:
         exists: true
     then:
-      effect: deny
+      action: block
       message: "Write denied by guard B."
 """
 
 GUARD_C_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: guard-c
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-delete
     type: pre
     tool: Delete
@@ -81,18 +81,18 @@ contracts:
       args.path:
         exists: true
     then:
-      effect: deny
+      action: block
       message: "Delete denied by guard C."
 """
 
 GUARD_DUP_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: guard-dup
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-bash
     type: pre
     tool: Bash
@@ -100,18 +100,18 @@ contracts:
       args.command:
         matches: '\\brm\\b'
     then:
-      effect: deny
+      action: block
       message: "Bash denied by guard-dup (should be skipped)."
 """
 
 GUARD_POST_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: guard-post
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: post-check-a
     type: post
     tool: read_file
@@ -119,18 +119,18 @@ contracts:
       output:
         contains: "SECRET"
     then:
-      effect: warn
+      action: warn
       message: "Output contains SECRET."
 """
 
 GUARD_POST_B_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: guard-post-b
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: post-check-b
     type: post
     tool: read_file
@@ -138,18 +138,18 @@ contracts:
       output:
         contains: "PASSWORD"
     then:
-      effect: warn
+      action: warn
       message: "Output contains PASSWORD."
 """
 
 GUARD_OBSERVE_YAML = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: guard-observe
 defaults:
   mode: observe
-contracts:
+rules:
   - id: observe-bash
     type: pre
     tool: Bash
@@ -157,7 +157,7 @@ contracts:
       args.command:
         exists: true
     then:
-      effect: deny
+      action: block
       message: "Bash observed."
 """
 
@@ -211,10 +211,10 @@ class TestFromMultiple:
             merged = Edictum.from_multiple([guard_a, guard_dup])
 
         assert len(merged._state.preconditions) == 1
-        assert "Duplicate contract id 'block-bash'" in caplog.text
+        assert "Duplicate rule id 'block-bash'" in caplog.text
         # First wins: message should be from guard A
         result = merged.evaluate("Bash", {"command": "rm -rf /"})
-        assert result.deny_reasons[0] == "Bash denied by guard A."
+        assert result.block_reasons[0] == "Bash denied by guard A."
 
     def test_contract_ordering_preserved(self, tmp_path):
         guard_a = _make_guard_with_yaml(tmp_path, "a", GUARD_A_YAML)
@@ -234,15 +234,15 @@ class TestFromMultiple:
 
         # Bash denied
         result = merged.evaluate("Bash", {"command": "ls"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
         # Write denied
         result = merged.evaluate("Write", {"path": "/tmp/test.txt"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
-        # Read allowed (no matching contract)
+        # Read allowed (no matching rule)
         result = merged.evaluate("Read", {"path": "/tmp/test.txt"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
     @pytest.mark.asyncio
     async def test_merged_guard_run(self, tmp_path):
@@ -286,37 +286,37 @@ class TestFromMultiple:
         assert merged.mode == guard_a.mode
 
     def test_merge_session_contracts(self, tmp_path):
-        """Session contracts from multiple guards are merged."""
+        """Session rules from multiple guards are merged."""
         session_yaml = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: guard-session
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: session-limit
     type: session
     limits:
       max_tool_calls: 10
     then:
-      effect: deny
+      action: block
       message: "Session limit reached"
 """
         session_yaml_b = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: guard-session-b
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: session-limit-b
     type: session
     limits:
       max_attempts: 20
     then:
-      effect: deny
+      action: block
       message: "Attempt limit reached"
 """
         guard_s1 = _make_guard_with_yaml(tmp_path, "s1", session_yaml)
@@ -331,36 +331,36 @@ contracts:
         """Same ID on a precondition and postcondition: first wins, second skipped."""
         pre_yaml = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: guard-pre
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: shared-id
     type: pre
     tool: Bash
     when:
       args.command: { exists: true }
     then:
-      effect: deny
+      action: block
       message: "Pre wins"
 """
         post_yaml = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: guard-post
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: shared-id
     type: post
     tool: "*"
     when:
       output.text: { contains: "secret" }
     then:
-      effect: warn
+      action: warn
       message: "Post loses"
 """
         guard_pre = _make_guard_with_yaml(tmp_path, "pre", pre_yaml)
@@ -373,27 +373,27 @@ contracts:
         assert len(merged._state.postconditions) == 0
 
     def test_merge_python_decorator_contracts(self):
-        """from_multiple() works with Python decorator-based contracts too."""
-        from edictum.contracts import Verdict, postcondition, precondition
+        """from_multiple() works with Python decorator-based rules too."""
+        from edictum.rules import Decision, postcondition, precondition
 
         @precondition("Bash")
-        def block_bash(envelope):
-            return Verdict.fail("No bash")
+        def block_bash(tool_call):
+            return Decision.fail("No bash")
 
         @postcondition("*")
-        def check_output(envelope, response):
+        def check_output(tool_call, response):
             if "secret" in str(response):
-                return Verdict.fail("Secret in output")
-            return Verdict.pass_()
+                return Decision.fail("Secret in output")
+            return Decision.pass_()
 
         g1 = Edictum(
             mode="enforce",
-            contracts=[block_bash],
+            rules=[block_bash],
             audit_sink=_NullSink(),
         )
         g2 = Edictum(
             mode="enforce",
-            contracts=[check_output],
+            rules=[check_output],
             audit_sink=_NullSink(),
         )
 
@@ -403,14 +403,14 @@ contracts:
 
         # Verify evaluation works
         result = merged.evaluate("Bash", {"command": "ls"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_hooks_not_merged(self, tmp_path):
         """Hooks from non-first guards are not carried over (by design)."""
         from edictum.hooks import HookDecision
         from edictum.types import HookRegistration
 
-        def my_hook(envelope):
+        def my_hook(tool_call):
             return HookDecision.allow()
 
         hook_reg = HookRegistration(
@@ -423,5 +423,5 @@ contracts:
         g2 = Edictum(mode="enforce", hooks=[hook_reg], audit_sink=_NullSink())
 
         merged = Edictum.from_multiple([g1, g2])
-        # Hooks are not part of the merge — only contracts
+        # Hooks are not part of the merge — only rules
         assert len(merged._before_hooks) == 0

@@ -32,8 +32,8 @@ class TestNoOpSpan:
 class TestGovernanceTelemetry:
     def test_start_tool_span_returns_span(self):
         telemetry = GovernanceTelemetry()
-        envelope = create_envelope("TestTool", {})
-        span = telemetry.start_tool_span(envelope)
+        tool_call = create_envelope("TestTool", {})
+        span = telemetry.start_tool_span(tool_call)
         if _HAS_OTEL:
             # When OTel is installed, returns a real span
             assert hasattr(span, "set_attribute")
@@ -46,10 +46,10 @@ class TestGovernanceTelemetry:
 
     def test_record_denial_does_not_raise(self):
         telemetry = GovernanceTelemetry()
-        envelope = create_envelope("TestTool", {})
-        telemetry.record_denial(envelope, "test reason")
+        tool_call = create_envelope("TestTool", {})
+        telemetry.record_denial(tool_call, "test reason")
 
     def test_record_allowed_does_not_raise(self):
         telemetry = GovernanceTelemetry()
-        envelope = create_envelope("TestTool", {})
-        telemetry.record_allowed(envelope)
+        tool_call = create_envelope("TestTool", {})
+        telemetry.record_allowed(tool_call)

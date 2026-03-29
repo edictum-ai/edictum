@@ -39,5 +39,5 @@ class TestToolNameValidation:
         ],
     )
     def test_normal_names_accepted(self, name):
-        envelope = create_envelope(name, {})
-        assert envelope.tool_name == name
+        tool_call = create_envelope(name, {})
+        assert tool_call.tool_name == name

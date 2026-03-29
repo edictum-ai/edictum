@@ -28,4 +28,4 @@ jobs:
         EDICTUM_SCHEMAS_DIR=edictum-schemas
         EDICTUM_CONFORMANCE_REQUIRED=1
         pytest tests/test_conformance/ -v
-      fixture-ref: 31bae70afaa0fa4e24475324a562acfdddf83341
+      fixture-ref: bfb633c6019d6b545f5d0e8986c05d9a95087520

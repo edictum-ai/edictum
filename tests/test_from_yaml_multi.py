@@ -14,12 +14,12 @@ from edictum.yaml_engine.composer import CompositionReport
 
 BASE_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: base-bundle
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-sensitive-reads
     type: pre
     tool: read_file
@@ -27,19 +27,19 @@ contracts:
       args.path:
         contains_any: [".env", ".secret"]
     then:
-      effect: deny
+      action: block
       message: "Sensitive file denied"
       tags: [secrets]
 """
 
 OVERRIDE_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: override-bundle
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-sensitive-reads
     type: pre
     tool: read_file
@@ -47,19 +47,19 @@ contracts:
       args.path:
         contains_any: [".pem"]
     then:
-      effect: deny
+      action: block
       message: "PEM file denied"
       tags: [override]
 """
 
 EXTRA_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: extra-bundle
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-exec
     type: pre
     tool: execute
@@ -67,20 +67,20 @@ contracts:
       args.command:
         contains: "rm -rf"
     then:
-      effect: deny
+      action: block
       message: "Dangerous command denied"
       tags: [safety]
 """
 
 OBSERVE_ALONGSIDE_BUNDLE = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: candidate-bundle
 observe_alongside: true
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: block-sensitive-reads
     type: pre
     tool: read_file
@@ -88,7 +88,7 @@ contracts:
       args.path:
         contains_any: [".key"]
     then:
-      effect: deny
+      action: block
       message: "Key file denied (candidate)"
       tags: [candidate]
 """
@@ -153,18 +153,18 @@ class TestTwoPaths:
         override = _write_yaml(tmp_path, "override.yaml", OVERRIDE_BUNDLE)
         guard = Edictum.from_yaml(base, override)
 
-        # The overridden contract should block .pem, not .env
+        # The overridden rule should block .pem, not .env
         env_pem = create_envelope("read_file", {"path": "key.pem"})
         preconditions = guard.get_preconditions(env_pem)
         assert len(preconditions) == 1
 
         # .env should no longer be denied (overridden)
         result = guard.evaluate("read_file", {"path": "app.env"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
         # .pem should be denied
         result = guard.evaluate("read_file", {"path": "cert.pem"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_combined_policy_version(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
@@ -191,14 +191,14 @@ class TestThreePaths:
 
         # Override replaced block-sensitive-reads → .pem denied, .env not
         result = guard.evaluate("read_file", {"path": "cert.pem"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
         result = guard.evaluate("read_file", {"path": "app.env"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
         # Extra layer added block-exec
         result = guard.evaluate("execute", {"command": "rm -rf /"})
-        assert result.verdict == "deny"
-        assert "Dangerous command" in result.deny_reasons[0]
+        assert result.decision == "block"
+        assert "Dangerous command" in result.block_reasons[0]
 
     def test_three_path_policy_version(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
@@ -209,27 +209,27 @@ class TestThreePaths:
 
 
 class TestObserveAlongside:
-    """Load a YAML with observe_alongside: true, verify observe-mode contracts."""
+    """Load a YAML with observe_alongside: true, verify observe-mode rules."""
 
-    def test_observe_contracts_created(self, tmp_path):
+    def test_observe_rules_created(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
         candidate = _write_yaml(tmp_path, "candidate.yaml", OBSERVE_ALONGSIDE_BUNDLE)
         guard, report = Edictum.from_yaml(base, candidate, return_report=True)
 
-        # Observe-mode contract should be in the report
-        assert len(report.observe_contracts) == 1
-        assert report.observe_contracts[0].contract_id == "block-sensitive-reads"
+        # Observe-mode rule should be in the report
+        assert len(report.observe_rules) == 1
+        assert report.observe_rules[0].rule_id == "block-sensitive-reads"
 
-    def test_observe_contracts_in_observe_mode(self, tmp_path):
+    def test_observe_rules_in_observe_mode(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
         candidate = _write_yaml(tmp_path, "candidate.yaml", OBSERVE_ALONGSIDE_BUNDLE)
         guard = Edictum.from_yaml(base, candidate)
 
-        # Original contract still works -- .env denied
+        # Original rule still works -- .env denied
         result = guard.evaluate("read_file", {"path": "app.env"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
-        # Observe-mode contracts are routed to separate lists
+        # Observe-mode rules are routed to separate lists
         env = create_envelope("read_file", {"path": "test.key"})
         preconditions = guard.get_preconditions(env)
         observe_preconditions = guard.get_observe_preconditions(env)
@@ -252,8 +252,8 @@ class TestReturnReport:
         guard, report = result
         assert isinstance(guard, Edictum)
         assert isinstance(report, CompositionReport)
-        assert len(report.overridden_contracts) == 1
-        assert report.overridden_contracts[0].contract_id == "block-sensitive-reads"
+        assert len(report.overridden_rules) == 1
+        assert report.overridden_rules[0].rule_id == "block-sensitive-reads"
 
     def test_return_report_with_single_path(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
@@ -263,8 +263,8 @@ class TestReturnReport:
         guard, report = result
         assert isinstance(guard, Edictum)
         assert isinstance(report, CompositionReport)
-        assert report.overridden_contracts == []
-        assert report.observe_contracts == []
+        assert report.overridden_rules == []
+        assert report.observe_rules == []
 
     def test_without_return_report(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
@@ -311,7 +311,7 @@ class TestEdgeCases:
         # Pass Path objects, not strings
         guard = Edictum.from_yaml(Path(base), Path(override))
         result = guard.evaluate("read_file", {"path": "cert.pem"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
     def test_multi_path_nonexistent_second_file(self, tmp_path):
         """Second file doesn't exist — should raise clear error."""
@@ -321,30 +321,30 @@ class TestEdgeCases:
 
 
 class TestEvaluateDryRunExcludesObserveMode:
-    """evaluate() must NOT include observe-mode contracts in dry-run results."""
+    """evaluate() must NOT include observe-mode rules in dry-run results."""
 
-    def test_evaluate_ignores_observe_contracts(self, tmp_path):
+    def test_evaluate_ignores_observe_rules(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
         candidate = _write_yaml(tmp_path, "candidate.yaml", OBSERVE_ALONGSIDE_BUNDLE)
         guard = Edictum.from_yaml(base, candidate)
 
         # .key triggers observe-mode but not enforced. evaluate() should allow.
         result = guard.evaluate("read_file", {"path": "app.key"})
-        assert result.verdict == "allow"
+        assert result.decision == "allow"
 
-        # .env triggers enforced. evaluate() should deny.
+        # .env triggers enforced. evaluate() should block.
         result = guard.evaluate("read_file", {"path": "app.env"})
-        assert result.verdict == "deny"
+        assert result.decision == "block"
 
-    def test_evaluate_does_not_report_observe_contracts(self, tmp_path):
+    def test_evaluate_does_not_report_observe_rules(self, tmp_path):
         base = _write_yaml(tmp_path, "base.yaml", BASE_BUNDLE)
         candidate = _write_yaml(tmp_path, "candidate.yaml", OBSERVE_ALONGSIDE_BUNDLE)
         guard = Edictum.from_yaml(base, candidate)
 
         result = guard.evaluate("read_file", {"path": "app.key"})
-        # Observe-mode contracts should not appear in contracts_evaluated
-        contract_ids = [r.contract_id for r in result.contracts]
-        assert not any(":candidate" in cid for cid in contract_ids)
+        # Observe-mode rules should not appear in rules_evaluated
+        rule_ids = [r.rule_id for r in result.rules]
+        assert not any(":candidate" in cid for cid in rule_ids)
 
 
 class TestFromTemplateBackwardCompat:

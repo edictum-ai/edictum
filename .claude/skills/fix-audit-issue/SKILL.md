@@ -19,7 +19,7 @@ Use a descriptive branch name based on the issue (e.g., `fix/redaction-policy-me
 ## Step 2: Scenarios & use cases (for features/design changes)
 
 If the issue involves adding a new feature or changing API behavior (not just a simple bug fix), write down BEFORE implementing:
-- What concrete scenarios does this enable? (e.g., "send Slack alert on denial", "test env-specific contracts in CI")
+- What concrete scenarios does this enable? (e.g., "send Slack alert on block", "test env-specific rules in CI")
 - What user personas benefit? (developer debugging vs. platform team in production)
 - Does this overlap with existing features? Explain when to use which.
 - Does this surface related features that should be designed separately? Note them for future work.

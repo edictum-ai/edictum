@@ -1,8 +1,8 @@
-"""Shared Edictum contracts for all adapter demos."""
+"""Shared Edictum rules for all adapter demos."""
 
 from __future__ import annotations
 
-from edictum import Verdict, precondition, session_contract
+from edictum import Decision, precondition, session_contract
 
 
 @precondition(
@@ -11,26 +11,26 @@ from edictum import Verdict, precondition, session_contract
         p in (e.args.get("path") or "") for p in [".env", ".secret", "credentials", "id_rsa", ".pem", ".key"]
     ),
 )
-def block_sensitive_reads(envelope):
+def block_sensitive_reads(tool_call):
     """Block reads of sensitive files."""
-    return Verdict.fail(
-        f"DENIED: reading sensitive file '{envelope.args.get('path')}'. "
+    return Decision.fail(
+        f"DENIED: reading sensitive file '{tool_call.args.get('path')}'. "
         "Skip this file and continue with non-sensitive files."
     )
 
 
 @precondition("bash", when=lambda e: e.args.get("command") is not None)
-def block_destructive_commands(envelope):
+def block_destructive_commands(tool_call):
     """Block destructive shell commands."""
-    cmd = envelope.args.get("command", "")
+    cmd = tool_call.args.get("command", "")
     destructive = ["rm -rf", "rm -r", "rmdir", "dd if=", "mkfs", "> /dev/"]
     for pattern in destructive:
         if pattern in cmd:
-            return Verdict.fail(
+            return Decision.fail(
                 f"DENIED: destructive command '{pattern}' detected. "
                 "Use 'mv' to relocate files instead of deleting them."
             )
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 @precondition(
@@ -39,21 +39,21 @@ def block_destructive_commands(envelope):
         p in (e.args.get("command") or "") for p in [".env", ".secret", "credentials", "id_rsa", ".pem", ".key"]
     ),
 )
-def block_sensitive_bash(envelope):
+def block_sensitive_bash(tool_call):
     """Block bash commands that touch sensitive files."""
-    return Verdict.fail("DENIED: bash command references sensitive file. Skip sensitive files and continue.")
+    return Decision.fail("DENIED: bash command references sensitive file. Skip sensitive files and continue.")
 
 
 @precondition("move_file", when=lambda e: e.args.get("destination") is not None)
-def require_organized_target(envelope):
+def require_organized_target(tool_call):
     """File moves must target /tmp/organized/."""
-    dest = envelope.args.get("destination", "")
+    dest = tool_call.args.get("destination", "")
     if not dest.startswith("/tmp/organized/"):
-        return Verdict.fail(
+        return Decision.fail(
             f"DENIED: destination '{dest}' is not under /tmp/organized/. "
             "Move files to /tmp/organized/<category>/ instead."
         )
-    return Verdict.pass_()
+    return Decision.pass_()
 
 
 def make_session_limit(max_ops: int = 25):
@@ -61,8 +61,8 @@ def make_session_limit(max_ops: int = 25):
     async def limit_operations(session):
         count = await session.execution_count()
         if count >= max_ops:
-            return Verdict.fail(f"Session limit reached: {count}/{max_ops} tool calls. Summarize progress and stop.")
-        return Verdict.pass_()
+            return Decision.fail(f"Session limit reached: {count}/{max_ops} tool calls. Summarize progress and stop.")
+        return Decision.pass_()
 
     return limit_operations
 

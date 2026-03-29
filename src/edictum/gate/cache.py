@@ -1,4 +1,4 @@
-"""Contract cache — JSON-based hash + mtime cache to avoid re-reading YAML."""
+"""Rule cache — JSON-based hash + mtime cache to avoid re-reading YAML."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import os
 import time
 from pathlib import Path
 
-DEFAULT_CACHE_PATH = Path.home() / ".edictum" / "cache" / "contracts.json"
+DEFAULT_CACHE_PATH = Path.home() / ".edictum" / "cache" / "rules.json"
 
 
 class ContractCache:
@@ -73,7 +73,7 @@ class ContractCache:
             return False
 
     def get_all_valid(self, paths: list[str]) -> bool:
-        """Check all contract paths at once."""
+        """Check all rule paths at once."""
         return all(self.is_valid(p) for p in paths)
 
     def update(self, path: str) -> None:

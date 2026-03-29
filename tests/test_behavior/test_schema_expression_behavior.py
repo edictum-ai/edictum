@@ -26,16 +26,16 @@ def _load_schema(path: str) -> dict:
 def _make_bundle(when_expr: dict) -> dict:
     return {
         "apiVersion": "edictum/v1",
-        "kind": "ContractBundle",
+        "kind": "Ruleset",
         "metadata": {"name": "test"},
         "defaults": {"mode": "enforce"},
-        "contracts": [
+        "rules": [
             {
-                "id": "test-contract",
+                "id": "test-rule",
                 "type": "pre",
                 "tool": "test_tool",
                 "when": when_expr,
-                "then": {"effect": "deny", "message": "denied"},
+                "then": {"action": "block", "message": "denied"},
             }
         ],
     }
@@ -101,17 +101,17 @@ class TestInvalidExpressionRejected:
 
 
 class TestNotExpressionIntegration:
-    """from_yaml_string() loads a not: contract end-to-end."""
+    """from_yaml_string() loads a not: rule end-to-end."""
 
     def test_not_expression_loads_via_from_yaml_string(self):
         yaml_content = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: not-test
 defaults:
   mode: enforce
-contracts:
+rules:
   - id: no-external-email
     type: pre
     tool: send_email
@@ -119,7 +119,7 @@ contracts:
       not:
         args.to: { ends_with: "@company.com" }
     then:
-      effect: deny
+      action: block
       message: "External email denied"
 """
         guard = Edictum.from_yaml_string(yaml_content)

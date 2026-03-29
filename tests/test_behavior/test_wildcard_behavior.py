@@ -6,7 +6,7 @@ preserving exact-match and '*' semantics.
 
 from __future__ import annotations
 
-from edictum import Edictum, Verdict, precondition
+from edictum import Decision, Edictum, precondition
 from edictum.envelope import create_envelope
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -19,38 +19,38 @@ class TestWildcardBehavior:
         """tool: 'mcp_*' in YAML matches mcp_anything."""
         yaml_content = """\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-wildcard
 defaults:
   mode: enforce
-contracts:
-  - id: deny-mcp
+rules:
+  - id: block-mcp
     type: pre
     tool: "mcp_*"
     when:
       args.query:
         exists: true
     then:
-      effect: deny
+      action: block
       message: "MCP tools denied"
 """
         guard = Edictum.from_yaml_string(yaml_content, audit_sink=NullAuditSink())
 
-        envelope = create_envelope("mcp_postgres_query", {"query": "SELECT 1"})
-        preconditions = guard.get_preconditions(envelope)
+        tool_call = create_envelope("mcp_postgres_query", {"query": "SELECT 1"})
+        preconditions = guard.get_preconditions(tool_call)
         assert len(preconditions) == 1
 
     def test_exact_match_preserved(self):
         """tool: 'run' still matches only 'run'."""
 
         @precondition("run")
-        def deny_run(envelope):
-            return Verdict.fail("run denied")
+        def deny_run(tool_call):
+            return Decision.fail("run denied")
 
         guard = Edictum(
             environment="test",
-            contracts=[deny_run],
+            rules=[deny_run],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
         )
@@ -65,12 +65,12 @@ contracts:
         """tool: '*' matches all tools (existing behavior preserved)."""
 
         @precondition("*")
-        def deny_all(envelope):
-            return Verdict.fail("all denied")
+        def deny_all(tool_call):
+            return Decision.fail("all denied")
 
         guard = Edictum(
             environment="test",
-            contracts=[deny_all],
+            rules=[deny_all],
             audit_sink=NullAuditSink(),
             backend=MemoryBackend(),
         )

@@ -17,20 +17,20 @@ from edictum.server.verification import BundleVerificationError, verify_bundle_s
 
 VALID_BUNDLE_YAML = b"""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: test-bundle
 defaults:
   mode: enforce
-contracts:
-  - id: deny-rm
+rules:
+  - id: block-rm
     type: pre
     tool: bash
     when:
       args.command:
         contains: "rm -rf"
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied."
 """
 
@@ -78,7 +78,7 @@ def _server_patches():
         patch("edictum.server.audit_sink.ServerAuditSink"),
         patch("edictum.server.approval_backend.ServerApprovalBackend"),
         patch("edictum.server.backend.ServerBackend"),
-        patch("edictum.server.contract_source.ServerContractSource"),
+        patch("edictum.server.rule_source.ServerContractSource"),
     )
 
 
@@ -265,7 +265,7 @@ class TestSSEVerification:
             # Wait for the SSE task to process the unsigned bundle
             await guard._sse_task
 
-            # The initial contracts (1 precondition from from_server) should
+            # The initial rules (1 precondition from from_server) should
             # remain unchanged — the unsigned SSE update was rejected.
             assert len(guard._state.preconditions) == 1
             await guard.close()
@@ -306,43 +306,43 @@ class TestSSEVerification:
 
             await guard._sse_task
 
-            # Original contracts preserved — tampered update rejected
+            # Original rules preserved — tampered update rejected
             assert len(guard._state.preconditions) == 1
             await guard.close()
 
     @pytest.mark.asyncio
     async def test_sse_valid_signed_bundle_accepted(self, key_pair):
-        """SSE update with valid signature is accepted and contracts reload."""
+        """SSE update with valid signature is accepted and rules reload."""
         sk, vk = key_pair
         initial_sig = _sign(VALID_BUNDLE_YAML, sk)
         public_key_hex = vk.encode().hex()
 
-        # New bundle with a different contract
+        # New bundle with a different rule
         new_yaml = b"""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: updated-bundle
 defaults:
   mode: enforce
-contracts:
-  - id: deny-delete
+rules:
+  - id: block-delete
     type: pre
     tool: delete_file
     when:
       args.path:
         contains: "/etc"
     then:
-      effect: deny
+      action: block
       message: "System file deletion denied."
-  - id: deny-rm
+  - id: block-rm
     type: pre
     tool: bash
     when:
       args.command:
         contains: "rm -rf"
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied."
 """
         new_sig = _sign(new_yaml, sk)
@@ -372,7 +372,7 @@ contracts:
 
             await guard._sse_task
 
-            # New contracts loaded — 2 preconditions now
+            # New rules loaded — 2 preconditions now
             assert len(guard._state.preconditions) == 2
             await guard.close()
 
@@ -422,7 +422,7 @@ class TestSSEAssignmentChanged:
 
             await guard._sse_task
 
-            # Original contracts preserved — tampered re-fetch rejected
+            # Original rules preserved — tampered re-fetch rejected
             assert len(guard._state.preconditions) == 1
             await guard.close()
 
@@ -465,7 +465,7 @@ class TestSSEAssignmentChanged:
 
             await guard._sse_task
 
-            # Original contracts preserved — unsigned re-fetch rejected
+            # Original rules preserved — unsigned re-fetch rejected
             assert len(guard._state.preconditions) == 1
             await guard.close()
 
@@ -478,29 +478,29 @@ class TestSSEAssignmentChanged:
 
         new_yaml = b"""\
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 metadata:
   name: reassigned-bundle
 defaults:
   mode: enforce
-contracts:
-  - id: deny-delete
+rules:
+  - id: block-delete
     type: pre
     tool: delete_file
     when:
       args.path:
         contains: "/etc"
     then:
-      effect: deny
+      action: block
       message: "System file deletion denied."
-  - id: deny-rm
+  - id: block-rm
     type: pre
     tool: bash
     when:
       args.command:
         contains: "rm -rf"
     then:
-      effect: deny
+      action: block
       message: "Destructive command denied."
 """
         new_sig = _sign(new_yaml, sk)
@@ -536,7 +536,7 @@ contracts:
 
             await guard._sse_task
 
-            # New contracts loaded and bundle_name updated
+            # New rules loaded and bundle_name updated
             assert len(guard._state.preconditions) == 2
             assert guard._server_client.bundle_name == "new-bundle"
             await guard.close()

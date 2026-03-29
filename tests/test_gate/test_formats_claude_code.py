@@ -52,16 +52,16 @@ class TestClaudeCodeOutput:
         assert code == 0
 
     def test_format_deny(self) -> None:
-        stdout, code = self.fmt.format_output("deny", "test-contract", "Not allowed", 5)
+        stdout, code = self.fmt.format_output("block", "test-rule", "Not allowed", 5)
         result = json.loads(stdout)
         assert code == 0
         hook = result["hookSpecificOutput"]
         assert hook["hookEventName"] == "PreToolUse"
-        assert hook["permissionDecision"] == "deny"
-        assert "test-contract" in hook["permissionDecisionReason"]
+        assert hook["permissionDecision"] == "block"
+        assert "test-rule" in hook["permissionDecisionReason"]
         assert "Not allowed" in hook["permissionDecisionReason"]
 
     def test_format_deny_no_contract(self) -> None:
-        stdout, code = self.fmt.format_output("deny", None, "Generic deny", 0)
+        stdout, code = self.fmt.format_output("block", None, "Generic block", 0)
         result = json.loads(stdout)
-        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert result["hookSpecificOutput"]["permissionDecision"] == "block"

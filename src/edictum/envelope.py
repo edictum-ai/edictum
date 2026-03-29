@@ -37,7 +37,7 @@ class Principal:
     NOTE: ``claims`` is a mutable dict held inside a frozen dataclass.
     The *reference* is immutable (you cannot reassign ``principal.claims``),
     but the dict contents can still be mutated.  We accept this tradeoff to
-    keep Principal frozen for hashability and envelope immutability.  Callers
+    keep Principal frozen for hashability and tool_call immutability.  Callers
     should treat claims as read-only after construction.
     """
 
@@ -66,7 +66,7 @@ def _validate_tool_name(tool_name: str) -> None:
 
 
 @dataclass(frozen=True)
-class ToolEnvelope:
+class ToolCall:
     """Immutable snapshot of a tool invocation.
 
     Prefer create_envelope() factory for deep-copy guarantees.
@@ -131,7 +131,7 @@ class ToolRegistry:
 
 
 class BashClassifier:
-    """Classify bash commands by side-effect level.
+    """Classify bash commands by side-action level.
 
     Default is IRREVERSIBLE. Only downgraded to READ via strict
     allowlist AND absence of shell operators.
@@ -195,11 +195,11 @@ def create_envelope(
     run_id: str = "",
     call_index: int = 0,
     **kwargs,
-) -> ToolEnvelope:
+) -> ToolCall:
     """Factory that enforces immutability guarantees.
 
     Prefer this factory over direct construction — it deep-copies args
-    and metadata to ensure the envelope is a true immutable snapshot.
+    and metadata to ensure the tool_call is a true immutable snapshot.
     Direct construction is permitted but skips the deep-copy.
     """
     _validate_tool_name(tool_name)
@@ -249,7 +249,7 @@ def create_envelope(
     elif tool_name in ("Write", "Edit"):
         file_path = safe_args.get("file_path") or safe_args.get("filePath") or safe_args.get("path")
 
-    return ToolEnvelope(
+    return ToolCall(
         tool_name=tool_name,
         args=safe_args,
         run_id=run_id,

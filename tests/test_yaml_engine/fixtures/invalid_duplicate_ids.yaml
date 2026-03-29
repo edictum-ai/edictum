@@ -1,5 +1,5 @@
 apiVersion: edictum/v1
-kind: ContractBundle
+kind: Ruleset
 
 metadata:
   name: dup-ids
@@ -7,7 +7,7 @@ metadata:
 defaults:
   mode: enforce
 
-contracts:
+rules:
   - id: same-id
     type: pre
     tool: read_file
@@ -15,7 +15,7 @@ contracts:
       args.path:
         contains: ".env"
     then:
-      effect: deny
+      action: block
       message: "first"
 
   - id: same-id
@@ -25,5 +25,5 @@ contracts:
       args.path:
         contains: ".env"
     then:
-      effect: deny
+      action: block
       message: "second — duplicate ID"

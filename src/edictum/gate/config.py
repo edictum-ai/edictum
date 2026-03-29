@@ -57,7 +57,7 @@ def _default_scope_allowlist() -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class GateConfig:
-    contracts: tuple[str, ...] = (str(DEFAULT_GATE_DIR / "contracts" / "base.yaml"),)
+    rules: tuple[str, ...] = (str(DEFAULT_GATE_DIR / "rules" / "base.yaml"),)
     console: ConsoleConfig | None = None
     audit: AuditConfig = field(default_factory=AuditConfig)
     redaction: RedactionConfig = field(default_factory=RedactionConfig)
@@ -103,10 +103,10 @@ def load_gate_config(path: Path | None = None) -> GateConfig:
 def _parse_config(raw: dict[str, Any]) -> GateConfig:
     """Parse a raw config dict into a GateConfig."""
     # Contracts
-    contracts_raw = raw.get("contracts", [])
+    contracts_raw = raw.get("rules", [])
     if not contracts_raw:
-        contracts_raw = [str(DEFAULT_GATE_DIR / "contracts" / "base.yaml")]
-    contracts = tuple(str(c) for c in contracts_raw)
+        contracts_raw = [str(DEFAULT_GATE_DIR / "rules" / "base.yaml")]
+    rules = tuple(str(c) for c in contracts_raw)
 
     # Console
     console = None
@@ -160,7 +160,7 @@ def _parse_config(raw: dict[str, Any]) -> GateConfig:
         scope_allowlist = _default_scope_allowlist()
 
     return GateConfig(
-        contracts=contracts,
+        rules=rules,
         console=console,
         audit=audit,
         redaction=redaction,

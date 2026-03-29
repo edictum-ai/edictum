@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from edictum import Edictum, Verdict, postcondition, precondition
+from edictum import Decision, Edictum, postcondition, precondition
 from edictum.adapters.semantic_kernel import SemanticKernelAdapter
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
@@ -32,10 +32,10 @@ class TestSemanticKernelAdapter:
 
     async def test_deny_returns_correct_format(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("denied")
+        def always_deny(tool_call):
+            return Decision.fail("denied")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = SemanticKernelAdapter(guard)
         result = await adapter._pre(
             tool_name="TestTool",
@@ -64,10 +64,10 @@ class TestSemanticKernelAdapter:
 
     async def test_deny_clears_pending(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("no")
+        def always_deny(tool_call):
+            return Decision.fail("no")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = SemanticKernelAdapter(guard)
 
         await adapter._pre(
@@ -96,11 +96,11 @@ class TestSemanticKernelAdapter:
 
     async def test_observe_mode_would_deny(self):
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("would be denied")
+        def always_deny(tool_call):
+            return Decision.fail("would be denied")
 
         sink = NullAuditSink()
-        guard = make_guard(mode="observe", contracts=[always_deny], audit_sink=sink)
+        guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
         adapter = SemanticKernelAdapter(guard)
 
         result = await adapter._pre(
@@ -156,10 +156,10 @@ class TestSemanticKernelFunctionResultWrapping:
         """Denial from _pre should return a string that register() wraps in FunctionResult."""
 
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("access denied")
+        def always_deny(tool_call):
+            return Decision.fail("access denied")
 
-        guard = make_guard(contracts=[always_deny])
+        guard = make_guard(rules=[always_deny])
         adapter = SemanticKernelAdapter(guard)
         result = await adapter._pre(tool_name="TestTool", tool_input={}, call_id="call-1")
 
@@ -175,8 +175,8 @@ class TestSemanticKernelFunctionResultWrapping:
         from unittest.mock import AsyncMock
 
         @precondition("*")
-        def always_deny(envelope):
-            return Verdict.fail("access denied")
+        def always_deny(tool_call):
+            return Decision.fail("access denied")
 
         # Mock SK modules
         mock_sk_filters = ModuleType("semantic_kernel.filters")
@@ -199,7 +199,7 @@ class TestSemanticKernelFunctionResultWrapping:
         sys.modules["semantic_kernel.functions"] = mock_sk_functions
 
         try:
-            guard = make_guard(contracts=[always_deny])
+            guard = make_guard(rules=[always_deny])
             adapter = SemanticKernelAdapter(guard)
 
             # Mock kernel with filter decorator
@@ -247,7 +247,7 @@ class TestSemanticKernelFunctionResultWrapping:
     async def test_register_wraps_postcondition_remediation_in_function_result(self):
         """Postcondition remediation should wrap callback result in FunctionResult.
 
-        Uses a real postcondition contract that always warns, forcing the
+        Uses a real postcondition rule that always warns, forcing the
         on_postcondition_warn callback path in the SK filter. Verifies the
         callback return value is wrapped in FunctionResult via _wrap_result().
         """
@@ -255,8 +255,8 @@ class TestSemanticKernelFunctionResultWrapping:
         from types import ModuleType, SimpleNamespace
 
         @postcondition("*")
-        def always_warn(envelope, tool_response):
-            return Verdict.fail("PII detected in output")
+        def always_warn(tool_call, tool_response):
+            return Decision.fail("PII detected in output")
 
         # Mock SK modules
         mock_sk_filters = ModuleType("semantic_kernel.filters")
@@ -279,7 +279,7 @@ class TestSemanticKernelFunctionResultWrapping:
         sys.modules["semantic_kernel.functions"] = mock_sk_functions
 
         try:
-            guard = make_guard(contracts=[always_warn])
+            guard = make_guard(rules=[always_warn])
             adapter = SemanticKernelAdapter(guard)
 
             captured_filter = None
@@ -293,7 +293,7 @@ class TestSemanticKernelFunctionResultWrapping:
 
                     return decorator
 
-            def redact_callback(result, findings):
+            def redact_callback(result, violations):
                 return "[REDACTED]"
 
             kernel = MockKernel()

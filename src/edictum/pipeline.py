@@ -1,4 +1,4 @@
-"""GovernancePipeline — single source of governance logic."""
+"""CheckPipeline — single source of governance logic."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from edictum.contracts import Verdict
-from edictum.envelope import SideEffect, ToolEnvelope
+from edictum.envelope import SideEffect, ToolCall
 from edictum.hooks import HookDecision, HookResult
+from edictum.rules import Decision
 from edictum.session import Session
 
 if TYPE_CHECKING:
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class PreDecision:
     """Result of pre-execution governance evaluation."""
 
-    action: str  # "allow" | "deny" | "pending_approval"
+    action: str  # "allow" | "block" | "pending_approval"
     reason: str | None = None
     decision_source: str | None = None
     decision_name: str | None = None
@@ -32,7 +32,7 @@ class PreDecision:
     policy_error: bool = False
     observe_results: list[dict] = field(default_factory=list)
     approval_timeout: int = 300
-    approval_timeout_effect: str = "deny"
+    approval_timeout_action: str = "block"
     approval_message: str | None = None
     workflow: dict[str, Any] | None = None
     workflow_stage_id: str | None = None
@@ -53,7 +53,7 @@ class PostDecision:
     output_suppressed: bool = False
 
 
-class GovernancePipeline:
+class CheckPipeline:
     """Orchestrates all governance checks.
 
     This is the single source of truth for governance logic.
@@ -66,7 +66,7 @@ class GovernancePipeline:
 
     async def pre_execute(
         self,
-        envelope: ToolEnvelope,
+        tool_call: ToolCall,
         session: Session,
     ) -> PreDecision:
         """Run all pre-execution governance checks."""
@@ -78,8 +78,8 @@ class GovernancePipeline:
         # round trips when using ServerBackend.  The tool-specific key
         # is included only when a per-tool limit is configured.
         tool_name_for_batch: str | None = None
-        if envelope.tool_name in self._guard.limits.max_calls_per_tool:
-            tool_name_for_batch = envelope.tool_name
+        if tool_call.tool_name in self._guard.limits.max_calls_per_tool:
+            tool_name_for_batch = tool_call.tool_name
         counters = await session.batch_get_counters(
             include_tool=tool_name_for_batch,
         )
@@ -88,7 +88,7 @@ class GovernancePipeline:
         attempt_count = counters["attempts"]
         if attempt_count >= self._guard.limits.max_attempts:
             return PreDecision(
-                action="deny",
+                action="block",
                 reason=f"Attempt limit reached ({self._guard.limits.max_attempts}). "
                 "Agent may be stuck in a retry loop. Stop and reassess.",
                 decision_source="attempt_limit",
@@ -98,16 +98,16 @@ class GovernancePipeline:
             )
 
         # 2. Before hooks (Fix 5: catch exceptions)
-        for hook_reg in self._guard.get_hooks("before", envelope):
-            if hook_reg.when and not hook_reg.when(envelope):
+        for hook_reg in self._guard.get_hooks("before", tool_call):
+            if hook_reg.when and not hook_reg.when(tool_call):
                 continue
             try:
-                decision = hook_reg.callback(envelope)
+                decision = hook_reg.callback(tool_call)
                 if asyncio.iscoroutine(decision):
                     decision = await decision
             except Exception as exc:
                 logger.exception("Hook %s raised", getattr(hook_reg.callback, "__name__", "anonymous"))
-                decision = HookDecision.deny(f"Hook error: {exc}")
+                decision = HookDecision.block(f"Hook error: {exc}")
 
             hook_record = {
                 "name": getattr(hook_reg.callback, "__name__", "anonymous"),
@@ -118,7 +118,7 @@ class GovernancePipeline:
 
             if decision.result == HookResult.DENY:
                 return PreDecision(
-                    action="deny",
+                    action="block",
                     reason=decision.reason,
                     decision_source="hook",
                     decision_name=hook_record["name"],
@@ -128,54 +128,54 @@ class GovernancePipeline:
                 )
 
         # 3. Preconditions (Fix 5: catch exceptions)
-        for contract in self._guard.get_preconditions(envelope):
+        for rule in self._guard.get_preconditions(tool_call):
             try:
-                verdict = contract(envelope)
-                if asyncio.iscoroutine(verdict):
-                    verdict = await verdict
+                decision = rule(tool_call)
+                if asyncio.iscoroutine(decision):
+                    decision = await decision
             except Exception as exc:
-                logger.exception("Precondition %s raised", getattr(contract, "__name__", "anonymous"))
-                verdict = Verdict.fail(f"Precondition error: {exc}", policy_error=True)
+                logger.exception("Precondition %s raised", getattr(rule, "__name__", "anonymous"))
+                decision = Decision.fail(f"Precondition error: {exc}", policy_error=True)
 
-            contract_mode = getattr(contract, "_edictum_mode", None)
+            contract_mode = getattr(rule, "_edictum_mode", None)
             contract_record = {
-                "name": getattr(contract, "__name__", "anonymous"),
+                "name": getattr(rule, "__name__", "anonymous"),
                 "type": "precondition",
-                "passed": verdict.passed,
-                "message": verdict.message,
+                "passed": decision.passed,
+                "message": decision.message,
             }
-            if verdict.metadata:
-                contract_record["metadata"] = verdict.metadata
+            if decision.metadata:
+                contract_record["metadata"] = decision.metadata
             contracts_evaluated.append(contract_record)
 
-            if not verdict.passed:
-                # Per-contract observe mode: record but don't deny (Fix 4)
+            if not decision.passed:
+                # Per-contract observe mode: record but don't block (Fix 4)
                 if contract_mode == "observe":
                     contract_record["observed"] = True
                     has_observed_deny = True
                     continue
 
-                source = getattr(contract, "_edictum_source", "precondition")
+                source = getattr(rule, "_edictum_source", "precondition")
                 pe = any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated)
 
-                effect = getattr(contract, "_edictum_effect", "deny")
-                if effect == "approve":
+                action = getattr(rule, "_edictum_effect", "block")
+                if action == "ask":
                     return PreDecision(
                         action="pending_approval",
-                        reason=verdict.message,
+                        reason=decision.message,
                         decision_source=source,
                         decision_name=contract_record["name"],
                         hooks_evaluated=hooks_evaluated,
                         contracts_evaluated=contracts_evaluated,
                         policy_error=pe,
-                        approval_timeout=getattr(contract, "_edictum_timeout", 300),
-                        approval_timeout_effect=getattr(contract, "_edictum_timeout_effect", "deny"),
-                        approval_message=verdict.message,
+                        approval_timeout=getattr(rule, "_edictum_timeout", 300),
+                        approval_timeout_action=getattr(rule, "_edictum_timeout_action", "block"),
+                        approval_message=decision.message,
                     )
 
                 return PreDecision(
-                    action="deny",
-                    reason=verdict.message,
+                    action="block",
+                    reason=decision.message,
                     decision_source=source,
                     decision_name=contract_record["name"],
                     hooks_evaluated=hooks_evaluated,
@@ -183,54 +183,54 @@ class GovernancePipeline:
                     policy_error=pe,
                 )
 
-        # 3.5. Sandbox contracts
-        for contract in self._guard.get_sandbox_contracts(envelope):
+        # 3.5. Sandbox rules
+        for rule in self._guard.get_sandbox_contracts(tool_call):
             try:
-                verdict = contract(envelope)
-                if asyncio.iscoroutine(verdict):
-                    verdict = await verdict
+                decision = rule(tool_call)
+                if asyncio.iscoroutine(decision):
+                    decision = await decision
             except Exception as exc:
-                logger.exception("Sandbox contract %s raised", getattr(contract, "__name__", "anonymous"))
-                verdict = Verdict.fail(f"Sandbox contract error: {exc}", policy_error=True)
+                logger.exception("Sandbox rule %s raised", getattr(rule, "__name__", "anonymous"))
+                decision = Decision.fail(f"Sandbox rule error: {exc}", policy_error=True)
 
-            contract_mode = getattr(contract, "_edictum_mode", None)
+            contract_mode = getattr(rule, "_edictum_mode", None)
             contract_record = {
-                "name": getattr(contract, "__name__", "anonymous"),
+                "name": getattr(rule, "__name__", "anonymous"),
                 "type": "sandbox",
-                "passed": verdict.passed,
-                "message": verdict.message,
+                "passed": decision.passed,
+                "message": decision.message,
             }
-            if verdict.metadata:
-                contract_record["metadata"] = verdict.metadata
+            if decision.metadata:
+                contract_record["metadata"] = decision.metadata
             contracts_evaluated.append(contract_record)
 
-            if not verdict.passed:
+            if not decision.passed:
                 if contract_mode == "observe":
                     contract_record["observed"] = True
                     has_observed_deny = True
                     continue
 
-                source = getattr(contract, "_edictum_source", "yaml_sandbox")
+                source = getattr(rule, "_edictum_source", "yaml_sandbox")
                 pe = any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated)
 
-                effect = getattr(contract, "_edictum_effect", "deny")
-                if effect == "approve":
+                action = getattr(rule, "_edictum_effect", "block")
+                if action == "ask":
                     return PreDecision(
                         action="pending_approval",
-                        reason=verdict.message,
+                        reason=decision.message,
                         decision_source=source,
                         decision_name=contract_record["name"],
                         hooks_evaluated=hooks_evaluated,
                         contracts_evaluated=contracts_evaluated,
                         policy_error=pe,
-                        approval_timeout=getattr(contract, "_edictum_timeout", 300),
-                        approval_timeout_effect=getattr(contract, "_edictum_timeout_effect", "deny"),
-                        approval_message=verdict.message,
+                        approval_timeout=getattr(rule, "_edictum_timeout", 300),
+                        approval_timeout_action=getattr(rule, "_edictum_timeout_action", "block"),
+                        approval_message=decision.message,
                     )
 
                 return PreDecision(
-                    action="deny",
-                    reason=verdict.message,
+                    action="block",
+                    reason=decision.message,
                     decision_source=source,
                     decision_name=contract_record["name"],
                     hooks_evaluated=hooks_evaluated,
@@ -238,32 +238,32 @@ class GovernancePipeline:
                     policy_error=pe,
                 )
 
-        # 4. Session contracts (Fix 5: catch exceptions)
-        for contract in self._guard.get_session_contracts():
+        # 4. Session rules (Fix 5: catch exceptions)
+        for rule in self._guard.get_session_contracts():
             try:
-                verdict = contract(session)
-                if asyncio.iscoroutine(verdict):
-                    verdict = await verdict
+                decision = rule(session)
+                if asyncio.iscoroutine(decision):
+                    decision = await decision
             except Exception as exc:
-                logger.exception("Session contract %s raised", getattr(contract, "__name__", "anonymous"))
-                verdict = Verdict.fail(f"Session contract error: {exc}", policy_error=True)
+                logger.exception("Session rule %s raised", getattr(rule, "__name__", "anonymous"))
+                decision = Decision.fail(f"Session rule error: {exc}", policy_error=True)
 
             contract_record = {
-                "name": getattr(contract, "__name__", "anonymous"),
+                "name": getattr(rule, "__name__", "anonymous"),
                 "type": "session_contract",
-                "passed": verdict.passed,
-                "message": verdict.message,
+                "passed": decision.passed,
+                "message": decision.message,
             }
-            if verdict.metadata:
-                contract_record["metadata"] = verdict.metadata
+            if decision.metadata:
+                contract_record["metadata"] = decision.metadata
             contracts_evaluated.append(contract_record)
 
-            if not verdict.passed:
-                source = getattr(contract, "_edictum_source", "session_contract")
+            if not decision.passed:
+                source = getattr(rule, "_edictum_source", "session_contract")
                 pe = any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated)
                 return PreDecision(
-                    action="deny",
-                    reason=verdict.message,
+                    action="block",
+                    reason=decision.message,
                     decision_source=source,
                     decision_name=contract_record["name"],
                     hooks_evaluated=hooks_evaluated,
@@ -279,7 +279,7 @@ class GovernancePipeline:
         # 5. Workflow gates
         if self._guard._workflow_runtime is not None:
             try:
-                workflow_eval = await self._guard._workflow_runtime.evaluate(session, envelope)
+                workflow_eval = await self._guard._workflow_runtime.evaluate(session, tool_call)
             except Exception as exc:
                 contract_record = {
                     "name": "workflow:error",
@@ -290,7 +290,7 @@ class GovernancePipeline:
                 }
                 contracts_evaluated.append(contract_record)
                 return PreDecision(
-                    action="deny",
+                    action="block",
                     reason=f"Workflow evaluation error: {exc}",
                     decision_source="workflow",
                     decision_name="workflow_error",
@@ -313,7 +313,7 @@ class GovernancePipeline:
 
             if workflow_eval.action == "block":
                 return PreDecision(
-                    action="deny",
+                    action="block",
                     reason=workflow_eval.reason,
                     decision_source="workflow",
                     decision_name=workflow_eval.stage_id or None,
@@ -346,7 +346,7 @@ class GovernancePipeline:
         exec_count = counters["execs"]
         if exec_count >= self._guard.limits.max_tool_calls:
             return PreDecision(
-                action="deny",
+                action="block",
                 reason=f"Execution limit reached ({self._guard.limits.max_tool_calls} calls). "
                 "Summarize progress and stop.",
                 decision_source="operation_limit",
@@ -360,16 +360,16 @@ class GovernancePipeline:
             )
 
         # Per-tool limits (use pre-fetched counter when available)
-        if envelope.tool_name in self._guard.limits.max_calls_per_tool:
-            tool_key = f"tool:{envelope.tool_name}"
+        if tool_call.tool_name in self._guard.limits.max_calls_per_tool:
+            tool_key = f"tool:{tool_call.tool_name}"
             tool_count = counters.get(tool_key, 0)
-            tool_limit = self._guard.limits.max_calls_per_tool[envelope.tool_name]
+            tool_limit = self._guard.limits.max_calls_per_tool[tool_call.tool_name]
             if tool_count >= tool_limit:
                 return PreDecision(
-                    action="deny",
-                    reason=f"Per-tool limit: {envelope.tool_name} called {tool_count} times (limit: {tool_limit}).",
+                    action="block",
+                    reason=f"Per-tool limit: {tool_call.tool_name} called {tool_count} times (limit: {tool_limit}).",
                     decision_source="operation_limit",
-                    decision_name=f"max_calls_per_tool:{envelope.tool_name}",
+                    decision_name=f"max_calls_per_tool:{tool_call.tool_name}",
                     hooks_evaluated=hooks_evaluated,
                     contracts_evaluated=contracts_evaluated,
                     workflow=workflow_meta,
@@ -381,8 +381,8 @@ class GovernancePipeline:
         # 6. All checks passed
         pe = any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated)
 
-        # 7. Observe-mode contract evaluation (never affects the decision)
-        observe_results = await self._evaluate_observe_contracts(envelope, session)
+        # 7. Observe-mode rule evaluation (never affects the decision)
+        observe_results = await self._evaluate_observe_rules(tool_call, session)
 
         return PreDecision(
             action="allow",
@@ -399,7 +399,7 @@ class GovernancePipeline:
 
     async def post_execute(
         self,
-        envelope: ToolEnvelope,
+        tool_call: ToolCall,
         tool_response: Any,
         tool_success: bool,
     ) -> PostDecision:
@@ -410,37 +410,37 @@ class GovernancePipeline:
         output_suppressed: bool = False
 
         # 1. Postconditions (Fix 5: catch exceptions)
-        for contract in self._guard.get_postconditions(envelope):
+        for rule in self._guard.get_postconditions(tool_call):
             try:
-                verdict = contract(envelope, tool_response)
-                if asyncio.iscoroutine(verdict):
-                    verdict = await verdict
+                decision = rule(tool_call, tool_response)
+                if asyncio.iscoroutine(decision):
+                    decision = await decision
             except Exception as exc:
-                logger.exception("Postcondition %s raised", getattr(contract, "__name__", "anonymous"))
-                verdict = Verdict.fail(f"Postcondition error: {exc}", policy_error=True)
+                logger.exception("Postcondition %s raised", getattr(rule, "__name__", "anonymous"))
+                decision = Decision.fail(f"Postcondition error: {exc}", policy_error=True)
 
-            contract_mode = getattr(contract, "_edictum_mode", None)
+            contract_mode = getattr(rule, "_edictum_mode", None)
             contract_record = {
-                "name": getattr(contract, "__name__", "anonymous"),
+                "name": getattr(rule, "__name__", "anonymous"),
                 "type": "postcondition",
-                "passed": verdict.passed,
-                "message": verdict.message,
+                "passed": decision.passed,
+                "message": decision.message,
             }
             if contract_mode == "observe":
                 contract_record["observed"] = True
-            if verdict.metadata:
-                contract_record["metadata"] = verdict.metadata
+            if decision.metadata:
+                contract_record["metadata"] = decision.metadata
             contracts_evaluated.append(contract_record)
 
-            if not verdict.passed:
-                effect = getattr(contract, "_edictum_effect", "warn")
-                is_safe = envelope.side_effect in (SideEffect.PURE, SideEffect.READ)
+            if not decision.passed:
+                action = getattr(rule, "_edictum_effect", "warn")
+                is_safe = tool_call.side_effect in (SideEffect.PURE, SideEffect.READ)
 
                 # Observe mode takes precedence
                 if contract_mode == "observe":
-                    warnings.append(f"\u26a0\ufe0f [observe] {verdict.message}")
-                elif effect == "redact" and is_safe:
-                    patterns = getattr(contract, "_edictum_redact_patterns", [])
+                    warnings.append(f"\u26a0\ufe0f [observe] {decision.message}")
+                elif action == "redact" and is_safe:
+                    patterns = getattr(rule, "_edictum_redact_patterns", [])
                     source = redacted_response if redacted_response is not None else tool_response
                     text = str(source) if source is not None else ""
                     if patterns:
@@ -452,67 +452,67 @@ class GovernancePipeline:
                         text = RedactionPolicy().redact_result(text, max_length=len(text) + 100)
                     redacted_response = text
                     warnings.append(f"\u26a0\ufe0f Content redacted by {contract_record['name']}.")
-                elif effect == "deny" and is_safe:
-                    redacted_response = f"[OUTPUT SUPPRESSED] {verdict.message}"
+                elif action == "block" and is_safe:
+                    redacted_response = f"[OUTPUT SUPPRESSED] {decision.message}"
                     output_suppressed = True
                     warnings.append(f"\u26a0\ufe0f Output suppressed by {contract_record['name']}.")
-                elif effect in ("redact", "deny") and not is_safe:
+                elif action in ("redact", "block") and not is_safe:
                     logger.warning(
-                        "Postcondition %s declares effect=%s but tool %s has side_effect=%s; falling back to warn.",
+                        "Postcondition %s declares action=%s but tool %s has side_effect=%s; falling back to warn.",
                         contract_record["name"],
-                        effect,
-                        envelope.tool_name,
-                        envelope.side_effect.value,
+                        action,
+                        tool_call.tool_name,
+                        tool_call.side_effect.value,
                     )
                     warnings.append(
-                        f"\u26a0\ufe0f {verdict.message} Tool already executed \u2014 assess before proceeding."
+                        f"\u26a0\ufe0f {decision.message} Tool already executed \u2014 assess before proceeding."
                     )
                 elif is_safe:
-                    warnings.append(f"\u26a0\ufe0f {verdict.message} Consider retrying.")
+                    warnings.append(f"\u26a0\ufe0f {decision.message} Consider retrying.")
                 else:
                     warnings.append(
-                        f"\u26a0\ufe0f {verdict.message} Tool already executed \u2014 assess before proceeding."
+                        f"\u26a0\ufe0f {decision.message} Tool already executed \u2014 assess before proceeding."
                     )
 
         # 2. Observe-mode postconditions (from observe_alongside bundles)
-        for contract in self._guard.get_observe_postconditions(envelope):
+        for rule in self._guard.get_observe_postconditions(tool_call):
             try:
-                verdict = contract(envelope, tool_response)
-                if asyncio.iscoroutine(verdict):
-                    verdict = await verdict
+                decision = rule(tool_call, tool_response)
+                if asyncio.iscoroutine(decision):
+                    decision = await decision
             except Exception as exc:
                 logger.exception(
                     "Observe-mode postcondition %s raised",
-                    getattr(contract, "__name__", "anonymous"),
+                    getattr(rule, "__name__", "anonymous"),
                 )
-                verdict = Verdict.fail(f"Observe-mode postcondition error: {exc}", policy_error=True)
+                decision = Decision.fail(f"Observe-mode postcondition error: {exc}", policy_error=True)
 
             contract_record = {
-                "name": getattr(contract, "__name__", "anonymous"),
+                "name": getattr(rule, "__name__", "anonymous"),
                 "type": "postcondition",
-                "passed": verdict.passed,
-                "message": verdict.message,
+                "passed": decision.passed,
+                "message": decision.message,
                 "observed": True,
             }
-            if verdict.metadata:
-                contract_record["metadata"] = verdict.metadata
+            if decision.metadata:
+                contract_record["metadata"] = decision.metadata
             contracts_evaluated.append(contract_record)
 
-            if not verdict.passed:
-                warnings.append(f"\u26a0\ufe0f [observe] {verdict.message}")
+            if not decision.passed:
+                warnings.append(f"\u26a0\ufe0f [observe] {decision.message}")
 
         # 3. After hooks (Fix 5: catch exceptions)
-        for hook_reg in self._guard.get_hooks("after", envelope):
-            if hook_reg.when and not hook_reg.when(envelope):
+        for hook_reg in self._guard.get_hooks("after", tool_call):
+            if hook_reg.when and not hook_reg.when(tool_call):
                 continue
             try:
-                result = hook_reg.callback(envelope, tool_response)
+                result = hook_reg.callback(tool_call, tool_response)
                 if asyncio.iscoroutine(result):
                     await result
             except Exception:
                 logger.exception("After hook %s raised", getattr(hook_reg.callback, "__name__", "anonymous"))
 
-        # Exclude observe-mode contracts — they must never affect postconditions_passed,
+        # Exclude observe-mode rules — they must never affect postconditions_passed,
         # which propagates to on_postcondition_warn callbacks in all adapters.
         enforce_contracts = [c for c in contracts_evaluated if not c.get("observed")]
         postconditions_passed = all(c["passed"] for c in enforce_contracts) if enforce_contracts else True
@@ -528,75 +528,75 @@ class GovernancePipeline:
             output_suppressed=output_suppressed,
         )
 
-    async def _evaluate_observe_contracts(
+    async def _evaluate_observe_rules(
         self,
-        envelope: ToolEnvelope,
+        tool_call: ToolCall,
         session: Session,
     ) -> list[dict]:
-        """Evaluate observe-mode contracts without affecting the real decision.
+        """Evaluate observe-mode rules without affecting the real decision.
 
-        Observe-mode contracts are identified by ``_edictum_observe = True``.
+        Observe-mode rules are identified by ``_edictum_observe = True``.
         Results are returned as dicts for audit emission but never block calls.
         """
         results: list[dict] = []
 
         # Observe-mode preconditions
-        for contract in self._guard.get_observe_preconditions(envelope):
+        for rule in self._guard.get_observe_preconditions(tool_call):
             try:
-                verdict = contract(envelope)
-                if asyncio.iscoroutine(verdict):
-                    verdict = await verdict
+                decision = rule(tool_call)
+                if asyncio.iscoroutine(decision):
+                    decision = await decision
             except Exception as exc:
-                logger.exception("Observe-mode precondition %s raised", getattr(contract, "__name__", "anonymous"))
-                verdict = Verdict.fail(f"Observe-mode precondition error: {exc}", policy_error=True)
+                logger.exception("Observe-mode precondition %s raised", getattr(rule, "__name__", "anonymous"))
+                decision = Decision.fail(f"Observe-mode precondition error: {exc}", policy_error=True)
 
             results.append(
                 {
-                    "name": getattr(contract, "__name__", "anonymous"),
+                    "name": getattr(rule, "__name__", "anonymous"),
                     "type": "precondition",
-                    "passed": verdict.passed,
-                    "message": verdict.message,
-                    "source": getattr(contract, "_edictum_source", "yaml_precondition"),
+                    "passed": decision.passed,
+                    "message": decision.message,
+                    "source": getattr(rule, "_edictum_source", "yaml_precondition"),
                 }
             )
 
-        # Observe-mode sandbox contracts
-        for contract in self._guard.get_observe_sandbox_contracts(envelope):
+        # Observe-mode sandbox rules
+        for rule in self._guard.get_observe_sandbox_contracts(tool_call):
             try:
-                verdict = contract(envelope)
-                if asyncio.iscoroutine(verdict):
-                    verdict = await verdict
+                decision = rule(tool_call)
+                if asyncio.iscoroutine(decision):
+                    decision = await decision
             except Exception as exc:
-                logger.exception("Observe-mode sandbox %s raised", getattr(contract, "__name__", "anonymous"))
-                verdict = Verdict.fail(f"Observe-mode sandbox error: {exc}", policy_error=True)
+                logger.exception("Observe-mode sandbox %s raised", getattr(rule, "__name__", "anonymous"))
+                decision = Decision.fail(f"Observe-mode sandbox error: {exc}", policy_error=True)
 
             results.append(
                 {
-                    "name": getattr(contract, "__name__", "anonymous"),
+                    "name": getattr(rule, "__name__", "anonymous"),
                     "type": "sandbox",
-                    "passed": verdict.passed,
-                    "message": verdict.message,
-                    "source": getattr(contract, "_edictum_source", "yaml_sandbox"),
+                    "passed": decision.passed,
+                    "message": decision.message,
+                    "source": getattr(rule, "_edictum_source", "yaml_sandbox"),
                 }
             )
 
-        # Observe-mode session contracts — evaluate against the real session
-        for contract in self._guard.get_observe_session_contracts():
+        # Observe-mode session rules — evaluate against the real session
+        for rule in self._guard.get_observe_session_contracts():
             try:
-                verdict = contract(session)
-                if asyncio.iscoroutine(verdict):
-                    verdict = await verdict
+                decision = rule(session)
+                if asyncio.iscoroutine(decision):
+                    decision = await decision
             except Exception as exc:
-                logger.exception("Observe-mode session contract %s raised", getattr(contract, "__name__", "anonymous"))
-                verdict = Verdict.fail(f"Observe-mode session contract error: {exc}", policy_error=True)
+                logger.exception("Observe-mode session rule %s raised", getattr(rule, "__name__", "anonymous"))
+                decision = Decision.fail(f"Observe-mode session rule error: {exc}", policy_error=True)
 
             results.append(
                 {
-                    "name": getattr(contract, "__name__", "anonymous"),
+                    "name": getattr(rule, "__name__", "anonymous"),
                     "type": "session_contract",
-                    "passed": verdict.passed,
-                    "message": verdict.message,
-                    "source": getattr(contract, "_edictum_source", "yaml_session"),
+                    "passed": decision.passed,
+                    "message": decision.message,
+                    "source": getattr(rule, "_edictum_source", "yaml_session"),
                 }
             )
 
