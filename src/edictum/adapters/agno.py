@@ -412,6 +412,7 @@ class AgnoAdapter:
         raise RuntimeError(f"workflow: exceeded maximum approval rounds ({_MAX_WORKFLOW_APPROVAL_ROUNDS})")
 
     async def _handle_approval(self, envelope: Any, decision: Any, span: Any) -> str | None:
+        """Return a blocked result on approval failure; caller closes the span."""
         if self._guard._approval_backend is None:
             reason = "Approval required but no approval backend configured"
             await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_DENIED)

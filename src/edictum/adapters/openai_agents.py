@@ -212,6 +212,7 @@ class OpenAIAgentsAdapter:
             if decision.action == "pending_approval":
                 blocked_result, decision = await self._resolve_pending_approval(envelope, decision, span)
                 if blocked_result is not None:
+                    span.end()
                     self._pending.pop(call_id, None)
                     self._pending_decisions.pop(call_id, None)
                     return blocked_result
@@ -435,6 +436,7 @@ class OpenAIAgentsAdapter:
         raise RuntimeError(f"workflow: exceeded maximum approval rounds ({_MAX_WORKFLOW_APPROVAL_ROUNDS})")
 
     async def _handle_approval(self, envelope: Any, decision: Any, span: Any) -> str | None:
+        """Return a blocked result on approval failure; caller closes the span."""
         if self._guard._approval_backend is None:
             reason = "Approval required but no approval backend configured"
             await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_DENIED)
@@ -446,7 +448,6 @@ class OpenAIAgentsAdapter:
                     logger.exception("on_deny callback raised")
             span.set_attribute("governance.action", "denied")
             self._guard.telemetry.set_span_error(span, reason)
-            span.end()
             return self._deny(reason)
 
         principal_dict = asdict(envelope.principal) if envelope.principal else None
@@ -490,7 +491,6 @@ class OpenAIAgentsAdapter:
                 logger.exception("on_deny callback raised")
         span.set_attribute("governance.action", "denied")
         self._guard.telemetry.set_span_error(span, reason)
-        span.end()
         return self._deny(f"Approval blocked: {reason}")
 
     def _check_tool_success(self, tool_name: str, tool_response: Any) -> bool:
