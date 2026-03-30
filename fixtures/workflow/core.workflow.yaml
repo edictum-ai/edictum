@@ -1,0 +1,397 @@
+suite: workflow-core
+version: 1
+description: "Core Spec 008 workflow gate conformance cases"
+
+workflows:
+  core-dev-process:
+    apiVersion: edictum/v1
+    kind: Workflow
+    metadata:
+      name: core-dev-process
+    stages:
+      - id: read-context
+        description: "Read the workflow spec before editing"
+        tools: [Read]
+        exit:
+          - condition: file_read("specs/008.md")
+            message: "Read the workflow spec first"
+
+      - id: implement
+        description: "Make changes"
+        entry:
+          - condition: stage_complete("read-context")
+        tools: [Edit]
+
+      - id: local-verify
+        description: "Run local verification"
+        entry:
+          - condition: stage_complete("implement")
+        tools: [Bash]
+        checks:
+          - command_matches: "^npm test$"
+            message: "Only npm test is allowed in local-verify"
+        exit:
+          - condition: command_matches("^npm test$")
+            message: "Run npm test successfully before moving on"
+
+      - id: review
+        description: "Pause for approval"
+        entry:
+          - condition: stage_complete("local-verify")
+        approval:
+          message: "Approval required before push"
+
+      - id: commit-push
+        description: "Push a branch"
+        entry:
+          - condition: stage_complete("review")
+        tools: [Bash]
+        checks:
+          - command_matches: "^git push origin [a-z0-9._/-]+$"
+            message: "Only branch pushes are allowed in commit-push"
+          - command_not_matches: "^git push origin main$"
+            message: "Push to a branch, not main"
+        exit:
+          - condition: command_matches("^git push origin [a-z0-9._/-]+$")
+            message: "A successful branch push is required"
+
+  entry-gated-verify:
+    apiVersion: edictum/v1
+    kind: Workflow
+    metadata:
+      name: entry-gated-verify
+    stages:
+      - id: implement
+        description: "Make changes"
+        tools: [Edit]
+
+      - id: local-verify
+        description: "Run local verification after reading the checklist"
+        entry:
+          - condition: stage_complete("implement")
+          - condition: file_read("qa/checklist.md")
+            message: "Read the QA checklist before local verify"
+        tools: [Bash]
+        checks:
+          - command_matches: "^npm test$"
+            message: "Only npm test is allowed in local-verify"
+        exit:
+          - condition: command_matches("^npm test$")
+            message: "Run npm test successfully before moving on"
+
+fixtures:
+  - id: wf-001
+    workflow: core-dev-process
+    description: "cannot edit before read-context"
+    initial_state:
+      session_id: session-001
+      active_stage: read-context
+      completed_stages: []
+      approvals: {}
+      evidence:
+        reads: []
+        stage_calls: {}
+    steps:
+      - id: attempt-edit-before-read
+        call:
+          tool: Edit
+          args:
+            path: src/app.ts
+        execution: not_run
+        expect:
+          decision: block
+          active_stage: read-context
+          completed_stages: []
+          approvals: {}
+          evidence:
+            reads: []
+            stage_calls: {}
+          message_contains: "Read the workflow spec first"
+
+  - id: wf-002
+    workflow: core-dev-process
+    description: "no-exit stage auto-completes"
+    initial_state:
+      session_id: session-002
+      active_stage: implement
+      completed_stages: [read-context]
+      approvals: {}
+      evidence:
+        reads:
+          - specs/008.md
+        stage_calls: {}
+    steps:
+      - id: start-local-verify
+        call:
+          tool: Bash
+          args:
+            command: npm test
+        execution: success
+        expect:
+          decision: allow
+          active_stage: local-verify
+          completed_stages:
+            - read-context
+            - implement
+          approvals: {}
+          evidence:
+            reads:
+              - specs/008.md
+            stage_calls:
+              local-verify:
+                - npm test
+
+  - id: wf-003
+    workflow: core-dev-process
+    description: "approval pauses at boundary"
+    initial_state:
+      session_id: session-003
+      active_stage: review
+      completed_stages:
+        - read-context
+        - implement
+        - local-verify
+      approvals: {}
+      evidence:
+        reads:
+          - specs/008.md
+        stage_calls:
+          local-verify:
+            - npm test
+    steps:
+      - id: attempt-push-without-approval
+        call:
+          tool: Bash
+          args:
+            command: git push origin feature-branch
+        execution: not_run
+        expect:
+          decision: pause
+          active_stage: review
+          completed_stages:
+            - read-context
+            - implement
+            - local-verify
+          approvals: {}
+          evidence:
+            reads:
+              - specs/008.md
+            stage_calls:
+              local-verify:
+                - npm test
+          approval_requested_for: review
+          message_contains: "Approval required before push"
+
+  - id: wf-004
+    workflow: core-dev-process
+    description: "push to main blocked"
+    initial_state:
+      session_id: session-004
+      active_stage: commit-push
+      completed_stages:
+        - read-context
+        - implement
+        - local-verify
+        - review
+      approvals:
+        review: approved
+      evidence:
+        reads:
+          - specs/008.md
+        stage_calls:
+          local-verify:
+            - npm test
+    steps:
+      - id: attempt-push-main
+        call:
+          tool: Bash
+          args:
+            command: git push origin main
+        execution: not_run
+        expect:
+          decision: block
+          active_stage: commit-push
+          completed_stages:
+            - read-context
+            - implement
+            - local-verify
+            - review
+          approvals:
+            review: approved
+          evidence:
+            reads:
+              - specs/008.md
+            stage_calls:
+              local-verify:
+                - npm test
+          message_contains: "Push to a branch, not main"
+
+  - id: wf-005
+    workflow: core-dev-process
+    description: "tools allowlist enforced"
+    initial_state:
+      session_id: session-005
+      active_stage: implement
+      completed_stages: [read-context]
+      approvals: {}
+      evidence:
+        reads:
+          - specs/008.md
+        stage_calls: {}
+    steps:
+      - id: attempt-write-in-implement
+        call:
+          tool: Write
+          args:
+            path: src/generated.ts
+            content: "export const value = 1;"
+        execution: not_run
+        expect:
+          decision: block
+          active_stage: local-verify
+          completed_stages:
+            - read-context
+            - implement
+          approvals: {}
+          evidence:
+            reads:
+              - specs/008.md
+            stage_calls: {}
+
+  - id: wf-006
+    workflow: core-dev-process
+    description: "exit gates must pass"
+    initial_state:
+      session_id: session-006
+      active_stage: local-verify
+      completed_stages:
+        - read-context
+        - implement
+      approvals: {}
+      evidence:
+        reads:
+          - specs/008.md
+        stage_calls: {}
+    steps:
+      - id: attempt-push-before-verify
+        call:
+          tool: Bash
+          args:
+            command: git push origin feature-branch
+        execution: not_run
+        expect:
+          decision: block
+          active_stage: local-verify
+          completed_stages:
+            - read-context
+            - implement
+          approvals: {}
+          evidence:
+            reads:
+              - specs/008.md
+            stage_calls: {}
+          message_contains: "Run npm test successfully before moving on"
+
+  - id: wf-007
+    workflow: entry-gated-verify
+    description: "entry gates checked"
+    initial_state:
+      session_id: session-007
+      active_stage: implement
+      completed_stages: []
+      approvals: {}
+      evidence:
+        reads: []
+        stage_calls: {}
+    steps:
+      - id: attempt-verify-without-entry-evidence
+        call:
+          tool: Bash
+          args:
+            command: npm test
+        execution: not_run
+        expect:
+          decision: block
+          active_stage: implement
+          completed_stages: []
+          approvals: {}
+          evidence:
+            reads: []
+            stage_calls: {}
+          message_contains: "Read the QA checklist before local verify"
+
+  - id: wf-008
+    workflow: core-dev-process
+    description: "evidence recorded after successful execution only"
+    initial_state:
+      session_id: session-008
+      active_stage: read-context
+      completed_stages: []
+      approvals: {}
+      evidence:
+        reads: []
+        stage_calls: {}
+    steps:
+      - id: failed-read-does-not-record
+        call:
+          tool: Read
+          args:
+            path: specs/008.md
+        execution: error
+        expect:
+          decision: allow
+          active_stage: read-context
+          completed_stages: []
+          approvals: {}
+          evidence:
+            reads: []
+            stage_calls: {}
+
+      - id: edit-still-blocked
+        call:
+          tool: Edit
+          args:
+            path: src/app.ts
+        execution: not_run
+        expect:
+          decision: block
+          active_stage: read-context
+          completed_stages: []
+          approvals: {}
+          evidence:
+            reads: []
+            stage_calls: {}
+          message_contains: "Read the workflow spec first"
+
+      - id: successful-read-records-evidence
+        call:
+          tool: Read
+          args:
+            path: specs/008.md
+        execution: success
+        expect:
+          decision: allow
+          active_stage: read-context
+          completed_stages: []
+          approvals: {}
+          evidence:
+            reads:
+              - specs/008.md
+            stage_calls: {}
+
+      - id: next-call-advances-stage
+        call:
+          tool: Edit
+          args:
+            path: src/app.ts
+        execution: success
+        expect:
+          decision: allow
+          active_stage: implement
+          completed_stages:
+            - read-context
+          approvals: {}
+          evidence:
+            reads:
+              - specs/008.md
+            stage_calls: {}

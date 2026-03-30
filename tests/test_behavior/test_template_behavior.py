@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from edictum import Edictum, EdictumConfigError, EdictumDenied, TemplateInfo
+from edictum.storage import MemoryBackend
 
 CUSTOM_TEMPLATE = """\
 apiVersion: edictum/v1
@@ -23,6 +24,23 @@ rules:
     then:
       action: block
       message: "Ticket references must not be in customer messages."
+"""
+
+WORKFLOW_TEMPLATE = """\
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: template-workflow
+stages:
+  - id: read-context
+    tools: [Read]
+    exit:
+      - condition: file_read("spec.md")
+        message: "Read the spec first"
+  - id: implement
+    entry:
+      - condition: stage_complete("read-context")
+    tools: [Edit]
 """
 
 
@@ -118,6 +136,47 @@ class TestFromTemplateErrorMessage:
         # Should not raise on the dir itself, only on missing template
         with pytest.raises(EdictumConfigError, match="not found"):
             Edictum.from_template("nope", template_dirs=[fake])
+
+
+class TestFromTemplateWorkflowLoading:
+    """from_template() forwards explicit workflow loading parameters."""
+
+    def test_workflow_path_constructs_runtime(self, custom_dir, tmp_path):
+        workflow_path = tmp_path / "workflow.yaml"
+        workflow_path.write_text(WORKFLOW_TEMPLATE, encoding="utf-8")
+
+        guard = Edictum.from_template(
+            "support-agent",
+            template_dirs=[custom_dir],
+            workflow_path=workflow_path,
+        )
+
+        assert guard._workflow_runtime is not None
+        assert guard._workflow_runtime.definition.metadata.name == "template-workflow"
+
+    def test_workflow_content_constructs_runtime(self, custom_dir):
+        guard = Edictum.from_template(
+            "support-agent",
+            template_dirs=[custom_dir],
+            workflow_content=WORKFLOW_TEMPLATE,
+            backend=MemoryBackend(),
+        )
+
+        assert guard._workflow_runtime is not None
+        assert guard._workflow_runtime.definition.metadata.name == "template-workflow"
+
+    def test_conflicting_workflow_sources_raise(self, custom_dir, tmp_path):
+        workflow_path = tmp_path / "workflow.yaml"
+        workflow_path.write_text(WORKFLOW_TEMPLATE, encoding="utf-8")
+
+        with pytest.raises(EdictumConfigError, match="Specify only one of workflow_path or workflow_content"):
+            Edictum.from_template(
+                "support-agent",
+                template_dirs=[custom_dir],
+                workflow_path=workflow_path,
+                workflow_content=WORKFLOW_TEMPLATE,
+                backend=MemoryBackend(),
+            )
 
 
 class TestListTemplatesBuiltins:

@@ -18,6 +18,7 @@ from edictum.approval import (
     ApprovalStatus,
     LocalApprovalBackend,
 )
+from edictum.audit import AuditAction
 from edictum.envelope import create_envelope
 from edictum.pipeline import CheckPipeline
 from edictum.session import Session
@@ -89,15 +90,19 @@ class TestRunApprovalBackend:
     """run() approval backend integration."""
 
     async def test_no_backend_raises_denied(self):
+        sink = NullAuditSink()
         guard = Edictum(
             environment="test",
             rules=[_make_approval_precondition()],
-            audit_sink=NullAuditSink(),
+            audit_sink=sink,
             backend=MemoryBackend(),
         )
 
         with pytest.raises(EdictumDenied, match="no approval backend configured"):
             await guard.run("TestTool", {}, lambda: "result")
+
+        actions = [event.action for event in sink.events]
+        assert actions == [AuditAction.CALL_DENIED]
 
     async def test_backend_approves_executes_tool(self):
         mock_backend = AsyncMock()
@@ -184,8 +189,6 @@ class TestRunApprovalBackend:
 
     async def test_approval_emits_correct_audit_actions(self):
         """Approval flow emits CALL_APPROVAL_REQUESTED then CALL_APPROVAL_GRANTED."""
-        from edictum.audit import AuditAction
-
         mock_backend = AsyncMock()
         mock_backend.request_approval.return_value = ApprovalRequest(
             approval_id="req-1",
@@ -214,6 +217,7 @@ class TestRunApprovalBackend:
         actions = [e.action for e in sink.events]
         assert AuditAction.CALL_APPROVAL_REQUESTED in actions
         assert AuditAction.CALL_APPROVAL_GRANTED in actions
+        assert actions.count(AuditAction.CALL_ALLOWED) == 0
 
     async def test_on_allow_fires_exactly_once_on_approval(self):
         """on_allow must fire exactly once when approval is granted (not twice)."""
@@ -339,7 +343,7 @@ class TestWildcardToolMatching:
     def test_glob_pattern_matches(self):
         @precondition("mcp_*")
         def deny_mcp(tool_call):
-            return Decision.fail("MCP denied")
+            return Decision.fail("MCP blocked")
 
         guard = Edictum(
             environment="test",
@@ -354,7 +358,7 @@ class TestWildcardToolMatching:
     def test_glob_pattern_no_match(self):
         @precondition("read_*")
         def deny_reads(tool_call):
-            return Decision.fail("Read denied")
+            return Decision.fail("Read blocked")
 
         guard = Edictum(
             environment="test",

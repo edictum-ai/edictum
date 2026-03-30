@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
 from pathlib import Path
@@ -27,6 +27,7 @@ from edictum.types import HookRegistration
 if TYPE_CHECKING:
     from edictum._factory import TemplateInfo
     from edictum.evaluation import EvaluationResult
+    from edictum.workflow import WorkflowRuntime
     from edictum.yaml_engine.composer import CompositionReport
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ class Edictum:
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
         approval_backend: ApprovalBackend | None = None,
+        workflow_runtime: WorkflowRuntime | None = None,
     ):
         self.environment = environment
         self.mode = mode
@@ -95,12 +97,19 @@ class Edictum:
             self.audit_sink = self._local_sink
         self.telemetry = GovernanceTelemetry()
         self._gov_tracer = get_tracer("edictum.governance")
-        self._on_block = on_block
+        self._on_deny = on_block
         self._on_allow = on_allow
         self._success_check = success_check
         self._principal = principal
         self._principal_resolver = principal_resolver
         self._approval_backend = approval_backend
+        self._workflow_runtime = workflow_runtime
+        self._server_client: Any | None = None
+        self._rule_source: Any | None = None
+        self._sse_task: Any | None = None
+        self._assignment_ready: Any | None = None
+        self._verify_signatures = False
+        self._signing_public_key: str | None = None
 
         # Build tool registry
         self.tool_registry = ToolRegistry()
@@ -123,25 +132,25 @@ class Edictum:
         s_sandbox: list = []
 
         for item in rules or []:
-            contract_type = getattr(item, "_edictum_type", None)
+            item_type = getattr(item, "_edictum_type", None)
             is_observe = getattr(item, "_edictum_observe", False)
 
             if is_observe:
-                if contract_type == "precondition":
+                if item_type == "precondition":
                     s_pre.append(item)
-                elif contract_type == "postcondition":
+                elif item_type == "postcondition":
                     s_post.append(item)
-                elif contract_type == "session_contract":
+                elif item_type == "session_contract":
                     s_session.append(item)
-                elif contract_type == "sandbox":
+                elif item_type == "sandbox":
                     s_sandbox.append(item)
-            elif contract_type == "precondition":
+            elif item_type == "precondition":
                 pre.append(item)
-            elif contract_type == "postcondition":
+            elif item_type == "postcondition":
                 post.append(item)
-            elif contract_type == "session_contract":
+            elif item_type == "session_contract":
                 session.append(item)
-            elif contract_type == "sandbox":
+            elif item_type == "sandbox":
                 sandbox.append(item)
 
         # Freeze all rule state into a single immutable snapshot.
@@ -274,7 +283,7 @@ class Edictum:
                     idempotent=config.get("idempotent", False),
                 )
 
-        logger.info("Contracts reloaded, policy_version=%s", self._state.policy_version)
+        logger.info("Rules reloaded, policy_version=%s", self._state.policy_version)
 
     def set_principal(self, principal: Principal) -> None:
         """Update the principal used for subsequent tool calls."""
@@ -298,7 +307,7 @@ class Edictum:
         return [h for h in hooks if h.tool == "*" or fnmatch(tool_call.tool_name, h.tool)]
 
     @staticmethod
-    def _filter_by_tool(rules: list, tool_call: ToolCall) -> list:
+    def _filter_by_tool(rules: Sequence[Any], tool_call: ToolCall) -> list[Any]:
         result = []
         for p in rules:
             tool = getattr(p, "_edictum_tool", "*")
@@ -311,7 +320,7 @@ class Edictum:
         return result
 
     @staticmethod
-    def _filter_sandbox(rules: list, tool_call: ToolCall) -> list:
+    def _filter_sandbox(rules: Sequence[Any], tool_call: ToolCall) -> list[Any]:
         result = []
         for s in rules:
             tools = getattr(s, "_edictum_tools", ["*"])
@@ -364,6 +373,8 @@ class Edictum:
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
         approval_backend: ApprovalBackend | None = None,
+        workflow_path: str | Path | None = None,
+        workflow_exec_evaluator_enabled: bool = False,
     ) -> Edictum | tuple[Edictum, CompositionReport]:
         """Create an Edictum instance from one or more YAML rule bundles."""
         from edictum._factory import _from_yaml
@@ -386,6 +397,8 @@ class Edictum:
             principal=principal,
             principal_resolver=principal_resolver,
             approval_backend=approval_backend,
+            workflow_path=workflow_path,
+            workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
         )
 
     @classmethod
@@ -407,6 +420,8 @@ class Edictum:
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
         approval_backend: ApprovalBackend | None = None,
+        workflow_content: str | bytes | None = None,
+        workflow_exec_evaluator_enabled: bool = False,
     ) -> Edictum:
         """Create an Edictum instance from a YAML string or bytes."""
         from edictum._factory import _from_yaml_string
@@ -428,6 +443,8 @@ class Edictum:
             principal=principal,
             principal_resolver=principal_resolver,
             approval_backend=approval_backend,
+            workflow_content=workflow_content,
+            workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
         )
 
     @classmethod
@@ -450,6 +467,9 @@ class Edictum:
         principal: Principal | None = None,
         principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
         approval_backend: ApprovalBackend | None = None,
+        workflow_path: str | Path | None = None,
+        workflow_content: str | bytes | None = None,
+        workflow_exec_evaluator_enabled: bool = False,
     ) -> Edictum:
         """Create an Edictum instance from a named template."""
         from edictum._factory import _from_template
@@ -472,6 +492,9 @@ class Edictum:
             principal=principal,
             principal_resolver=principal_resolver,
             approval_backend=approval_backend,
+            workflow_path=workflow_path,
+            workflow_content=workflow_content,
+            workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
         )
 
     @classmethod
@@ -514,8 +537,17 @@ class Edictum:
         allow_insecure: bool = False,
         verify_signatures: bool = False,
         signing_public_key: str | None = None,
+        workflow_runtime: WorkflowRuntime | None = None,
+        workflow_path: str | Path | None = None,
+        workflow_content: str | bytes | None = None,
+        workflow_exec_evaluator_enabled: bool = False,
     ) -> Edictum:
-        """Create an Edictum instance wired to a remote edictum-server."""
+        """Create an Edictum instance wired to a remote edictum-server.
+
+        For M1, server-backed rules and workflow loading stay explicit.
+        The server provides rules; callers may attach a local workflow via
+        ``workflow_path`` or ``workflow_content``.
+        """
         from edictum._server_factory import _from_server
 
         return await _from_server(
@@ -539,6 +571,10 @@ class Edictum:
             allow_insecure=allow_insecure,
             verify_signatures=verify_signatures,
             signing_public_key=signing_public_key,
+            workflow_runtime=workflow_runtime,
+            workflow_path=workflow_path,
+            workflow_content=workflow_content,
+            workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
         )
 
     async def run(

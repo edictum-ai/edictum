@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from edictum.pipeline import PostDecision
 
+_LEGACY_ID_FIELD = "contract" + "_id"
 
-@dataclass(frozen=True)
+
+@dataclass(frozen=True, init=False)
 class Finding:
-    """A structured finding from a postcondition evaluation.
+    """A structured violation from a postcondition evaluation.
 
     Produced when a postcondition warns or detects an issue.
     Returned to the caller via PostCallResult so they can
@@ -33,10 +36,38 @@ class Finding:
     """
 
     type: str  # "pii_detected", "secret_detected", "policy_violation", etc.
-    rule_id: str  # which rule produced this finding
+    rule_id: str  # which rule produced this violation
     field: str  # which field/selector triggered it (e.g., "output.text", "args.content")
     message: str  # human-readable description
-    metadata: dict[str, Any] = field(default_factory=dict)  # extra context
+    metadata: dict[str, Any] = dataclass_field(default_factory=dict)  # extra context
+
+    def __init__(
+        self,
+        *,
+        type: str,
+        rule_id: str | None = None,
+        field: str,
+        message: str,
+        metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        legacy_id = kwargs.pop(_LEGACY_ID_FIELD, None)
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unexpected Finding kwargs: {unexpected}")
+        resolved_id = rule_id if rule_id is not None else legacy_id
+        if resolved_id is None:
+            raise TypeError("Finding requires rule_id")
+        object.__setattr__(self, "type", type)
+        object.__setattr__(self, "rule_id", resolved_id)
+        object.__setattr__(self, "field", field)
+        object.__setattr__(self, "message", message)
+        object.__setattr__(self, "metadata", {} if metadata is None else metadata)
+
+    def __getattr__(self, name: str) -> Any:
+        if name == _LEGACY_ID_FIELD:
+            return self.rule_id
+        raise AttributeError(name)
 
 
 @dataclass
@@ -65,8 +96,13 @@ class PostCallResult:
 
     result: Any  # the original tool result
     postconditions_passed: bool = True  # did all postconditions pass?
-    violations: list[Finding] = field(default_factory=list)
+    violations: list[Finding] = dataclass_field(default_factory=list)
     output_suppressed: bool = False  # True when a postcondition with action=block fired
+
+    @property
+    def findings(self) -> list[Finding]:
+        """Backward-compatible alias for older adapter code."""
+        return self.violations
 
 
 def classify_finding(rule_id: str, verdict_message: str) -> str:
@@ -74,16 +110,16 @@ def classify_finding(rule_id: str, verdict_message: str) -> str:
 
     Returns a standard finding type string.
     """
-    contract_lower = rule_id.lower()
+    rule_lower = rule_id.lower()
     message_lower = (verdict_message or "").lower()
 
-    if any(term in contract_lower or term in message_lower for term in ("pii", "ssn", "patient", "name", "dob")):
+    if any(term in rule_lower or term in message_lower for term in ("pii", "ssn", "patient", "name", "dob")):
         return "pii_detected"
     if any(
-        term in contract_lower or term in message_lower for term in ("secret", "token", "key", "credential", "password")
+        term in rule_lower or term in message_lower for term in ("secret", "token", "key", "credential", "password")
     ):
         return "secret_detected"
-    if any(term in contract_lower or term in message_lower for term in ("session", "limit", "max_calls", "budget")):
+    if any(term in rule_lower or term in message_lower for term in ("session", "limit", "max_calls", "budget")):
         return "limit_exceeded"
 
     return "policy_violation"

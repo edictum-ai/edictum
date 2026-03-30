@@ -25,6 +25,8 @@ class AuditAction(StrEnum):
     CALL_ALLOWED = "call_allowed"
     CALL_EXECUTED = "call_executed"
     CALL_FAILED = "call_failed"
+    WORKFLOW_STAGE_ADVANCED = "workflow_stage_advanced"
+    WORKFLOW_COMPLETED = "workflow_completed"
     POSTCONDITION_WARNING = "postcondition_warning"
     CALL_APPROVAL_REQUESTED = "call_approval_requested"
     CALL_APPROVAL_GRANTED = "call_approval_granted"
@@ -59,6 +61,7 @@ class AuditEvent:
     reason: str | None = None
     hooks_evaluated: list[dict] = field(default_factory=list)
     contracts_evaluated: list[dict] = field(default_factory=list)
+    workflow: dict[str, Any] | None = None
 
     # Execution (post only)
     tool_success: bool | None = None

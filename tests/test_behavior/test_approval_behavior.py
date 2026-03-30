@@ -141,6 +141,16 @@ class TestApprovalBackendFromMultiple:
         merged = Edictum.from_multiple([guard1, guard2])
         assert merged._approval_backend is None
 
+    def test_from_multiple_preserves_deny_callback(self):
+        callback = MagicMock()
+        first = _make_guard(on_block=callback)
+        second = _make_guard()
+
+        merged = Edictum.from_multiple([first, second])
+
+        assert merged._on_deny is callback
+        assert not hasattr(merged, "_on_block")
+
 
 # ---------------------------------------------------------------------------
 # Approval timeout audit accuracy tests
@@ -203,7 +213,7 @@ class TestApprovalTimeoutAuditAccuracy:
 
     @pytest.mark.asyncio
     async def test_timeout_with_deny_emits_timeout(self):
-        """When timeout_action=block and timeout occurs, audit says TIMEOUT and call is denied."""
+        """When timeout_action=block and timeout occurs, audit says TIMEOUT and call is blocked."""
         sink = NullAuditSink()
         decision = ApprovalDecision(approved=False, status=ApprovalStatus.TIMEOUT)
         approval = _make_mock_approval_backend(decision)
@@ -245,7 +255,7 @@ class TestApprovalTimeoutAuditAccuracy:
 
     @pytest.mark.asyncio
     async def test_explicit_denial_emits_denied(self):
-        """Explicit human denial emits DENIED (regression guard)."""
+        """Explicit human rejection emits the blocked approval audit action."""
         sink = NullAuditSink()
         decision = ApprovalDecision(approved=False, status=ApprovalStatus.DENIED, approver="human")
         approval = _make_mock_approval_backend(decision)

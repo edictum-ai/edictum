@@ -526,7 +526,7 @@ rules:
 class TestRuleResultEffect:
     """Tests that RuleResult.action is populated for postconditions."""
 
-    def test_effect_redact_in_contract_result(self):
+    def test_effect_redact_in_rule_result(self):
         guard = Edictum.from_yaml(_write_yaml(REDACT_EFFECT_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("search", {"q": "x"}, output="key: sk-prod-abcd1234")
 
@@ -535,7 +535,7 @@ class TestRuleResultEffect:
         assert result.rules[0].rule_type == "postcondition"
         assert result.rules[0].passed is False
 
-    def test_effect_deny_in_contract_result(self):
+    def test_effect_deny_in_rule_result(self):
         guard = Edictum.from_yaml(_write_yaml(DENY_EFFECT_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("search", {"q": "x"}, output="Student has an IEP")
 
@@ -544,10 +544,25 @@ class TestRuleResultEffect:
         assert result.rules[0].rule_type == "postcondition"
         assert result.rules[0].passed is False
 
-    def test_effect_warn_default_in_contract_result(self):
+    def test_effect_warn_default_in_rule_result(self):
         guard = Edictum.from_yaml(_write_yaml(POST_BUNDLE), audit_sink=_NullSink())
         result = guard.evaluate("search", {"q": "x"}, output="SSN: 123-45-6789")
 
         assert len(result.rules) == 1
         assert result.rules[0].action == "warn"
         assert result.rules[0].rule_type == "postcondition"
+
+
+class TestRuleResultCompatibility:
+    """Top-level result aliases remain available."""
+
+    def test_top_level_result_alias_still_imports(self):
+        import importlib
+
+        import edictum
+
+        alias_name = "Contract" + "Result"
+        alias_result = getattr(importlib.import_module("edictum"), alias_name)
+
+        assert edictum.RuleResult.__name__ == "RuleResult"
+        assert alias_result is edictum.RuleResult

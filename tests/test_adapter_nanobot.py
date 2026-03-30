@@ -88,7 +88,7 @@ class TestGovernedToolRegistry:
     async def test_execute_denied_observe(self):
         @precondition("*")
         def always_deny(tool_call):
-            return Decision.fail("would be denied")
+            return Decision.fail("would be blocked")
 
         sink = NullAuditSink()
         guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
@@ -162,7 +162,7 @@ class TestGovernedToolRegistry:
 
         result = await governed.execute("read_file", {"path": "/tmp/test.txt"})
         assert "[DENIED]" in result
-        assert "Approval denied" in result
+        assert "Approval blocked" in result
 
     async def test_execute_no_approval_backend(self):
         @precondition("*")
@@ -231,7 +231,7 @@ class TestGovernedToolRegistry:
         inner = make_registry()
         governed = GovernedToolRegistry(inner, guard, principal=Principal(role="viewer"))
 
-        # First call: viewer -> denied
+        # First call: viewer -> blocked
         result1 = await governed.execute("read_file", {"path": "/tmp/test.txt"})
         assert "[DENIED]" in result1
 
@@ -276,7 +276,7 @@ class TestGovernedToolRegistry:
     async def test_audit_events_on_block(self):
         @precondition("*")
         def always_deny(tool_call):
-            return Decision.fail("denied")
+            return Decision.fail("blocked")
 
         sink = NullAuditSink()
         guard = make_guard(rules=[always_deny], audit_sink=sink)

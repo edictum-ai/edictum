@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from edictum._guard import Edictum
     from edictum.approval import ApprovalBackend
     from edictum.envelope import ToolCall
+    from edictum.workflow import WorkflowRuntime
     from edictum.yaml_engine.composer import CompositionReport
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ def _build_guard_from_compiled(
     principal: Principal | None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None,
     approval_backend: ApprovalBackend | None,
+    workflow_runtime: WorkflowRuntime | None,
 ) -> Edictum:
     """Shared guard construction from compiled rules and bundle data."""
     # Handle observability config
@@ -108,6 +110,31 @@ def _build_guard_from_compiled(
         principal=principal,
         principal_resolver=principal_resolver,
         approval_backend=approval_backend,
+        workflow_runtime=workflow_runtime,
+    )
+
+
+def _load_workflow_runtime(
+    *,
+    workflow_path: str | Path | None = None,
+    workflow_content: str | bytes | None = None,
+    workflow_exec_evaluator_enabled: bool = False,
+):
+    if workflow_path is None and workflow_content is None:
+        return None
+    if workflow_path is not None and workflow_content is not None:
+        raise EdictumConfigError("Specify only one of workflow_path or workflow_content")
+
+    from edictum.workflow import WorkflowRuntime, load_workflow, load_workflow_string
+
+    if workflow_path is not None:
+        definition = load_workflow(workflow_path)
+    else:
+        assert workflow_content is not None
+        definition = load_workflow_string(workflow_content)
+    return WorkflowRuntime(
+        definition,
+        exec_evaluator_enabled=workflow_exec_evaluator_enabled,
     )
 
 
@@ -129,6 +156,8 @@ def _from_yaml(
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
     approval_backend: ApprovalBackend | None = None,
+    workflow_path: str | Path | None = None,
+    workflow_exec_evaluator_enabled: bool = False,
 ) -> Edictum | tuple[Edictum, CompositionReport]:
     """Create an Edictum instance from one or more YAML rule bundles.
 
@@ -136,14 +165,14 @@ def _from_yaml(
         *paths: One or more paths to YAML rule files. When multiple
             paths are given, bundles are composed left-to-right (later
             layers override earlier ones).
-        tools: Tool side-action classifications. Merged with any ``tools:``
+        tools: Tool side-effect classifications. Merged with any ``tools:``
             section in the YAML bundle (parameter wins on conflict).
         mode: Override the bundle's default mode (enforce/observe).
         audit_sink: Custom audit sink, or a list of sinks (auto-wrapped
             in CompositeSink).
         redaction: Custom redaction policy.
         backend: Custom storage backend.
-        environment: Environment name for tool_call context.
+        environment: Environment name for envelope context.
         return_report: If True, return ``(guard, CompositionReport)``
             instead of just the guard.
         custom_operators: Mapping of operator names to callables.
@@ -188,6 +217,10 @@ def _from_yaml(
         policy_version = hashlib.sha256(":".join(str(h) for _d, h in loaded).encode()).hexdigest()
 
     compiled = compile_contracts(bundle_data, custom_operators=custom_operators, custom_selectors=custom_selectors)
+    workflow_runtime = _load_workflow_runtime(
+        workflow_path=workflow_path,
+        workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
+    )
 
     guard = _build_guard_from_compiled(
         cls,
@@ -206,6 +239,7 @@ def _from_yaml(
         principal=principal,
         principal_resolver=principal_resolver,
         approval_backend=approval_backend,
+        workflow_runtime=workflow_runtime,
     )
 
     if return_report:
@@ -231,6 +265,8 @@ def _from_yaml_string(
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
     approval_backend: ApprovalBackend | None = None,
+    workflow_content: str | bytes | None = None,
+    workflow_exec_evaluator_enabled: bool = False,
 ) -> Edictum:
     """Create an Edictum instance from a YAML string or bytes.
 
@@ -252,6 +288,10 @@ def _from_yaml_string(
     policy_version = str(bundle_hash)
 
     compiled = compile_contracts(bundle_data, custom_operators=custom_operators, custom_selectors=custom_selectors)
+    workflow_runtime = _load_workflow_runtime(
+        workflow_content=workflow_content,
+        workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
+    )
 
     return _build_guard_from_compiled(
         cls,
@@ -270,6 +310,7 @@ def _from_yaml_string(
         principal=principal,
         principal_resolver=principal_resolver,
         approval_backend=approval_backend,
+        workflow_runtime=workflow_runtime,
     )
 
 
@@ -292,6 +333,9 @@ def _from_template(
     principal: Principal | None = None,
     principal_resolver: Callable[[str, dict[str, Any]], Principal] | None = None,
     approval_backend: ApprovalBackend | None = None,
+    workflow_path: str | Path | None = None,
+    workflow_content: str | bytes | None = None,
+    workflow_exec_evaluator_enabled: bool = False,
 ) -> Edictum:
     """Create an Edictum instance from a named template.
 
@@ -300,29 +344,58 @@ def _from_template(
     Raises:
         EdictumConfigError: If the template is not found in any directory.
     """
+    if workflow_path is not None and workflow_content is not None:
+        raise EdictumConfigError("Specify only one of workflow_path or workflow_content")
+
     builtin_dir = Path(__file__).parent / "yaml_engine" / "templates"
     search_dirs = [Path(d) for d in (template_dirs or [])] + [builtin_dir]
 
     for directory in search_dirs:
         candidate = directory / f"{name}.yaml"
         if candidate.exists():
-            return cls.from_yaml(
-                candidate,
-                tools=tools,
-                mode=mode,
-                audit_sink=audit_sink,
-                redaction=redaction,
-                backend=backend,
-                environment=environment,
-                on_block=on_block,
-                on_allow=on_allow,
-                custom_operators=custom_operators,
-                custom_selectors=custom_selectors,
-                success_check=success_check,
-                principal=principal,
-                principal_resolver=principal_resolver,
-                approval_backend=approval_backend,
-            )
+            if workflow_content is None:
+                result = cls.from_yaml(
+                    candidate,
+                    tools=tools,
+                    mode=mode,
+                    audit_sink=audit_sink,
+                    redaction=redaction,
+                    backend=backend,
+                    environment=environment,
+                    on_block=on_block,
+                    on_allow=on_allow,
+                    custom_operators=custom_operators,
+                    custom_selectors=custom_selectors,
+                    success_check=success_check,
+                    principal=principal,
+                    principal_resolver=principal_resolver,
+                    approval_backend=approval_backend,
+                    workflow_path=workflow_path,
+                    workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
+                )
+            else:
+                result = cls.from_yaml_string(
+                    candidate.read_bytes(),
+                    tools=tools,
+                    mode=mode,
+                    audit_sink=audit_sink,
+                    redaction=redaction,
+                    backend=backend,
+                    environment=environment,
+                    on_block=on_block,
+                    on_allow=on_allow,
+                    custom_operators=custom_operators,
+                    custom_selectors=custom_selectors,
+                    success_check=success_check,
+                    principal=principal,
+                    principal_resolver=principal_resolver,
+                    approval_backend=approval_backend,
+                    workflow_content=workflow_content,
+                    workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
+                )
+            if isinstance(result, tuple):
+                return result[0]
+            return result
 
     all_templates: set[str] = set()
     for directory in search_dirs:
@@ -393,10 +466,11 @@ def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
         redaction=first.redaction,
         backend=first.backend,
         policy_version=first.policy_version,
-        on_block=first._on_block,
+        on_block=first._on_deny,
         on_allow=first._on_allow,
         success_check=first._success_check,
         approval_backend=first._approval_backend,
+        workflow_runtime=first._workflow_runtime,
     )
     merged.tool_registry = first.tool_registry
 

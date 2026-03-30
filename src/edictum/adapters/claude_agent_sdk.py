@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
 
+from edictum.approval import ApprovalStatus
 from edictum.audit import AuditAction, AuditEvent
 from edictum.envelope import Principal, create_envelope
 from edictum.findings import Finding, build_findings
@@ -15,6 +16,7 @@ from edictum.pipeline import CheckPipeline
 from edictum.session import Session
 
 logger = logging.getLogger(__name__)
+_MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 
 if TYPE_CHECKING:
     from edictum import Edictum
@@ -26,7 +28,7 @@ class ClaudeAgentSDKAdapter:
     The adapter does NOT contain governance logic -- that lives in
     CheckPipeline. The adapter only:
     1. Creates envelopes from SDK input
-    2. Manages pending state (tool_call + span) between Pre/Post
+    2. Manages pending state (envelope + span) between Pre/Post
     3. Translates PreDecision/PostDecision into SDK hook output format
     4. Handles observe mode (block -> allow conversion)
 
@@ -48,6 +50,7 @@ class ClaudeAgentSDKAdapter:
         self._session = Session(self._session_id, guard.backend)
         self._call_index = 0
         self._pending: dict[str, tuple[Any, Any]] = {}
+        self._pending_decisions: dict[str, Any] = {}
         self._principal = principal
         self._principal_resolver = principal_resolver
 
@@ -101,9 +104,9 @@ class ClaudeAgentSDKAdapter:
             "post_tool_use": self._post_tool_use,
         }
 
-    async def _pre_tool_use(self, tool_name: str, tool_input: dict, tool_use_id: str, **kwargs) -> dict:
-        # Create tool_call
-        tool_call = create_envelope(
+    async def _pre_tool_use(self, tool_name: str, tool_input: dict, tool_use_id: str, **kwargs) -> dict[str, Any]:
+        # Create envelope
+        envelope = create_envelope(
             tool_name=tool_name,
             tool_input=tool_input,
             run_id=self._session_id,
@@ -119,50 +122,61 @@ class ClaudeAgentSDKAdapter:
         await self._session.increment_attempts()
 
         # Start OTel span
-        span = self._guard.telemetry.start_tool_span(tool_call)
+        span = self._guard.telemetry.start_tool_span(envelope)
 
         try:
             # Run pipeline
-            decision = await self._pipeline.pre_execute(tool_call, self._session)
+            decision = await self._pipeline.pre_execute(envelope, self._session)
+            await self._emit_workflow_events(envelope, decision.workflow_events)
 
             # Handle observe mode: convert block to allow with warning
             if self._guard.mode == "observe" and decision.action == "block":
-                await self._emit_audit_pre(tool_call, decision, audit_action=AuditAction.CALL_WOULD_DENY)
+                await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
                 span.set_attribute("governance.would_deny_reason", decision.reason)
-                self._pending[tool_use_id] = (tool_call, span)
+                self._pending[tool_use_id] = (envelope, span)
+                self._pending_decisions[tool_use_id] = decision
                 return {}  # allow through
 
             # Handle block
             if decision.action == "block":
-                await self._emit_audit_pre(tool_call, decision)
-                self._guard.telemetry.record_denial(tool_call, decision.reason)
-                if self._guard._on_block:
+                await self._emit_audit_pre(envelope, decision)
+                self._guard.telemetry.record_denial(envelope, decision.reason)
+                if self._guard._on_deny:
                     try:
-                        self._guard._on_block(tool_call, decision.reason or "", decision.decision_name)
+                        self._guard._on_deny(envelope, decision.reason or "", decision.decision_name)
                     except Exception:
-                        logger.exception("on_block callback raised")
+                        logger.exception("on_deny callback raised")
                 span.set_attribute("governance.action", "denied")
                 self._guard.telemetry.set_span_error(span, decision.reason or "denied")
                 span.end()
                 self._pending.pop(tool_use_id, None)
-                return self._deny(decision.reason)
+                self._pending_decisions.pop(tool_use_id, None)
+                return self._deny(decision.reason or "")
 
-            # Handle per-rule observed denials
+            if decision.action == "pending_approval":
+                blocked_result, decision = await self._resolve_pending_approval(envelope, decision, span)
+                if blocked_result is not None:
+                    span.end()
+                    self._pending.pop(tool_use_id, None)
+                    self._pending_decisions.pop(tool_use_id, None)
+                    return blocked_result
+
+            # Handle per-rule observed blocks
             if decision.observed:
                 for cr in decision.contracts_evaluated:
                     if cr.get("observed") and not cr.get("passed"):
                         await self._guard.audit_sink.emit(
                             AuditEvent(
                                 action=AuditAction.CALL_WOULD_DENY,
-                                run_id=tool_call.run_id,
-                                call_id=tool_call.call_id,
-                                call_index=tool_call.call_index,
-                                tool_name=tool_call.tool_name,
-                                tool_args=self._guard.redaction.redact_args(tool_call.args),
-                                side_effect=tool_call.side_effect.value,
-                                environment=tool_call.environment,
-                                principal=asdict(tool_call.principal) if tool_call.principal else None,
+                                run_id=envelope.run_id,
+                                call_id=envelope.call_id,
+                                call_index=envelope.call_index,
+                                tool_name=envelope.tool_name,
+                                tool_args=self._guard.redaction.redact_args(envelope.args),
+                                side_effect=envelope.side_effect.value,
+                                environment=envelope.environment,
+                                principal=asdict(envelope.principal) if envelope.principal else None,
                                 decision_source="precondition",
                                 decision_name=cr["name"],
                                 reason=cr["message"],
@@ -173,14 +187,15 @@ class ClaudeAgentSDKAdapter:
                         )
 
             # Handle allow
-            await self._emit_audit_pre(tool_call, decision)
+            await self._emit_audit_pre(envelope, decision)
             if self._guard._on_allow:
                 try:
-                    self._guard._on_allow(tool_call)
+                    self._guard._on_allow(envelope)
                 except Exception:
                     logger.exception("on_allow callback raised")
             span.set_attribute("governance.action", "allowed")
-            self._pending[tool_use_id] = (tool_call, span)
+            self._pending[tool_use_id] = (envelope, span)
+            self._pending_decisions[tool_use_id] = decision
             return {}
 
         except Exception:
@@ -188,36 +203,60 @@ class ClaudeAgentSDKAdapter:
                 span.end()
             raise
 
-    async def _post_tool_use(self, tool_use_id: str, tool_response: Any = None, **kwargs) -> dict:
+    async def _post_tool_use(
+        self,
+        tool_use_id: str,
+        tool_response: Any = None,
+        **kwargs,
+    ) -> dict[str, Any]:
         pending = self._pending.pop(tool_use_id, None)
         if not pending:
             return {}
 
-        tool_call, span = pending
+        decision = self._pending_decisions.pop(tool_use_id, None)
+        if decision is None:
+            _, span = pending
+            span.end()
+            return {}
+
+        envelope, span = pending
 
         try:
             # Derive tool_success from SDK response
-            tool_success = self._check_tool_success(tool_call.tool_name, tool_response)
+            tool_success = self._check_tool_success(envelope.tool_name, tool_response)
 
             # Run pipeline
-            post_decision = await self._pipeline.post_execute(tool_call, tool_response, tool_success)
+            post_decision = await self._pipeline.post_execute(envelope, tool_response, tool_success)
+
+            workflow_events: list[dict] = []
+            if (
+                tool_success
+                and decision.workflow_involved
+                and decision.workflow_stage_id
+                and self._guard._workflow_runtime
+            ):
+                workflow_events = await self._guard._workflow_runtime.record_result(
+                    self._session,
+                    decision.workflow_stage_id,
+                    envelope,
+                )
 
             # Record in session
-            await self._session.record_execution(tool_call.tool_name, success=tool_success)
+            await self._session.record_execution(envelope.tool_name, success=tool_success)
 
             # Emit audit
             action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
             await self._guard.audit_sink.emit(
                 AuditEvent(
                     action=action,
-                    run_id=tool_call.run_id,
-                    call_id=tool_call.call_id,
-                    call_index=tool_call.call_index,
-                    tool_name=tool_call.tool_name,
-                    tool_args=self._guard.redaction.redact_args(tool_call.args),
-                    side_effect=tool_call.side_effect.value,
-                    environment=tool_call.environment,
-                    principal=asdict(tool_call.principal) if tool_call.principal else None,
+                    run_id=envelope.run_id,
+                    call_id=envelope.call_id,
+                    call_index=envelope.call_index,
+                    tool_name=envelope.tool_name,
+                    tool_args=self._guard.redaction.redact_args(envelope.args),
+                    side_effect=envelope.side_effect.value,
+                    environment=envelope.environment,
+                    principal=asdict(envelope.principal) if envelope.principal else None,
                     tool_success=tool_success,
                     postconditions_passed=post_decision.postconditions_passed,
                     contracts_evaluated=post_decision.contracts_evaluated,
@@ -226,8 +265,10 @@ class ClaudeAgentSDKAdapter:
                     mode=self._guard.mode,
                     policy_version=self._guard.policy_version,
                     policy_error=post_decision.policy_error,
+                    workflow=decision.workflow,
                 )
             )
+            await self._emit_workflow_events(envelope, workflow_events)
 
             span.set_attribute("governance.tool_success", tool_success)
             span.set_attribute("governance.postconditions_passed", post_decision.postconditions_passed)
@@ -239,15 +280,15 @@ class ClaudeAgentSDKAdapter:
         finally:
             span.end()
 
-        # Build violations and call callback with effective response
+        # Build violations and call callback with effective response.
         effective_response = (
             post_decision.redacted_response if post_decision.redacted_response is not None else tool_response
         )
-        violations = build_findings(post_decision)
+        findings = build_findings(post_decision)
         on_warn = getattr(self, "_on_postcondition_warn", None)
-        if not post_decision.postconditions_passed and violations and on_warn:
+        if not post_decision.postconditions_passed and findings and on_warn:
             try:
-                on_warn(effective_response, violations)
+                on_warn(effective_response, findings)
             except Exception:
                 logger.exception("on_postcondition_warn callback raised")
 
@@ -261,21 +302,21 @@ class ClaudeAgentSDKAdapter:
             }
         return {}
 
-    async def _emit_audit_pre(self, tool_call, decision, audit_action=None):
+    async def _emit_audit_pre(self, envelope, decision, audit_action=None):
         if audit_action is None:
             audit_action = AuditAction.CALL_DENIED if decision.action == "block" else AuditAction.CALL_ALLOWED
 
         await self._guard.audit_sink.emit(
             AuditEvent(
                 action=audit_action,
-                run_id=tool_call.run_id,
-                call_id=tool_call.call_id,
-                call_index=tool_call.call_index,
-                tool_name=tool_call.tool_name,
-                tool_args=self._guard.redaction.redact_args(tool_call.args),
-                side_effect=tool_call.side_effect.value,
-                environment=tool_call.environment,
-                principal=asdict(tool_call.principal) if tool_call.principal else None,
+                run_id=envelope.run_id,
+                call_id=envelope.call_id,
+                call_index=envelope.call_index,
+                tool_name=envelope.tool_name,
+                tool_args=self._guard.redaction.redact_args(envelope.args),
+                side_effect=envelope.side_effect.value,
+                environment=envelope.environment,
+                principal=asdict(envelope.principal) if envelope.principal else None,
                 decision_source=decision.decision_source,
                 decision_name=decision.decision_name,
                 reason=decision.reason,
@@ -286,12 +327,123 @@ class ClaudeAgentSDKAdapter:
                 mode=self._guard.mode,
                 policy_version=self._guard.policy_version,
                 policy_error=decision.policy_error,
+                workflow=decision.workflow,
             )
         )
 
+    async def _emit_workflow_events(self, envelope: Any, events: list[dict]) -> None:
+        for record in events:
+            workflow = record.get("workflow")
+            action_name = record.get("action")
+            if not isinstance(workflow, dict) or not isinstance(action_name, str):
+                continue
+            action = AuditAction.WORKFLOW_STAGE_ADVANCED
+            if action_name == AuditAction.WORKFLOW_COMPLETED.value:
+                action = AuditAction.WORKFLOW_COMPLETED
+            await self._guard.audit_sink.emit(
+                AuditEvent(
+                    action=action,
+                    run_id=envelope.run_id,
+                    call_id=envelope.call_id,
+                    call_index=envelope.call_index,
+                    tool_name=envelope.tool_name,
+                    tool_args=self._guard.redaction.redact_args(envelope.args),
+                    side_effect=envelope.side_effect.value,
+                    environment=envelope.environment,
+                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    mode=self._guard.mode,
+                    policy_version=self._guard.policy_version,
+                    workflow=dict(workflow),
+                )
+            )
+
+    async def _resolve_pending_approval(
+        self,
+        envelope: Any,
+        decision: Any,
+        span: Any,
+    ) -> tuple[dict | None, Any]:
+        current = decision
+        for _ in range(_MAX_WORKFLOW_APPROVAL_ROUNDS):
+            blocked_result = await self._handle_approval(envelope, current, span)
+            if blocked_result is not None:
+                return blocked_result, current
+            if (
+                current.decision_source != "workflow"
+                or not current.workflow_stage_id
+                or self._guard._workflow_runtime is None
+            ):
+                return None, replace(current, action="allow")
+            await self._guard._workflow_runtime.record_approval(self._session, current.workflow_stage_id)
+            current = await self._pipeline.pre_execute(envelope, self._session)
+            await self._emit_workflow_events(envelope, current.workflow_events)
+            if current.action != "pending_approval":
+                return None, current
+        raise RuntimeError(f"workflow: exceeded maximum approval rounds ({_MAX_WORKFLOW_APPROVAL_ROUNDS})")
+
+    async def _handle_approval(self, envelope: Any, decision: Any, span: Any) -> dict | None:
+        if self._guard._approval_backend is None:
+            reason = "Approval required but no approval backend configured"
+            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_DENIED)
+            self._guard.telemetry.record_denial(envelope, reason)
+            if self._guard._on_deny:
+                try:
+                    self._guard._on_deny(envelope, reason, decision.decision_name)
+                except Exception:
+                    logger.exception("on_deny callback raised")
+            span.set_attribute("governance.action", "denied")
+            self._guard.telemetry.set_span_error(span, reason)
+            return self._deny(reason)
+
+        principal_dict = asdict(envelope.principal) if envelope.principal else None
+        approval_request = await self._guard._approval_backend.request_approval(
+            tool_name=envelope.tool_name,
+            tool_args=envelope.args,
+            message=decision.approval_message or decision.reason or "",
+            timeout=decision.approval_timeout,
+            timeout_action=decision.approval_timeout_action,
+            principal=principal_dict,
+        )
+        await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_REQUESTED)
+
+        approval_decision = await self._guard._approval_backend.wait_for_decision(
+            approval_id=approval_request.approval_id,
+            timeout=decision.approval_timeout,
+        )
+
+        approved = approval_decision.approved
+        if approval_decision.status == ApprovalStatus.TIMEOUT:
+            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_TIMEOUT)
+            if decision.approval_timeout_action == "allow":
+                approved = True
+        elif approval_decision.approved:
+            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_GRANTED)
+        else:
+            await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_DENIED)
+
+        if approved:
+            span_action = "approved"
+            if approval_decision.status == ApprovalStatus.TIMEOUT and decision.approval_timeout_action == "allow":
+                span_action = "timeout_allow"
+            span.set_attribute("governance.action", span_action)
+            return None
+
+        reason = approval_decision.reason or decision.reason or "Approval blocked"
+        if not approved and approval_decision.status == ApprovalStatus.TIMEOUT:
+            reason = f"Approval timed out: {reason}"
+        self._guard.telemetry.record_denial(envelope, reason)
+        if self._guard._on_deny:
+            try:
+                self._guard._on_deny(envelope, reason, decision.decision_name)
+            except Exception:
+                logger.exception("on_deny callback raised")
+        span.set_attribute("governance.action", "denied")
+        self._guard.telemetry.set_span_error(span, reason)
+        return self._deny(f"Approval blocked: {reason}")
+
     def _check_tool_success(self, tool_name: str, tool_response: Any) -> bool:
         if self._guard._success_check is not None:
-            return self._guard._success_check(tool_name, tool_response)
+            return bool(self._guard._success_check(tool_name, tool_response))
         if tool_response is None:
             return True
         if isinstance(tool_response, dict):
@@ -303,7 +455,7 @@ class ClaudeAgentSDKAdapter:
                 return False
         return True
 
-    def _deny(self, reason):
+    def _deny(self, reason: str) -> dict[str, Any]:
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",

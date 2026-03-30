@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from edictum import Decision, Edictum, precondition
+from edictum.approval import ApprovalDecision, ApprovalRequest, ApprovalStatus
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -115,6 +116,7 @@ def _all_configs():
 
 CONFIGS = _all_configs()
 IDS = [c[0] for c in CONFIGS]
+PENDING_DECISION_GUARD_IDS = {"OpenAI", "LangChain", "ClaudeSDK", "Agno", "SK", "GoogleADK"}
 
 
 class TestAdapterSpanEndOnPreRaise:
@@ -148,6 +150,65 @@ class TestAdapterSpanEndOnPostRaise:
             with pytest.raises(RuntimeError, match="post boom"):
                 await post_fn(adapter, result="ok")
         assert mock_span.end.call_count >= 1
+
+
+class TestAdapterSpanEndOnPendingDecisionMiss:
+    """span.end() must be called when pending maps drift out of sync."""
+
+    @pytest.mark.parametrize(
+        "name,cls,pre_fn,post_fn",
+        [config for config in CONFIGS if config[0] in PENDING_DECISION_GUARD_IDS],
+        ids=[config[0] for config in CONFIGS if config[0] in PENDING_DECISION_GUARD_IDS],
+    )
+    async def test_span_ended_when_pending_decision_missing(self, name, cls, pre_fn, post_fn):
+        guard = _make_guard()
+        adapter = cls(guard)
+        mock_span = MagicMock()
+        with patch.object(guard.telemetry, "start_tool_span", return_value=mock_span):
+            await pre_fn(adapter)
+
+        adapter._pending_decisions.clear()
+        await post_fn(adapter, result="ok")
+
+        mock_span.end.assert_called_once()
+
+
+class TestAdapterSpanEndOnApprovalBlock:
+    """span.end() must be called exactly once when approval blocks a call."""
+
+    @pytest.mark.parametrize(
+        "name,cls,pre_fn",
+        [
+            ("OpenAI", CONFIGS[0][1], CONFIGS[0][2]),
+            ("Agno", CONFIGS[4][1], CONFIGS[4][2]),
+        ],
+        ids=["OpenAI", "Agno"],
+    )
+    async def test_span_ended_once_when_approval_denied(self, name, cls, pre_fn):
+        mock_backend = AsyncMock()
+        mock_backend.request_approval.return_value = ApprovalRequest(
+            approval_id="req-1",
+            tool_name="TestTool",
+            tool_args={},
+            message="needs approval",
+            timeout=10,
+            timeout_action="block",
+        )
+        mock_backend.wait_for_decision.return_value = ApprovalDecision(
+            approved=False,
+            status=ApprovalStatus.DENIED,
+            reason="blocked by reviewer",
+        )
+        guard = _make_guard(rules=[_make_approval_contract()], approval_backend=mock_backend)
+        adapter = cls(guard)
+        mock_span = MagicMock()
+
+        with patch.object(guard.telemetry, "start_tool_span", return_value=mock_span):
+            result = await pre_fn(adapter)
+
+        assert isinstance(result, str)
+        assert "blocked by reviewer" in result
+        mock_span.end.assert_called_once()
 
 
 class TestGuardRunSpanEnd:
@@ -228,7 +289,7 @@ class TestNanobotSpanEndOnDeny:
 
         @precondition("*")
         def block(tool_call):
-            return Decision.fail("denied")
+            return Decision.fail("blocked")
 
         guard = _make_guard(rules=[block])
         inner = MagicMock()

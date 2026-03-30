@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _ERROR_ACTIONS = frozenset({"call_denied", "call_approval_denied", "call_approval_timeout"})
+_MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 
 
 def _default_success_check(tool_name: str, result: Any) -> bool:
@@ -66,7 +67,7 @@ async def _run(
         if resolved is not None:
             envelope_kwargs["principal"] = resolved
 
-    tool_call = create_envelope(
+    envelope = create_envelope(
         tool_name=tool_name,
         tool_input=args,
         run_id=session_id,
@@ -79,69 +80,32 @@ async def _run(
     await session.increment_attempts()
 
     # Start OTel span
-    span = self.telemetry.start_tool_span(tool_call)
+    span = self.telemetry.start_tool_span(envelope)
     try:
         if self.policy_version:
             span.set_attribute("edictum.policy_version", self.policy_version)
 
         # Pre-execute
-        pre = await pipeline.pre_execute(tool_call, session)
+        pre = await pipeline.pre_execute(envelope, session)
+        await _emit_workflow_events(self, envelope, pre.workflow_events)
 
         # Handle pending_approval: request approval from backend
+        approval_audit_handled = False
         if pre.action == "pending_approval":
-            if self._approval_backend is None:
-                self.telemetry.set_span_error(span, "Approval required but no approval backend configured")
-                raise EdictumDenied(
-                    reason=f"Approval required but no approval backend configured: {pre.reason}",
-                    decision_source=pre.decision_source,
-                    decision_name=pre.decision_name,
-                )
-            principal_dict = asdict(tool_call.principal) if tool_call.principal else None
-            approval_request = await self._approval_backend.request_approval(
-                tool_name=tool_call.tool_name,
-                tool_args=tool_call.args,
-                message=pre.approval_message or pre.reason or "",
-                timeout=pre.approval_timeout,
-                timeout_action=pre.approval_timeout_action,
-                principal=principal_dict,
+            approved, decision, pre, approval_audit_handled = await _resolve_pending_approval(
+                self,
+                pipeline,
+                session,
+                envelope,
+                pre,
             )
-            await _emit_run_pre_audit(self, tool_call, session, AuditAction.CALL_APPROVAL_REQUESTED, pre)
-            decision = await self._approval_backend.wait_for_decision(
-                approval_id=approval_request.approval_id,
-                timeout=pre.approval_timeout,
-            )
-            # Resolve approval: approved, denied, or timeout (with timeout_action)
-            approved = False
-            if decision.status == ApprovalStatus.TIMEOUT:
-                # Timeout — audit as timeout regardless of approved flag
-                await _emit_run_pre_audit(self, tool_call, session, AuditAction.CALL_APPROVAL_TIMEOUT, pre)
-                if pre.approval_timeout_action == "allow":
-                    approved = True
-            elif not decision.approved:
-                # Explicit human denial
-                await _emit_run_pre_audit(self, tool_call, session, AuditAction.CALL_APPROVAL_DENIED, pre)
-            else:
-                # Explicit human approval
-                approved = True
-                await _emit_run_pre_audit(self, tool_call, session, AuditAction.CALL_APPROVAL_GRANTED, pre)
-
-            if approved:
-                self.telemetry.record_allowed(tool_call)
-                if self._on_allow:
+            if not approved:
+                self.telemetry.record_denial(envelope, decision.reason or pre.reason)
+                if self._on_deny:
                     try:
-                        self._on_allow(tool_call)
+                        self._on_deny(envelope, decision.reason or pre.reason or "", pre.decision_name)
                     except Exception:
-                        logger.exception("on_allow callback raised")
-                span.set_attribute("governance.action", "approved")
-                # Skip the normal pre-execution audit/callback logic below —
-                # approval-granted path handles its own audit and callbacks.
-            else:
-                self.telemetry.record_denial(tool_call, decision.reason or pre.reason)
-                if self._on_block:
-                    try:
-                        self._on_block(tool_call, decision.reason or pre.reason or "", pre.decision_name)
-                    except Exception:
-                        logger.exception("on_block callback raised")
+                        logger.exception("on_deny callback raised")
                 span.set_attribute("governance.action", "denied")
                 span.set_attribute("governance.reason", decision.reason or pre.reason or "")
                 self.telemetry.set_span_error(span, decision.reason or pre.reason or "denied")
@@ -150,23 +114,34 @@ async def _run(
                     decision_source=pre.decision_source,
                     decision_name=pre.decision_name,
                 )
+            if pre.action == "pending_approval":
+                self.telemetry.record_allowed(envelope)
+                if self._on_allow:
+                    try:
+                        self._on_allow(envelope)
+                    except Exception:
+                        logger.exception("on_allow callback raised")
+                span_action = "approved"
+                if decision.status == ApprovalStatus.TIMEOUT and pre.approval_timeout_action == "allow":
+                    span_action = "timeout_allow"
+                span.set_attribute("governance.action", span_action)
 
-        # Determine if this is a real block or just per-rule observed denials
+        # Determine if this is a real block or just per-rule observed blocks
         real_deny = pre.action == "block" and not pre.observed
 
         # Skip pre-execution audit for approval-granted path (already handled above)
-        if pre.action == "pending_approval":
+        if approval_audit_handled:
             pass  # Fall through directly to tool execution
         elif real_deny:
             audit_action = AuditAction.CALL_WOULD_DENY if self.mode == "observe" else AuditAction.CALL_DENIED
-            await _emit_run_pre_audit(self, tool_call, session, audit_action, pre)
-            self.telemetry.record_denial(tool_call, pre.reason)
+            await _emit_run_pre_audit(self, envelope, session, audit_action, pre)
+            self.telemetry.record_denial(envelope, pre.reason)
             if self.mode == "enforce":
-                if self._on_block:
+                if self._on_deny:
                     try:
-                        self._on_block(tool_call, pre.reason or "", pre.decision_name)
+                        self._on_deny(envelope, pre.reason or "", pre.decision_name)
                     except Exception:
-                        logger.exception("on_block callback raised")
+                        logger.exception("on_deny callback raised")
                 span.set_attribute("governance.action", "denied")
                 span.set_attribute("governance.reason", pre.reason or "")
                 self.telemetry.set_span_error(span, pre.reason or "denied")
@@ -179,18 +154,18 @@ async def _run(
             span.set_attribute("governance.action", "would_deny")
             span.set_attribute("governance.would_deny_reason", pre.reason or "")
         else:
-            # Emit CALL_WOULD_DENY for any per-rule observed denials
+            # Emit CALL_WOULD_DENY for any per-rule observed blocks
             for cr in pre.contracts_evaluated:
                 if cr.get("observed") and not cr.get("passed"):
                     observed_event = AuditEvent(
                         action=AuditAction.CALL_WOULD_DENY,
-                        run_id=tool_call.run_id,
-                        call_id=tool_call.call_id,
-                        tool_name=tool_call.tool_name,
-                        tool_args=self.redaction.redact_args(tool_call.args),
-                        side_effect=tool_call.side_effect.value,
-                        environment=tool_call.environment,
-                        principal=asdict(tool_call.principal) if tool_call.principal else None,
+                        run_id=envelope.run_id,
+                        call_id=envelope.call_id,
+                        tool_name=envelope.tool_name,
+                        tool_args=self.redaction.redact_args(envelope.args),
+                        side_effect=envelope.side_effect.value,
+                        environment=envelope.environment,
+                        principal=asdict(envelope.principal) if envelope.principal else None,
                         decision_source="precondition",
                         decision_name=cr["name"],
                         reason=cr["message"],
@@ -200,11 +175,11 @@ async def _run(
                     )
                     await self.audit_sink.emit(observed_event)
                     _emit_otel_governance_span(self, observed_event)
-            await _emit_run_pre_audit(self, tool_call, session, AuditAction.CALL_ALLOWED, pre)
-            self.telemetry.record_allowed(tool_call)
+            await _emit_run_pre_audit(self, envelope, session, AuditAction.CALL_ALLOWED, pre)
+            self.telemetry.record_allowed(envelope)
             if self._on_allow:
                 try:
-                    self._on_allow(tool_call)
+                    self._on_allow(envelope)
                 except Exception:
                     logger.exception("on_allow callback raised")
             span.set_attribute("governance.action", "allowed")
@@ -214,13 +189,13 @@ async def _run(
             observe_action = AuditAction.CALL_WOULD_DENY if not sr["passed"] else AuditAction.CALL_ALLOWED
             observe_event = AuditEvent(
                 action=observe_action,
-                run_id=tool_call.run_id,
-                call_id=tool_call.call_id,
-                tool_name=tool_call.tool_name,
-                tool_args=self.redaction.redact_args(tool_call.args),
-                side_effect=tool_call.side_effect.value,
-                environment=tool_call.environment,
-                principal=asdict(tool_call.principal) if tool_call.principal else None,
+                run_id=envelope.run_id,
+                call_id=envelope.call_id,
+                tool_name=envelope.tool_name,
+                tool_args=self.redaction.redact_args(envelope.args),
+                side_effect=envelope.side_effect.value,
+                environment=envelope.environment,
+                principal=asdict(envelope.principal) if envelope.principal else None,
                 decision_source=sr["source"],
                 decision_name=sr["name"],
                 reason=sr["message"],
@@ -244,20 +219,27 @@ async def _run(
             tool_success = False
 
         # Post-execute
-        post = await pipeline.post_execute(tool_call, result, tool_success)
+        post = await pipeline.post_execute(envelope, result, tool_success)
+        workflow_events: list[dict[str, Any]] = []
+        if tool_success and pre.workflow_involved and pre.workflow_stage_id and self._workflow_runtime is not None:
+            workflow_events = await self._workflow_runtime.record_result(
+                session,
+                pre.workflow_stage_id,
+                envelope,
+            )
         await session.record_execution(tool_name, success=tool_success)
 
         # Emit post-execute audit
         post_action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
         post_event = AuditEvent(
             action=post_action,
-            run_id=tool_call.run_id,
-            call_id=tool_call.call_id,
-            tool_name=tool_call.tool_name,
-            tool_args=self.redaction.redact_args(tool_call.args),
-            side_effect=tool_call.side_effect.value,
-            environment=tool_call.environment,
-            principal=asdict(tool_call.principal) if tool_call.principal else None,
+            run_id=envelope.run_id,
+            call_id=envelope.call_id,
+            tool_name=envelope.tool_name,
+            tool_args=self.redaction.redact_args(envelope.args),
+            side_effect=envelope.side_effect.value,
+            environment=envelope.environment,
+            principal=asdict(envelope.principal) if envelope.principal else None,
             tool_success=tool_success,
             postconditions_passed=post.postconditions_passed,
             contracts_evaluated=post.contracts_evaluated,
@@ -266,9 +248,11 @@ async def _run(
             mode=self.mode,
             policy_version=self.policy_version,
             policy_error=post.policy_error,
+            workflow=pre.workflow,
         )
         await self.audit_sink.emit(post_event)
         _emit_otel_governance_span(self, post_event)
+        await _emit_workflow_events(self, envelope, workflow_events)
 
         span.set_attribute("governance.tool_success", tool_success)
         span.set_attribute("governance.postconditions_passed", post.postconditions_passed)
@@ -286,16 +270,16 @@ async def _run(
         span.end()
 
 
-async def _emit_run_pre_audit(self: Edictum, tool_call, session, action: AuditAction, pre: PreDecision) -> None:
+async def _emit_run_pre_audit(self: Edictum, envelope, session, action: AuditAction, pre: PreDecision) -> None:
     event = AuditEvent(
         action=action,
-        run_id=tool_call.run_id,
-        call_id=tool_call.call_id,
-        tool_name=tool_call.tool_name,
-        tool_args=self.redaction.redact_args(tool_call.args),
-        side_effect=tool_call.side_effect.value,
-        environment=tool_call.environment,
-        principal=asdict(tool_call.principal) if tool_call.principal else None,
+        run_id=envelope.run_id,
+        call_id=envelope.call_id,
+        tool_name=envelope.tool_name,
+        tool_args=self.redaction.redact_args(envelope.args),
+        side_effect=envelope.side_effect.value,
+        environment=envelope.environment,
+        principal=asdict(envelope.principal) if envelope.principal else None,
         decision_source=pre.decision_source,
         decision_name=pre.decision_name,
         reason=pre.reason,
@@ -306,9 +290,92 @@ async def _emit_run_pre_audit(self: Edictum, tool_call, session, action: AuditAc
         mode=self.mode,
         policy_version=self.policy_version,
         policy_error=pre.policy_error,
+        workflow=pre.workflow,
     )
     await self.audit_sink.emit(event)
     _emit_otel_governance_span(self, event)
+
+
+async def _resolve_pending_approval(
+    self: Edictum,
+    pipeline: CheckPipeline,
+    session: Session,
+    envelope,
+    pre: PreDecision,
+):
+    if self._approval_backend is None:
+        await _emit_run_pre_audit(self, envelope, session, AuditAction.CALL_DENIED, pre)
+        raise EdictumDenied(
+            reason=f"Approval required but no approval backend configured: {pre.reason}",
+            decision_source=pre.decision_source,
+            decision_name=pre.decision_name,
+        )
+
+    current = pre
+    for _ in range(_MAX_WORKFLOW_APPROVAL_ROUNDS):
+        principal_dict = asdict(envelope.principal) if envelope.principal else None
+        approval_request = await self._approval_backend.request_approval(
+            tool_name=envelope.tool_name,
+            tool_args=envelope.args,
+            message=current.approval_message or current.reason or "",
+            timeout=current.approval_timeout,
+            timeout_action=current.approval_timeout_action,
+            principal=principal_dict,
+        )
+        await _emit_run_pre_audit(self, envelope, session, AuditAction.CALL_APPROVAL_REQUESTED, current)
+        decision = await self._approval_backend.wait_for_decision(
+            approval_id=approval_request.approval_id,
+            timeout=current.approval_timeout,
+        )
+        approved = False
+        if decision.status == ApprovalStatus.TIMEOUT:
+            await _emit_run_pre_audit(self, envelope, session, AuditAction.CALL_APPROVAL_TIMEOUT, current)
+            if current.approval_timeout_action == "allow":
+                approved = True
+        elif decision.approved:
+            await _emit_run_pre_audit(self, envelope, session, AuditAction.CALL_APPROVAL_GRANTED, current)
+            approved = True
+        else:
+            await _emit_run_pre_audit(self, envelope, session, AuditAction.CALL_APPROVAL_DENIED, current)
+
+        if not approved:
+            return False, decision, current, False
+
+        if current.decision_source != "workflow" or not current.workflow_stage_id or self._workflow_runtime is None:
+            return True, decision, current, True
+
+        await self._workflow_runtime.record_approval(session, current.workflow_stage_id)
+        current = await pipeline.pre_execute(envelope, session)
+        await _emit_workflow_events(self, envelope, current.workflow_events)
+        if current.action != "pending_approval":
+            return True, decision, current, False
+
+    raise RuntimeError(f"workflow: exceeded maximum approval rounds ({_MAX_WORKFLOW_APPROVAL_ROUNDS})")
+
+
+async def _emit_workflow_events(self: Edictum, envelope, events: list[dict[str, Any]]) -> None:
+    for record in events:
+        workflow = record.get("workflow")
+        action_name = record.get("action")
+        if not isinstance(workflow, dict) or not isinstance(action_name, str):
+            continue
+        event = AuditEvent(
+            action=AuditAction.WORKFLOW_STAGE_ADVANCED,
+            run_id=envelope.run_id,
+            call_id=envelope.call_id,
+            tool_name=envelope.tool_name,
+            tool_args=self.redaction.redact_args(envelope.args),
+            side_effect=envelope.side_effect.value,
+            environment=envelope.environment,
+            principal=asdict(envelope.principal) if envelope.principal else None,
+            mode=self.mode,
+            policy_version=self.policy_version,
+            workflow=dict(workflow),
+        )
+        if action_name == AuditAction.WORKFLOW_COMPLETED.value:
+            event.action = AuditAction.WORKFLOW_COMPLETED
+        await self.audit_sink.emit(event)
+        _emit_otel_governance_span(self, event)
 
 
 def _emit_otel_governance_span(self: Edictum, audit_event: AuditEvent) -> None:

@@ -50,6 +50,22 @@ from edictum.session import Session
 from edictum.storage import MemoryBackend, StorageBackend
 from edictum.telemetry import GovernanceTelemetry
 from edictum.types import HookRegistration
+from edictum.workflow import (
+    WorkflowApproval,
+    WorkflowCheck,
+    WorkflowDefinition,
+    WorkflowEvaluation,
+    WorkflowEvidence,
+    WorkflowGate,
+    WorkflowMetadata,
+    WorkflowRuntime,
+    WorkflowStage,
+    WorkflowState,
+    load_workflow,
+    load_workflow_string,
+)
+
+_LEGACY_RESULT_EXPORT = "Contract" + "Result"
 
 __all__ = [
     "__version__",
@@ -101,6 +117,18 @@ __all__ = [
     "RuleResult",
     "CompositionReport",
     "TemplateInfo",
+    "WorkflowApproval",
+    "WorkflowCheck",
+    "WorkflowDefinition",
+    "WorkflowEvaluation",
+    "WorkflowEvidence",
+    "WorkflowGate",
+    "WorkflowMetadata",
+    "WorkflowRuntime",
+    "WorkflowStage",
+    "WorkflowState",
+    "load_workflow",
+    "load_workflow_string",
 ]
 
 # CompositionReport is lazy-loaded so that `import edictum` works without
@@ -113,6 +141,8 @@ _YAML_ENGINE_ATTRS: dict[str, tuple[str, str]] = {
 
 
 def __getattr__(name: str) -> object:
+    if name == _LEGACY_RESULT_EXPORT:
+        return RuleResult
     if name in _YAML_ENGINE_ATTRS:
         module_path, attr = _YAML_ENGINE_ATTRS[name]
         import importlib

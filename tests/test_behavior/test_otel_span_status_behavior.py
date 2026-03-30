@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from edictum import Decision, Edictum, precondition
 from edictum._runner import _ERROR_ACTIONS
+from edictum.approval import ApprovalDecision, ApprovalRequest, ApprovalStatus
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -29,6 +30,41 @@ def _make_guard(**kwargs):
     }
     defaults.update(kwargs)
     return Edictum(**defaults)
+
+
+def _make_timeout_allow_precondition():
+    @precondition("*")
+    def require_approval(tool_call):
+        return Decision.fail("needs approval")
+
+    require_approval._edictum_effect = "ask"
+    require_approval._edictum_timeout = 1
+    require_approval._edictum_timeout_action = "allow"
+    return require_approval
+
+
+def _make_timeout_allow_backend():
+    backend = MagicMock()
+    backend.request_approval = AsyncMock(
+        return_value=ApprovalRequest(
+            approval_id="approval-1",
+            tool_name="TestTool",
+            tool_args={},
+            message="needs approval",
+            timeout=1,
+        )
+    )
+    backend.wait_for_decision = AsyncMock(
+        return_value=ApprovalDecision(
+            approved=False,
+            status=ApprovalStatus.TIMEOUT,
+        )
+    )
+    return backend
+
+
+def _span_actions(span):
+    return [call.args[1] for call in span.set_attribute.call_args_list if call.args[:1] == ("governance.action",)]
 
 
 # --- Test 1: _NoOpSpan.set_status ---
@@ -276,3 +312,58 @@ async def test_adapter_post_calls_set_span_error_on_failure(name, cls, pre_fn, p
         await post_fn(adapter, result="Error: something failed")
         mock_error.assert_called_once()
         assert "tool execution failed" in mock_error.call_args[0][1]
+
+
+async def test_run_timeout_allow_uses_timeout_allow_span_action():
+    """run() records timeout_allow on approval timeout pass-through."""
+    guard = _make_guard(
+        rules=[_make_timeout_allow_precondition()],
+        approval_backend=_make_timeout_allow_backend(),
+    )
+    mock_span = MagicMock()
+
+    with patch.object(guard.telemetry, "start_tool_span", return_value=mock_span):
+        await guard.run("TestTool", {}, lambda: "ok")
+
+    actions = _span_actions(mock_span)
+    assert "timeout_allow" in actions
+    assert "approved" not in actions
+
+
+@pytest.mark.parametrize("name,cls,pre_fn", ALL_PRE, ids=ALL_PRE_IDS)
+async def test_adapter_timeout_allow_uses_timeout_allow_span_action(name, cls, pre_fn):
+    """Adapters record timeout_allow on approval timeout pass-through."""
+    guard = _make_guard(
+        rules=[_make_timeout_allow_precondition()],
+        approval_backend=_make_timeout_allow_backend(),
+    )
+    adapter = cls(guard, session_id="test")
+    mock_span = MagicMock()
+
+    with patch.object(guard.telemetry, "start_tool_span", return_value=mock_span):
+        await pre_fn(adapter)
+
+    actions = _span_actions(mock_span)
+    assert "timeout_allow" in actions
+    assert "approved" not in actions
+
+
+async def test_nanobot_timeout_allow_uses_timeout_allow_span_action():
+    """Nanobot records timeout_allow on approval timeout pass-through."""
+    from edictum.adapters.nanobot import GovernedToolRegistry
+
+    guard = _make_guard(
+        rules=[_make_timeout_allow_precondition()],
+        approval_backend=_make_timeout_allow_backend(),
+    )
+    inner = MagicMock()
+    inner.execute = AsyncMock(return_value="ok")
+    registry = GovernedToolRegistry(inner, guard)
+    mock_span = MagicMock()
+
+    with patch.object(guard.telemetry, "start_tool_span", return_value=mock_span):
+        await registry.execute("TestTool", {})
+
+    actions = _span_actions(mock_span)
+    assert "timeout_allow" in actions
+    assert "approved" not in actions

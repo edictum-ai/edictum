@@ -34,6 +34,10 @@ class PreDecision:
     approval_timeout: int = 300
     approval_timeout_action: str = "block"
     approval_message: str | None = None
+    workflow: dict[str, Any] | None = None
+    workflow_stage_id: str | None = None
+    workflow_involved: bool = False
+    workflow_events: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -133,21 +137,21 @@ class CheckPipeline:
                 logger.exception("Precondition %s raised", getattr(rule, "__name__", "anonymous"))
                 decision = Decision.fail(f"Precondition error: {exc}", policy_error=True)
 
-            contract_mode = getattr(rule, "_edictum_mode", None)
-            contract_record = {
+            rule_mode = getattr(rule, "_edictum_mode", None)
+            rule_record = {
                 "name": getattr(rule, "__name__", "anonymous"),
                 "type": "precondition",
                 "passed": decision.passed,
                 "message": decision.message,
             }
             if decision.metadata:
-                contract_record["metadata"] = decision.metadata
-            contracts_evaluated.append(contract_record)
+                rule_record["metadata"] = decision.metadata
+            contracts_evaluated.append(rule_record)
 
             if not decision.passed:
                 # Per-rule observe mode: record but don't block (Fix 4)
-                if contract_mode == "observe":
-                    contract_record["observed"] = True
+                if rule_mode == "observe":
+                    rule_record["observed"] = True
                     has_observed_deny = True
                     continue
 
@@ -160,7 +164,7 @@ class CheckPipeline:
                         action="pending_approval",
                         reason=decision.message,
                         decision_source=source,
-                        decision_name=contract_record["name"],
+                        decision_name=rule_record["name"],
                         hooks_evaluated=hooks_evaluated,
                         contracts_evaluated=contracts_evaluated,
                         policy_error=pe,
@@ -173,7 +177,7 @@ class CheckPipeline:
                     action="block",
                     reason=decision.message,
                     decision_source=source,
-                    decision_name=contract_record["name"],
+                    decision_name=rule_record["name"],
                     hooks_evaluated=hooks_evaluated,
                     contracts_evaluated=contracts_evaluated,
                     policy_error=pe,
@@ -189,20 +193,20 @@ class CheckPipeline:
                 logger.exception("Sandbox rule %s raised", getattr(rule, "__name__", "anonymous"))
                 decision = Decision.fail(f"Sandbox rule error: {exc}", policy_error=True)
 
-            contract_mode = getattr(rule, "_edictum_mode", None)
-            contract_record = {
+            rule_mode = getattr(rule, "_edictum_mode", None)
+            rule_record = {
                 "name": getattr(rule, "__name__", "anonymous"),
                 "type": "sandbox",
                 "passed": decision.passed,
                 "message": decision.message,
             }
             if decision.metadata:
-                contract_record["metadata"] = decision.metadata
-            contracts_evaluated.append(contract_record)
+                rule_record["metadata"] = decision.metadata
+            contracts_evaluated.append(rule_record)
 
             if not decision.passed:
-                if contract_mode == "observe":
-                    contract_record["observed"] = True
+                if rule_mode == "observe":
+                    rule_record["observed"] = True
                     has_observed_deny = True
                     continue
 
@@ -215,7 +219,7 @@ class CheckPipeline:
                         action="pending_approval",
                         reason=decision.message,
                         decision_source=source,
-                        decision_name=contract_record["name"],
+                        decision_name=rule_record["name"],
                         hooks_evaluated=hooks_evaluated,
                         contracts_evaluated=contracts_evaluated,
                         policy_error=pe,
@@ -228,7 +232,7 @@ class CheckPipeline:
                     action="block",
                     reason=decision.message,
                     decision_source=source,
-                    decision_name=contract_record["name"],
+                    decision_name=rule_record["name"],
                     hooks_evaluated=hooks_evaluated,
                     contracts_evaluated=contracts_evaluated,
                     policy_error=pe,
@@ -244,15 +248,15 @@ class CheckPipeline:
                 logger.exception("Session rule %s raised", getattr(rule, "__name__", "anonymous"))
                 decision = Decision.fail(f"Session rule error: {exc}", policy_error=True)
 
-            contract_record = {
+            rule_record = {
                 "name": getattr(rule, "__name__", "anonymous"),
                 "type": "session_contract",
                 "passed": decision.passed,
                 "message": decision.message,
             }
             if decision.metadata:
-                contract_record["metadata"] = decision.metadata
-            contracts_evaluated.append(contract_record)
+                rule_record["metadata"] = decision.metadata
+            contracts_evaluated.append(rule_record)
 
             if not decision.passed:
                 source = getattr(rule, "_edictum_source", "session_contract")
@@ -261,13 +265,84 @@ class CheckPipeline:
                     action="block",
                     reason=decision.message,
                     decision_source=source,
-                    decision_name=contract_record["name"],
+                    decision_name=rule_record["name"],
                     hooks_evaluated=hooks_evaluated,
                     contracts_evaluated=contracts_evaluated,
                     policy_error=pe,
                 )
 
-        # 5. Execution limits (use pre-fetched counters)
+        workflow_meta: dict[str, Any] | None = None
+        workflow_stage_id: str | None = None
+        workflow_involved = False
+        workflow_events: list[dict] = []
+
+        # 5. Workflow gates
+        if self._guard._workflow_runtime is not None:
+            try:
+                workflow_eval = await self._guard._workflow_runtime.evaluate(session, tool_call)
+            except Exception as exc:
+                rule_record = {
+                    "name": "workflow:error",
+                    "type": "workflow_gate",
+                    "passed": False,
+                    "message": f"Workflow evaluation error: {exc}",
+                    "metadata": {"policy_error": True},
+                }
+                contracts_evaluated.append(rule_record)
+                return PreDecision(
+                    action="block",
+                    reason=f"Workflow evaluation error: {exc}",
+                    decision_source="workflow",
+                    decision_name="workflow_error",
+                    hooks_evaluated=hooks_evaluated,
+                    contracts_evaluated=contracts_evaluated,
+                    policy_error=True,
+                    workflow=workflow_meta,
+                    workflow_stage_id=workflow_stage_id,
+                    workflow_involved=True,
+                    workflow_events=workflow_events,
+                )
+
+            if workflow_eval.records:
+                contracts_evaluated.extend(workflow_eval.records)
+                workflow_meta = workflow_eval.audit
+                workflow_stage_id = workflow_eval.stage_id or None
+            if workflow_eval.records or workflow_eval.events or workflow_eval.stage_id:
+                workflow_involved = True
+            workflow_events.extend(workflow_eval.events)
+
+            if workflow_eval.action == "block":
+                return PreDecision(
+                    action="block",
+                    reason=workflow_eval.reason,
+                    decision_source="workflow",
+                    decision_name=workflow_eval.stage_id or None,
+                    hooks_evaluated=hooks_evaluated,
+                    contracts_evaluated=contracts_evaluated,
+                    policy_error=has_observed_deny
+                    or any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated),
+                    workflow=workflow_meta,
+                    workflow_stage_id=workflow_stage_id,
+                    workflow_involved=workflow_involved,
+                    workflow_events=workflow_events,
+                )
+            if workflow_eval.action == "pending_approval":
+                return PreDecision(
+                    action="pending_approval",
+                    reason=workflow_eval.reason,
+                    decision_source="workflow",
+                    decision_name=workflow_eval.stage_id or None,
+                    hooks_evaluated=hooks_evaluated,
+                    contracts_evaluated=contracts_evaluated,
+                    policy_error=any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated),
+                    approval_message=workflow_eval.reason or None,
+                    workflow=workflow_meta,
+                    workflow_stage_id=workflow_stage_id,
+                    workflow_involved=workflow_involved,
+                    workflow_events=workflow_events,
+                )
+
+        # 6. Execution limits (use pre-fetched counters)
         exec_count = counters["execs"]
         if exec_count >= self._guard.limits.max_tool_calls:
             return PreDecision(
@@ -278,6 +353,10 @@ class CheckPipeline:
                 decision_name="max_tool_calls",
                 hooks_evaluated=hooks_evaluated,
                 contracts_evaluated=contracts_evaluated,
+                workflow=workflow_meta,
+                workflow_stage_id=workflow_stage_id,
+                workflow_involved=workflow_involved,
+                workflow_events=workflow_events,
             )
 
         # Per-tool limits (use pre-fetched counter when available)
@@ -293,6 +372,10 @@ class CheckPipeline:
                     decision_name=f"max_calls_per_tool:{tool_call.tool_name}",
                     hooks_evaluated=hooks_evaluated,
                     contracts_evaluated=contracts_evaluated,
+                    workflow=workflow_meta,
+                    workflow_stage_id=workflow_stage_id,
+                    workflow_involved=workflow_involved,
+                    workflow_events=workflow_events,
                 )
 
         # 6. All checks passed
@@ -308,6 +391,10 @@ class CheckPipeline:
             observed=has_observed_deny,
             policy_error=pe,
             observe_results=observe_results,
+            workflow=workflow_meta,
+            workflow_stage_id=workflow_stage_id,
+            workflow_involved=workflow_involved,
+            workflow_events=workflow_events,
         )
 
     async def post_execute(
@@ -332,25 +419,25 @@ class CheckPipeline:
                 logger.exception("Postcondition %s raised", getattr(rule, "__name__", "anonymous"))
                 decision = Decision.fail(f"Postcondition error: {exc}", policy_error=True)
 
-            contract_mode = getattr(rule, "_edictum_mode", None)
-            contract_record = {
+            rule_mode = getattr(rule, "_edictum_mode", None)
+            rule_record = {
                 "name": getattr(rule, "__name__", "anonymous"),
                 "type": "postcondition",
                 "passed": decision.passed,
                 "message": decision.message,
             }
-            if contract_mode == "observe":
-                contract_record["observed"] = True
+            if rule_mode == "observe":
+                rule_record["observed"] = True
             if decision.metadata:
-                contract_record["metadata"] = decision.metadata
-            contracts_evaluated.append(contract_record)
+                rule_record["metadata"] = decision.metadata
+            contracts_evaluated.append(rule_record)
 
             if not decision.passed:
                 action = getattr(rule, "_edictum_effect", "warn")
                 is_safe = tool_call.side_effect in (SideEffect.PURE, SideEffect.READ)
 
                 # Observe mode takes precedence
-                if contract_mode == "observe":
+                if rule_mode == "observe":
                     warnings.append(f"\u26a0\ufe0f [observe] {decision.message}")
                 elif action == "redact" and is_safe:
                     patterns = getattr(rule, "_edictum_redact_patterns", [])
@@ -364,15 +451,15 @@ class CheckPipeline:
 
                         text = RedactionPolicy().redact_result(text, max_length=len(text) + 100)
                     redacted_response = text
-                    warnings.append(f"\u26a0\ufe0f Content redacted by {contract_record['name']}.")
+                    warnings.append(f"\u26a0\ufe0f Content redacted by {rule_record['name']}.")
                 elif action == "block" and is_safe:
                     redacted_response = f"[OUTPUT SUPPRESSED] {decision.message}"
                     output_suppressed = True
-                    warnings.append(f"\u26a0\ufe0f Output suppressed by {contract_record['name']}.")
+                    warnings.append(f"\u26a0\ufe0f Output suppressed by {rule_record['name']}.")
                 elif action in ("redact", "block") and not is_safe:
                     logger.warning(
                         "Postcondition %s declares action=%s but tool %s has side_effect=%s; falling back to warn.",
-                        contract_record["name"],
+                        rule_record["name"],
                         action,
                         tool_call.tool_name,
                         tool_call.side_effect.value,
@@ -400,7 +487,7 @@ class CheckPipeline:
                 )
                 decision = Decision.fail(f"Observe-mode postcondition error: {exc}", policy_error=True)
 
-            contract_record = {
+            rule_record = {
                 "name": getattr(rule, "__name__", "anonymous"),
                 "type": "postcondition",
                 "passed": decision.passed,
@@ -408,8 +495,8 @@ class CheckPipeline:
                 "observed": True,
             }
             if decision.metadata:
-                contract_record["metadata"] = decision.metadata
-            contracts_evaluated.append(contract_record)
+                rule_record["metadata"] = decision.metadata
+            contracts_evaluated.append(rule_record)
 
             if not decision.passed:
                 warnings.append(f"\u26a0\ufe0f [observe] {decision.message}")
@@ -427,8 +514,8 @@ class CheckPipeline:
 
         # Exclude observe-mode rules — they must never affect postconditions_passed,
         # which propagates to on_postcondition_warn callbacks in all adapters.
-        enforce_contracts = [c for c in contracts_evaluated if not c.get("observed")]
-        postconditions_passed = all(c["passed"] for c in enforce_contracts) if enforce_contracts else True
+        enforce_rules = [c for c in contracts_evaluated if not c.get("observed")]
+        postconditions_passed = all(c["passed"] for c in enforce_rules) if enforce_rules else True
         pe = any(c.get("metadata", {}).get("policy_error") for c in contracts_evaluated)
 
         return PostDecision(

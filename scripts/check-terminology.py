@@ -14,25 +14,43 @@ from pathlib import Path
 # Banned patterns: (regex, replacement hint, description)
 BANNED_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\bshadow mode\b", re.IGNORECASE), "observe mode", "banned phrase"),
-    (re.compile(r"\bper-rule\b", re.IGNORECASE), "per-contract", "banned phrase"),
-    (re.compile(r"\bRuleResult\b"), "ContractResult", "old class name"),
-    (re.compile(r"\brule_id\b"), "contract_id", "old field name"),
-    (re.compile(r"\brule_type\b"), "contract_type", "old field name"),
+    (re.compile(r"\bper-contract\b", re.IGNORECASE), "per-rule", "banned phrase"),
+    (re.compile(r"\bContractResult\b"), "RuleResult", "old class name"),
+    (re.compile(r"\bcontract_id\b"), "rule_id", "old field name"),
+    (re.compile(r"\bcontract_type\b"), "rule_type", "old field name"),
     (re.compile(r'"\brules_evaluated\b"'), '"contracts_evaluated"', "old field name"),
-    (re.compile(r"\bby rule\b", re.IGNORECASE), "by contract", "banned phrase"),
-    (re.compile(r"\bRules evaluated\b"), "Contracts evaluated", "banned CLI string"),
-    (re.compile(r"\ball rules passed\b", re.IGNORECASE), "all contracts passed", "banned CLI string"),
+    (re.compile(r"\bby contract\b", re.IGNORECASE), "by rule", "banned phrase"),
+    (re.compile(r"\bContracts evaluated\b"), "Rules evaluated", "banned CLI string"),
+    (re.compile(r"\ball contracts passed\b", re.IGNORECASE), "all rules passed", "banned CLI string"),
 ]
 
-# "blocked" needs special handling — allow the loop variable in builtins.py
-BLOCKED_PATTERN = re.compile(r"\bblocked\b", re.IGNORECASE)
-BLOCKED_ALLOWLIST = {
-    # builtins.py loop variable: "for blocked in commands:"
-    "for blocked in commands",
-    "cmd == blocked",
-    "cmd.startswith(blocked",
-    # f-string references to the loop variable
-    "{blocked}",
+# "denied" is a banned prose term; allow existing code identifiers that
+# happen to contain the word while flagging user-facing wording.
+DENIED_PATTERN = re.compile(r"\bdenied\b", re.IGNORECASE)
+DENIED_ALLOWLIST = {
+    "ApprovalStatus.DENIED",
+    "CALL_DENIED",
+    "CALL_APPROVAL_DENIED",
+    "AutoDenyBackend",
+    "_on_deny",
+    "_deny(",
+    "denied =",
+    " denied,",
+    'startswith("DENIED:")',
+    'return f"DENIED: {reason}"',
+    'return ToolMessage(content=f"DENIED: {reason}", tool_call_id=tool_call_id)',
+    'return {"error": f"DENIED: {reason}"}',
+    'return {"error": "DENIED: output suppressed by postcondition"}',
+    'assert "DENIED:" in result["error"]',
+    'assert result == {"error": "DENIED: reason"}',
+    'return f"[DENIED] {decision.reason}"',
+    'return f"[DENIED] {reason}"',
+    'return f"[DENIED] Approval blocked: {reason}"',
+    'assert result.startswith("[DENIED]")',
+    'assert "[DENIED]" in result',
+    'assert "[DENIED]" not in result',
+    'governance.action", "denied"',
+    'or "denied"',
 }
 
 # "shadow" needs special handling — prose should say "observe mode" / "observe-mode".
@@ -95,11 +113,10 @@ def check_file(path: Path) -> list[str]:
                 violations.append(f"  {path}:{i}: {desc} — use '{fix}' instead")
                 violations.append(f"    {line.strip()}")
 
-        # Check "blocked" with allowlist
-        if BLOCKED_PATTERN.search(line):
+        if DENIED_PATTERN.search(line):
             line_stripped = line.strip()
-            if not any(allowed in line_stripped for allowed in BLOCKED_ALLOWLIST):
-                violations.append(f"  {path}:{i}: 'blocked' — use 'denied' instead")
+            if not any(allowed in line_stripped for allowed in DENIED_ALLOWLIST):
+                violations.append(f"  {path}:{i}: 'denied' — use 'blocked' instead")
                 violations.append(f"    {line_stripped}")
 
         # Check "shadow" with allowlist
