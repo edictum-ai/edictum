@@ -29,7 +29,7 @@ def load_workflow_string(content: str | bytes) -> WorkflowDefinition:
         import yaml  # type: ignore[import-untyped]
     except ImportError as exc:  # pragma: no cover - exercised in lazy import tests elsewhere
         raise ImportError(
-            "The YAML engine requires pyyaml and jsonschema. Install them with: pip install edictum[yaml]"
+            "Workflow loading requires pyyaml and jsonschema. Install them with: pip install edictum[yaml]"
         ) from exc
 
     raw = content.encode("utf-8") if isinstance(content, str) else content

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 
 from edictum.envelope import ToolCall
 from edictum.session import Session
-from edictum.workflow.definition import WorkflowDefinition, WorkflowStage
+from edictum.workflow.definition import WorkflowDefinition, WorkflowGate, WorkflowStage
 from edictum.workflow.evaluator import (
     ApprovalEvaluator,
     CommandEvaluator,
@@ -211,16 +211,22 @@ class WorkflowRuntime:
         envelope: ToolCall,
         has_next: bool,
     ) -> tuple[WorkflowEvaluation, bool]:
-        return await evaluate_completion(self, stage, state, envelope, has_next)
+        return cast(
+            tuple[WorkflowEvaluation, bool],
+            await evaluate_completion(self, stage, state, envelope, has_next),
+        )
 
     async def evaluate_gates(
         self,
         stage: WorkflowStage,
         state: WorkflowState,
         envelope: ToolCall,
-        gates,
+        gates: tuple[WorkflowGate, ...],
     ) -> tuple[WorkflowEvaluation, bool]:
-        return await evaluate_gates(self, stage, state, envelope, gates)
+        return cast(
+            tuple[WorkflowEvaluation, bool],
+            await evaluate_gates(self, stage, state, envelope, gates),
+        )
 
     async def advance_after_success(
         self,
@@ -237,8 +243,8 @@ class WorkflowRuntime:
         if has_next:
             return []
         if stage.exit:
-            failure, denied = await self.evaluate_gates(stage, state, envelope, stage.exit)
-            if denied:
+            failure, blocked = await self.evaluate_gates(stage, state, envelope, stage.exit)
+            if blocked:
                 return []
         if stage.approval is not None and state.approvals.get(stage.id) != "approved":
             return []
@@ -255,7 +261,7 @@ class WorkflowRuntime:
         idx = self.definition.stage_index(stage_id)
         if idx is None:  # pragma: no cover - guarded by validated active stages
             raise ValueError(f'workflow: stage "{stage_id}" not found')
-        return idx
+        return cast(int, idx)
 
 
 def tool_allowed(stage, envelope: ToolCall) -> bool:
