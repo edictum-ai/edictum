@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from edictum import Edictum
+from edictum import Edictum, EdictumConfigError
 from edictum.session import Session
 from edictum.storage import MemoryBackend
+from edictum.workflow import WorkflowRuntime, load_workflow_string
 
 _BUNDLE = """
 apiVersion: edictum/v1
@@ -135,3 +136,75 @@ stages:
         assert runtime is not None
         state = await runtime.state(Session(guard._session_id, guard.backend))
         assert state.active_stage == "read-context"
+
+
+class TestWorkflowSecurityBehavior:
+    @pytest.mark.security
+    def test_exec_condition_requires_explicit_opt_in(self):
+        with pytest.raises(ValueError, match="exec\\(\\.\\.\\.\\) conditions require exec_evaluator_enabled=True"):
+            WorkflowRuntime(
+                load_workflow_string(
+                    """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: exec-security
+stages:
+  - id: verify
+    tools: [Bash]
+    exit:
+      - condition: exec("python3 -c \\"raise SystemExit(0)\\"", exit_code=0)
+        message: pass
+"""
+                )
+            )
+
+    @pytest.mark.security
+    def test_workflow_regex_length_limit_rejects_oversized_pattern(self):
+        oversized_pattern = "a" * 10_001
+
+        with pytest.raises(EdictumConfigError, match="exceeds 10000 characters"):
+            load_workflow_string(
+                f"""
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: regex-bomb
+stages:
+  - id: verify
+    tools: [Bash]
+    checks:
+      - command_matches: "{oversized_pattern}"
+        message: nope
+"""
+            )
+
+    @pytest.mark.security
+    def test_workflow_name_rejects_storage_key_delimiters(self):
+        with pytest.raises(EdictumConfigError, match="metadata.name must match"):
+            load_workflow_string(
+                """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: bad:name
+stages:
+  - id: read-context
+    tools: [Read]
+"""
+            )
+
+    @pytest.mark.security
+    def test_workflow_stage_id_rejects_path_traversal_tokens(self):
+        with pytest.raises(EdictumConfigError, match='stage.id "\\.\\./escape" must match'):
+            load_workflow_string(
+                """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: valid-name
+stages:
+  - id: ../escape
+    tools: [Read]
+"""
+            )
