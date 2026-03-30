@@ -65,7 +65,7 @@ class ServerBackend:
         or 405 (endpoint not available on older servers, or route pattern
         matches a catch-all that doesn't support POST).
 
-        Fail-closed: other errors propagate so the pipeline denies
+        Fail-closed: other errors propagate so the pipeline blocks
         rather than silently allowing with missing data.
         """
         if not keys:

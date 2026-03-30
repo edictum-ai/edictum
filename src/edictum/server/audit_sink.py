@@ -18,7 +18,7 @@ _CANONICAL_ACTIONS: dict[AuditAction, str] = {
     AuditAction.CALL_APPROVAL_REQUESTED: "call_asked",
     AuditAction.CALL_APPROVAL_DENIED: "call_approval_blocked",
 }
-_RULES_EVALUATED_KEY = "rules" + "_evaluated"
+_RULES_EVALUATED_KEY = "rules_evaluated"
 
 
 class ServerAuditSink:

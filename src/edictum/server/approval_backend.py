@@ -16,8 +16,8 @@ from edictum.server.client import EdictumServerClient
 
 logger = logging.getLogger(__name__)
 
-_LEGACY_BLOCKED_STATUS = "de" + "nied"
-_LEGACY_TIMEOUT_STATUS = "time" + "out"
+_LEGACY_BLOCKED_STATUS = "denied"
+_LEGACY_TIMEOUT_STATUS = "timeout"
 
 
 class ServerApprovalBackend:

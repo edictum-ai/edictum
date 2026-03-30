@@ -10,8 +10,8 @@ from edictum.approval import ApprovalBackend, ApprovalStatus
 from edictum.server.approval_backend import ServerApprovalBackend
 from edictum.server.client import EdictumServerClient
 
-LEGACY_BLOCKED_STATUS = "de" + "nied"
-LEGACY_TIMEOUT_STATUS = "time" + "out"
+LEGACY_BLOCKED_STATUS = "denied"
+LEGACY_TIMEOUT_STATUS = "timeout"
 
 
 @pytest.fixture

@@ -18,7 +18,6 @@ BANNED_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\bContractResult\b"), "RuleResult", "old class name"),
     (re.compile(r"\bcontract_id\b"), "rule_id", "old field name"),
     (re.compile(r"\bcontract_type\b"), "rule_type", "old field name"),
-    (re.compile(r'"\brules_evaluated\b"'), '"contracts_evaluated"', "old field name"),
     (re.compile(r"\bby contract\b", re.IGNORECASE), "by rule", "banned phrase"),
     (re.compile(r"\bContracts evaluated\b"), "Rules evaluated", "banned CLI string"),
     (re.compile(r"\ball contracts passed\b", re.IGNORECASE), "all rules passed", "banned CLI string"),
@@ -51,6 +50,8 @@ DENIED_ALLOWLIST = {
     'assert "[DENIED]" not in result',
     'governance.action", "denied"',
     'or "denied"',
+    '_LEGACY_BLOCKED_STATUS = "denied"',
+    'LEGACY_BLOCKED_STATUS = "denied"',
 }
 
 # "shadow" needs special handling — prose should say "observe mode" / "observe-mode".

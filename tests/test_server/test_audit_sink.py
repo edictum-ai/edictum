@@ -12,7 +12,7 @@ from edictum.audit import AuditAction, AuditEvent, AuditSink
 from edictum.server.audit_sink import ServerAuditSink
 from edictum.server.client import EdictumServerClient
 
-RULES_EVALUATED_KEY = "rules" + "_evaluated"
+RULES_EVALUATED_KEY = "rules_evaluated"
 
 
 @pytest.fixture
