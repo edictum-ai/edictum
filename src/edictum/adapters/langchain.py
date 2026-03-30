@@ -307,6 +307,8 @@ class LangChainAdapter:
 
         decision = self._pending_decisions.pop(tool_call_id, None)
         if decision is None:
+            _, span = pending
+            span.end()
             return PostCallResult(result=result)
 
         envelope, span = pending

@@ -255,6 +255,8 @@ class AgnoAdapter:
 
         decision = self._pending_decisions.pop(call_id, None)
         if decision is None:
+            _, span = pending
+            span.end()
             return PostCallResult(result=tool_response)
 
         envelope, span = pending

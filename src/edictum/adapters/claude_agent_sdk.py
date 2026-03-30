@@ -215,6 +215,8 @@ class ClaudeAgentSDKAdapter:
 
         decision = self._pending_decisions.pop(tool_use_id, None)
         if decision is None:
+            _, span = pending
+            span.end()
             return {}
 
         envelope, span = pending

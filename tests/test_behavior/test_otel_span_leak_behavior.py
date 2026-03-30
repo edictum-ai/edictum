@@ -115,6 +115,7 @@ def _all_configs():
 
 CONFIGS = _all_configs()
 IDS = [c[0] for c in CONFIGS]
+PENDING_DECISION_GUARD_IDS = {"OpenAI", "LangChain", "ClaudeSDK", "Agno", "SK"}
 
 
 class TestAdapterSpanEndOnPreRaise:
@@ -148,6 +149,27 @@ class TestAdapterSpanEndOnPostRaise:
             with pytest.raises(RuntimeError, match="post boom"):
                 await post_fn(adapter, result="ok")
         assert mock_span.end.call_count >= 1
+
+
+class TestAdapterSpanEndOnPendingDecisionMiss:
+    """span.end() must be called when pending maps drift out of sync."""
+
+    @pytest.mark.parametrize(
+        "name,cls,pre_fn,post_fn",
+        [config for config in CONFIGS if config[0] in PENDING_DECISION_GUARD_IDS],
+        ids=[config[0] for config in CONFIGS if config[0] in PENDING_DECISION_GUARD_IDS],
+    )
+    async def test_span_ended_when_pending_decision_missing(self, name, cls, pre_fn, post_fn):
+        guard = _make_guard()
+        adapter = cls(guard)
+        mock_span = MagicMock()
+        with patch.object(guard.telemetry, "start_tool_span", return_value=mock_span):
+            await pre_fn(adapter)
+
+        adapter._pending_decisions.clear()
+        await post_fn(adapter, result="ok")
+
+        mock_span.end.assert_called_once()
 
 
 class TestGuardRunSpanEnd:
@@ -228,7 +250,7 @@ class TestNanobotSpanEndOnDeny:
 
         @precondition("*")
         def block(tool_call):
-            return Decision.fail("denied")
+            return Decision.fail("blocked")
 
         guard = _make_guard(rules=[block])
         inner = MagicMock()
