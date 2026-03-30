@@ -38,19 +38,25 @@ async def evaluate_runtime(runtime: WorkflowRuntime, session: Session, envelope:
 
         next_index, has_next = runtime.next_index(stage.id)
         if invalid_eval is not None and not has_next:
+            if changed:
+                await runtime.save_state(session, state)
             invalid_eval.events.extend(events)
             return invalid_eval
 
         completion, complete = await runtime.evaluate_completion(stage, state, envelope, has_next)
         if not complete:
             if completion.action:
-                if changed and completion.action == "pending_approval":
+                if changed:
                     await runtime.save_state(session, state)
                 completion.events.extend(events)
                 return completion
             if invalid_eval is not None:
+                if changed:
+                    await runtime.save_state(session, state)
                 invalid_eval.events.extend(events)
                 return invalid_eval
+            if changed:
+                await runtime.save_state(session, state)
             completion.events.extend(events)
             return completion
 

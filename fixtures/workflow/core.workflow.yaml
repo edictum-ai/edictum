@@ -248,8 +248,10 @@ fixtures:
         execution: not_run
         expect:
           decision: block
-          active_stage: implement
-          completed_stages: [read-context]
+          active_stage: local-verify
+          completed_stages:
+            - read-context
+            - implement
           approvals: {}
           evidence:
             reads:

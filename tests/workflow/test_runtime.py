@@ -229,3 +229,96 @@ stages:
     actions = [event.action for event in guard.local_sink.events]
     assert AuditAction.WORKFLOW_STAGE_ADVANCED in actions
     assert AuditAction.WORKFLOW_COMPLETED in actions
+
+
+@pytest.mark.asyncio
+async def test_guard_run_ignores_invalid_workflow_evidence_after_execution():
+    guard = Edictum.from_yaml_string(
+        """
+apiVersion: edictum/v1
+kind: Ruleset
+metadata:
+  name: empty-bundle
+defaults:
+  mode: enforce
+rules:
+  - id: noop-pre
+    type: pre
+    tool: Noop
+    when:
+      args.path:
+        equals: never
+    then:
+      action: block
+      message: never
+""",
+        backend=MemoryBackend(),
+        workflow_content="""
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: invalid-evidence
+stages:
+  - id: execute
+    tools: [Bash]
+""",
+    )
+
+    result = await guard.run(
+        "Bash",
+        {"command": "git push origin branch\r"},
+        lambda command: "ok",
+        session_id="invalid-evidence-session",
+    )
+
+    assert result == "ok"
+    runtime = guard._workflow_runtime
+    assert runtime is not None
+    session = Session("invalid-evidence-session", guard.backend)
+    state = await runtime.state(session)
+    assert state.active_stage == "execute"
+    assert state.evidence.stage_calls == {}
+    assert await session.execution_count() == 1
+    actions = [event.action for event in guard.local_sink.events]
+    assert AuditAction.CALL_EXECUTED in actions
+
+
+@pytest.mark.asyncio
+async def test_auto_advanced_stage_persists_before_block_return():
+    runtime = make_runtime(
+        """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: persist-advance
+stages:
+  - id: prepare
+    exit:
+      - condition: file_read("spec.md")
+        message: spec required
+  - id: execute
+    tools: [Bash]
+"""
+    )
+    session = Session("persist-advance", MemoryBackend())
+    await _seed_state(
+        runtime,
+        session,
+        WorkflowState(
+            session_id="persist-advance",
+            active_stage="prepare",
+            completed_stages=[],
+            approvals={},
+            evidence=WorkflowEvidence(
+                reads=["spec.md"],
+                stage_calls={},
+            ),
+        ),
+    )
+
+    decision = await runtime.evaluate(session, make_envelope("Read", {"path": "other.md"}))
+
+    assert decision.action == "block"
+    state = await runtime.state(session)
+    assert state.active_stage == "execute"
+    assert state.completed_stages == ["prepare"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, cast
 
 from edictum.envelope import ToolCall
@@ -26,6 +27,8 @@ from edictum.workflow.runtime_eval import (
     workflow_progress_event,
 )
 from edictum.workflow.state import load_state, record_approval, record_result, save_state
+
+logger = logging.getLogger(__name__)
 
 
 class WorkflowRuntime:
@@ -96,7 +99,15 @@ class WorkflowRuntime:
             return []
         async with self._session_lock(session):
             state = await self.load_state(session)
-            record_result(state, stage_id, envelope)
+            try:
+                record_result(state, stage_id, envelope)
+            except ValueError:
+                logger.warning(
+                    'workflow: skipped evidence recording for stage "%s" due to invalid evidence',
+                    stage_id,
+                    exc_info=True,
+                )
+                return []
             events = await self.advance_after_success(state, stage_id, envelope)
             await self.save_state(session, state)
             return events
