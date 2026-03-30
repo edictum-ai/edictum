@@ -388,8 +388,6 @@ def _emit_otel_governance_span(self: Edictum, audit_event: AuditEvent) -> None:
         span.set_attribute("edictum.tool.name", audit_event.tool_name)
         span.set_attribute("edictum.decision", audit_event.action.value)
         span.set_attribute("edictum.decision.reason", audit_event.reason or "")
-        span.set_attribute("edictum.verdict", audit_event.action.value)
-        span.set_attribute("edictum.verdict.reason", audit_event.reason or "")
         span.set_attribute("edictum.decision.source", audit_event.decision_source or "")
         span.set_attribute("edictum.decision.name", audit_event.decision_name or "")
         span.set_attribute("edictum.side_effect", audit_event.side_effect)
