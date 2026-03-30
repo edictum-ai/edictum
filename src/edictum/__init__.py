@@ -115,7 +115,6 @@ __all__ = [
     "PostCallResult",
     "EvaluationResult",
     "RuleResult",
-    _LEGACY_RESULT_EXPORT,
     "CompositionReport",
     "TemplateInfo",
     "WorkflowApproval",

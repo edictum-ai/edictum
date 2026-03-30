@@ -36,6 +36,8 @@ DENIED_ALLOWLIST = {
     "_deny(",
     "denied =",
     " denied,",
+    'startswith("DENIED:")',
+    'return f"DENIED: {reason}"',
     'governance.action", "denied"',
     'or "denied"',
 }

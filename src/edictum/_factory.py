@@ -439,11 +439,11 @@ def _list_templates(
 def _from_multiple(cls: type[Edictum], guards: list[Edictum]) -> Edictum:
     """Create a new Edictum instance by merging multiple guards.
 
-    Concatenates preconditions, postconditions, and session contracts
+    Concatenates preconditions, postconditions, and session rules
     from all guards in order.  The first guard's audit config, mode,
     environment, and limits are used as the base.
 
-    Duplicate contract IDs are detected: first occurrence wins and
+    Duplicate rule IDs are detected: first occurrence wins and
     a warning is logged for each duplicate.
 
     Raises:
