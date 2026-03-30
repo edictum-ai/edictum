@@ -31,7 +31,7 @@ class OpenAIAgentsAdapter:
     1. Creates envelopes from SDK guardrail data
     2. Manages pending state (envelope + span) between input/output guardrails
     3. Translates PreDecision/PostDecision into guardrail output format
-    4. Handles observe mode (deny -> allow conversion)
+    4. Handles observe mode (block -> allow conversion)
 
     Input and output guardrails are separate functions with no shared tool_use_id.
     Correlation uses tool_name as the pending key since the SDK is typically
@@ -39,7 +39,7 @@ class OpenAIAgentsAdapter:
 
     Note: Native guardrails (as_guardrails) cannot substitute tool results.
     Postcondition effect=redact requires the wrapper integration path.
-    Postcondition effect=deny is enforced natively via reject_content.
+    Postcondition effect=block is enforced natively via reject_content.
     """
 
     def __init__(
@@ -84,7 +84,7 @@ class OpenAIAgentsAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and is called
+                detect issues. Receives (original_result, violations) and is called
                 for side effects. The SDK's output guardrail cannot transform
                 the result — it can only allow or reject.
 
@@ -184,7 +184,7 @@ class OpenAIAgentsAdapter:
             decision = await self._pipeline.pre_execute(envelope, self._session)
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
-            # Handle observe mode: convert deny to allow with warning
+            # Handle observe mode: convert block to allow with warning
             if self._guard.mode == "observe" and decision.action == "block":
                 await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
@@ -193,7 +193,7 @@ class OpenAIAgentsAdapter:
                 self._pending_decisions[call_id] = decision
                 return None  # allow through
 
-            # Handle deny
+            # Handle block
             if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
                 self._guard.telemetry.record_denial(envelope, decision.reason)
@@ -258,7 +258,7 @@ class OpenAIAgentsAdapter:
             raise
 
     async def _post(self, call_id: str, tool_response: Any = None) -> PostCallResult:
-        """Run post-execution governance. Returns PostCallResult with findings.
+        """Run post-execution governance. Returns PostCallResult with violations.
 
         Exposed for direct testing without framework imports.
         """
@@ -347,7 +347,7 @@ class OpenAIAgentsAdapter:
         on_warn = getattr(self, "_on_postcondition_warn", None)
         if not post_result.postconditions_passed and on_warn:
             try:
-                on_warn(post_result.result, post_result.findings)
+                on_warn(post_result.result, post_result.violations)
             except Exception:
                 logger.exception("on_postcondition_warn callback raised")
 

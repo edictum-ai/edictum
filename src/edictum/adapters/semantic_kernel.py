@@ -30,7 +30,7 @@ class SemanticKernelAdapter:
     1. Creates envelopes from SK AutoFunctionInvocationContext
     2. Manages pending state (envelope + span) between pre/post
     3. Translates PreDecision/PostDecision into SK filter output
-    4. Handles observe mode (deny -> allow conversion)
+    4. Handles observe mode (block -> allow conversion)
     """
 
     def __init__(
@@ -79,7 +79,7 @@ class SemanticKernelAdapter:
         Args:
             kernel: Semantic Kernel instance.
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and returns
+                detect issues. Receives (original_result, violations) and returns
                 the (possibly transformed) result. The return value replaces
                 context.function_result.
 
@@ -128,7 +128,7 @@ class SemanticKernelAdapter:
             # Apply remediation callback
             if not post_result.postconditions_passed and adapter._on_postcondition_warn:
                 try:
-                    remediated = adapter._on_postcondition_warn(post_result.result, post_result.findings)
+                    remediated = adapter._on_postcondition_warn(post_result.result, post_result.violations)
                     context.function_result = _wrap_result(context, remediated)
                 except Exception:
                     logger.exception("on_postcondition_warn callback raised")
@@ -155,7 +155,7 @@ class SemanticKernelAdapter:
             decision = await self._pipeline.pre_execute(envelope, self._session)
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
-            # Observe mode: convert deny to allow with WOULD_DENY audit
+            # Observe mode: convert block to allow with WOULD_DENY audit
             if self._guard.mode == "observe" and decision.action == "block":
                 await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
@@ -164,7 +164,7 @@ class SemanticKernelAdapter:
                 self._pending_decisions[call_id] = decision
                 return {}  # allow through
 
-            # Deny
+            # Block
             if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
                 self._guard.telemetry.record_denial(envelope, decision.reason)
@@ -229,7 +229,7 @@ class SemanticKernelAdapter:
             raise
 
     async def _post(self, call_id: str, tool_response: Any = None) -> PostCallResult:
-        """Post-execution governance. Returns PostCallResult with findings."""
+        """Post-execution governance. Returns PostCallResult with violations."""
         pending = self._pending.pop(call_id, None)
         if not pending:
             return PostCallResult(result=tool_response)

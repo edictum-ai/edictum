@@ -31,7 +31,7 @@ class CrewAIAdapter:
     1. Creates envelopes from CrewAI hook context
     2. Manages pending state (envelope + span) between before/after hooks
     3. Translates PreDecision/PostDecision into CrewAI hook responses
-    4. Handles observe mode (deny -> allow conversion)
+    4. Handles observe mode (block -> allow conversion)
 
     CrewAI is sequential, so a single-pending slot correlates before/after.
     """
@@ -95,7 +95,7 @@ class CrewAIAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and is called
+                detect issues. Receives (original_result, violations) and is called
                 for side effects (CrewAI controls the tool result flow).
 
         Imports CrewAI hook registration lazily to avoid hard dependency.
@@ -185,7 +185,7 @@ class CrewAIAdapter:
             decision = await self._pipeline.pre_execute(envelope, self._session)
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
-            # Handle observe mode: convert deny to allow with warning
+            # Handle observe mode: convert block to allow with warning
             if self._guard.mode == "observe" and decision.action == "block":
                 await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
@@ -195,7 +195,7 @@ class CrewAIAdapter:
                 self._pending_decision = decision
                 return None  # allow through
 
-            # Handle deny
+            # Handle block
             if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
                 self._guard.telemetry.record_denial(envelope, decision.reason)
@@ -221,7 +221,7 @@ class CrewAIAdapter:
                     self._pending_decision = None
                     return blocked_result
 
-            # Handle per-rule observed denials
+            # Handle per-rule observed blocks
             if decision.observed:
                 for cr in decision.contracts_evaluated:
                     if cr.get("observed") and not cr.get("passed"):
@@ -341,19 +341,19 @@ class CrewAIAdapter:
         finally:
             span.end()
 
-        # Build findings
-        findings = build_findings(post_decision)
+        # Build violations
+        violations = build_findings(post_decision)
         post_result = PostCallResult(
             result=effective_response,
             postconditions_passed=post_decision.postconditions_passed,
-            violations=findings,
+            violations=violations,
         )
 
         # Call callback for side effects
         on_warn = getattr(self, "_on_postcondition_warn", None)
         if not post_result.postconditions_passed and on_warn:
             try:
-                on_warn(post_result.result, post_result.findings)
+                on_warn(post_result.result, post_result.violations)
             except Exception:
                 logger.exception("on_postcondition_warn callback raised")
 

@@ -30,7 +30,7 @@ class GoogleADKAdapter:
     1. Creates envelopes from ADK tool callback data
     2. Manages pending state (envelope + span) between before/after
     3. Translates PreDecision/PostDecision into ADK return format
-    4. Handles observe mode (deny -> allow conversion)
+    4. Handles observe mode (block -> allow conversion)
 
     Two integration paths:
 
@@ -139,7 +139,7 @@ class GoogleADKAdapter:
             decision = await self._pipeline.pre_execute(envelope, self._session)
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
-            # Handle observe mode: convert deny to allow with warning
+            # Handle observe mode: convert block to allow with warning
             if self._guard.mode == "observe" and decision.action == "block":
                 await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
@@ -148,7 +148,7 @@ class GoogleADKAdapter:
                 self._pending_decisions[call_id] = decision
                 return None  # allow through
 
-            # Handle deny
+            # Handle block
             if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
                 self._guard.telemetry.record_denial(envelope, decision.reason)
@@ -213,7 +213,7 @@ class GoogleADKAdapter:
             raise
 
     async def _post(self, call_id: str, tool_response: Any = None) -> PostCallResult:
-        """Run post-execution governance. Returns PostCallResult with findings.
+        """Run post-execution governance. Returns PostCallResult with violations.
 
         Exposed for direct testing without framework imports.
         """
@@ -303,7 +303,7 @@ class GoogleADKAdapter:
         on_warn = getattr(self, "_on_postcondition_warn", None)
         if not post_result.postconditions_passed and on_warn:
             try:
-                on_warn(post_result.result, post_result.findings)
+                on_warn(post_result.result, post_result.violations)
             except Exception:
                 logger.exception("on_postcondition_warn callback raised")
 
@@ -523,7 +523,7 @@ class GoogleADKAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and is called
+                detect issues. Receives (original_result, violations) and is called
                 for side effects. Overrides the constructor value if provided.
 
         Note:
@@ -588,7 +588,7 @@ class GoogleADKAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and is called
+                detect issues. Receives (original_result, violations) and is called
                 for side effects.
 
         Returns:

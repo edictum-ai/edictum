@@ -31,7 +31,7 @@ class AgnoAdapter:
     1. Creates envelopes from Agno hook input
     2. Manages pending state (envelope + span) between pre/post
     3. Translates PreDecision/PostDecision into Agno hook output format
-    4. Handles observe mode (deny -> allow conversion)
+    4. Handles observe mode (block -> allow conversion)
 
     Agno tool_hooks use a wrap-around pattern: a single function receives
     (function_name, function_call, arguments) and must call function_call
@@ -140,7 +140,7 @@ class AgnoAdapter:
         on_warn = getattr(self, "_on_postcondition_warn", None)
         if not post_result.postconditions_passed and on_warn:
             try:
-                return on_warn(post_result.result, post_result.findings)
+                return on_warn(post_result.result, post_result.violations)
             except Exception:
                 logger.exception("on_postcondition_warn callback raised")
 
@@ -171,7 +171,7 @@ class AgnoAdapter:
             decision = await self._pipeline.pre_execute(envelope, self._session)
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
-            # Handle observe mode: convert deny to allow with warning
+            # Handle observe mode: convert block to allow with warning
             if self._guard.mode == "observe" and decision.action == "block":
                 await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
@@ -180,7 +180,7 @@ class AgnoAdapter:
                 self._pending_decisions[call_id] = decision
                 return {}  # allow through
 
-            # Handle deny
+            # Handle block
             if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
                 self._guard.telemetry.record_denial(envelope, decision.reason)
@@ -204,7 +204,7 @@ class AgnoAdapter:
                     self._pending_decisions.pop(call_id, None)
                     return blocked_result
 
-            # Handle per-rule observed denials
+            # Handle per-rule observed blocks
             if decision.observed:
                 for cr in decision.contracts_evaluated:
                     if cr.get("observed") and not cr.get("passed"):
@@ -248,7 +248,7 @@ class AgnoAdapter:
     async def _post(
         self, call_id: str, tool_response: Any = None, *, tool_success: bool | None = None
     ) -> PostCallResult:
-        """Post-execution governance. Returns PostCallResult with findings."""
+        """Post-execution governance. Returns PostCallResult with violations."""
         pending = self._pending.pop(call_id, None)
         if not pending:
             return PostCallResult(result=tool_response)

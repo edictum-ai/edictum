@@ -30,10 +30,10 @@ class ClaudeAgentSDKAdapter:
     1. Creates envelopes from SDK input
     2. Manages pending state (envelope + span) between Pre/Post
     3. Translates PreDecision/PostDecision into SDK hook output format
-    4. Handles observe mode (deny -> allow conversion)
+    4. Handles observe mode (block -> allow conversion)
 
     Note: Hook callables (to_hook_callables) cannot substitute tool results.
-    Postcondition effects (redact/deny) require the wrapper integration path
+    Postcondition effects (redact/block) require the wrapper integration path
     for full enforcement. Native hooks can only warn.
     """
 
@@ -87,7 +87,7 @@ class ClaudeAgentSDKAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and is called
+                detect issues. Receives (original_result, violations) and is called
                 for side effects.
         """
         self._on_postcondition_warn = on_postcondition_warn
@@ -95,7 +95,7 @@ class ClaudeAgentSDKAdapter:
         has_effects = any(getattr(p, "_edictum_effect", "warn") != "warn" for p in self._guard._state.postconditions)
         if has_effects:
             logger.warning(
-                "Postcondition effects (redact/deny) require the wrapper integration path "
+                "Postcondition effects (redact/block) require the wrapper integration path "
                 "for full enforcement. Hook callables can only warn."
             )
 
@@ -129,7 +129,7 @@ class ClaudeAgentSDKAdapter:
             decision = await self._pipeline.pre_execute(envelope, self._session)
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
-            # Handle observe mode: convert deny to allow with warning
+            # Handle observe mode: convert block to allow with warning
             if self._guard.mode == "observe" and decision.action == "block":
                 await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
@@ -138,7 +138,7 @@ class ClaudeAgentSDKAdapter:
                 self._pending_decisions[tool_use_id] = decision
                 return {}  # allow through
 
-            # Handle deny
+            # Handle block
             if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
                 self._guard.telemetry.record_denial(envelope, decision.reason)
@@ -162,7 +162,7 @@ class ClaudeAgentSDKAdapter:
                     self._pending_decisions.pop(tool_use_id, None)
                     return blocked_result
 
-            # Handle per-rule observed denials
+            # Handle per-rule observed blocks
             if decision.observed:
                 for cr in decision.contracts_evaluated:
                     if cr.get("observed") and not cr.get("passed"):
@@ -278,7 +278,7 @@ class ClaudeAgentSDKAdapter:
         finally:
             span.end()
 
-        # Build findings and call callback with effective response
+        # Build violations and call callback with effective response.
         effective_response = (
             post_decision.redacted_response if post_decision.redacted_response is not None else tool_response
         )

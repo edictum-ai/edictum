@@ -31,7 +31,7 @@ class LangChainAdapter:
     1. Creates envelopes from LangChain ToolCallRequest
     2. Manages pending state (envelope + span) between pre/post
     3. Translates PreDecision/PostDecision into LangChain output format
-    4. Handles observe mode (deny -> allow conversion)
+    4. Handles observe mode (block -> allow conversion)
     """
 
     def __init__(
@@ -73,7 +73,7 @@ class LangChainAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and returns
+                detect issues. Receives (original_result, violations) and returns
                 the (possibly transformed) result.
 
         Usage::
@@ -101,7 +101,7 @@ class LangChainAdapter:
             post_result = loop.run_until_complete(adapter._post_tool_call(request, result))
             if not post_result.postconditions_passed and on_postcondition_warn:
                 try:
-                    return on_postcondition_warn(post_result.result, post_result.findings)
+                    return on_postcondition_warn(post_result.result, post_result.violations)
                 except Exception:
                     logger.exception("on_postcondition_warn callback raised")
             return post_result.result
@@ -116,7 +116,7 @@ class LangChainAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and returns
+                detect issues. Receives (original_result, violations) and returns
                 the (possibly transformed) result. If None, postcondition
                 warnings are logged but the original result is returned unchanged.
 
@@ -130,7 +130,7 @@ class LangChainAdapter:
             tool_node = ToolNode(
                 tools=tools,
                 wrap_tool_call=adapter.as_tool_wrapper(
-                    on_postcondition_warn=lambda result, findings: redact_pii(result, findings)
+                    on_postcondition_warn=lambda result, violations: redact_pii(result, violations)
                 ),
             )
         """
@@ -159,7 +159,7 @@ class LangChainAdapter:
             post_result = _run_async(adapter._post_tool_call(request, result))
             if not post_result.postconditions_passed and on_postcondition_warn:
                 try:
-                    return on_postcondition_warn(post_result.result, post_result.findings)
+                    return on_postcondition_warn(post_result.result, post_result.violations)
                 except Exception:
                     logger.exception("on_postcondition_warn callback raised")
             return post_result.result
@@ -174,7 +174,7 @@ class LangChainAdapter:
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
-                detect issues. Receives (original_result, findings) and returns
+                detect issues. Receives (original_result, violations) and returns
                 the (possibly transformed) result.
 
         Usage::
@@ -193,7 +193,7 @@ class LangChainAdapter:
             post_result = await adapter._post_tool_call(request, result)
             if not post_result.postconditions_passed and on_postcondition_warn:
                 try:
-                    return on_postcondition_warn(post_result.result, post_result.findings)
+                    return on_postcondition_warn(post_result.result, post_result.violations)
                 except Exception:
                     logger.exception("on_postcondition_warn callback raised")
             return post_result.result
@@ -226,7 +226,7 @@ class LangChainAdapter:
             decision = await self._pipeline.pre_execute(envelope, self._session)
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
-            # Observe mode: convert deny to allow with WOULD_DENY audit
+            # Observe mode: convert block to allow with WOULD_DENY audit
             if self._guard.mode == "observe" and decision.action == "block":
                 await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
@@ -235,7 +235,7 @@ class LangChainAdapter:
                 self._pending_decisions[tool_call_id] = decision
                 return None  # allow through
 
-            # Deny
+            # Block
             if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
                 self._guard.telemetry.record_denial(envelope, decision.reason)
@@ -299,7 +299,7 @@ class LangChainAdapter:
             raise
 
     async def _post_tool_call(self, request: Any, result: Any) -> PostCallResult:
-        """Run post-execution governance. Returns PostCallResult with findings."""
+        """Run post-execution governance. Returns PostCallResult with violations."""
         tool_call_id = request.tool_call["id"]
         pending = self._pending.pop(tool_call_id, None)
         if not pending:

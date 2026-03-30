@@ -99,7 +99,7 @@ class GovernedToolRegistry:
             decision = await self._pipeline.pre_execute(envelope, self._session)
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
-            # Observe mode: convert deny to allow with CALL_WOULD_DENY audit
+            # Observe mode: convert block to allow with CALL_WOULD_DENY audit
             if self._guard.mode == "observe" and decision.action == "block":
                 await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
                 span.set_attribute("governance.action", "would_deny")
