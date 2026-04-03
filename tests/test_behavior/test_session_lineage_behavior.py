@@ -124,6 +124,28 @@ class TestApprovalRequestSessionId:
             req.session_id = "other"  # type: ignore[misc]
 
 
+class TestPipelinePopulatesSessionId:
+    """Pipeline evaluation populates session_id on emitted AuditEvents."""
+
+    async def test_run_populates_session_id_on_audit_events(self):
+        from edictum._guard import Edictum
+        from edictum.audit import CollectingAuditSink
+
+        sink = CollectingAuditSink()
+        guard = Edictum(audit_sink=sink)
+
+        await guard.run(
+            tool_name="Read",
+            args={"path": "/tmp/test.txt"},
+            tool_callable=lambda **kw: "ok",
+            session_id="sess-pipeline-test",
+        )
+
+        assert len(sink.events) >= 2, "Expected at least pre and post audit events"
+        for event in sink.events:
+            assert event.session_id == "sess-pipeline-test", f"AuditEvent with action={event.action} missing session_id"
+
+
 class TestWorkflowStateUpdatedAction:
     """AuditAction has workflow_state_updated value."""
 

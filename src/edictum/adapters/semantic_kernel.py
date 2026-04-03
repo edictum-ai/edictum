@@ -208,6 +208,7 @@ class SemanticKernelAdapter:
                                 mode="observe",
                                 policy_version=self._guard.policy_version,
                                 policy_error=decision.policy_error,
+                                session_id=self._session.session_id,
                             )
                         )
 
@@ -287,6 +288,7 @@ class SemanticKernelAdapter:
                     policy_version=self._guard.policy_version,
                     policy_error=post_decision.policy_error,
                     workflow=decision.workflow,
+                    session_id=self._session.session_id,
                 )
             )
             await self._emit_workflow_events(envelope, workflow_events)
@@ -334,6 +336,7 @@ class SemanticKernelAdapter:
                 policy_version=self._guard.policy_version,
                 policy_error=decision.policy_error,
                 workflow=decision.workflow,
+                session_id=self._session.session_id,
             )
         )
 
@@ -346,6 +349,8 @@ class SemanticKernelAdapter:
             action = AuditAction.WORKFLOW_STAGE_ADVANCED
             if action_name == AuditAction.WORKFLOW_COMPLETED.value:
                 action = AuditAction.WORKFLOW_COMPLETED
+            elif action_name == AuditAction.WORKFLOW_STATE_UPDATED.value:
+                action = AuditAction.WORKFLOW_STATE_UPDATED
             await self._guard.audit_sink.emit(
                 AuditEvent(
                     action=action,
@@ -360,6 +365,7 @@ class SemanticKernelAdapter:
                     mode=self._guard.mode,
                     policy_version=self._guard.policy_version,
                     workflow=dict(workflow),
+                    session_id=self._session.session_id,
                 )
             )
 

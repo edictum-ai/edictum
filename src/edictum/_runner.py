@@ -87,7 +87,7 @@ async def _run(
 
         # Pre-execute
         pre = await pipeline.pre_execute(envelope, session)
-        await _emit_workflow_events(self, envelope, pre.workflow_events)
+        await _emit_workflow_events(self, envelope, session, pre.workflow_events)
 
         # Handle pending_approval: request approval from backend
         approval_audit_handled = False
@@ -172,6 +172,7 @@ async def _run(
                         mode="observe",
                         policy_version=self.policy_version,
                         policy_error=pre.policy_error,
+                        session_id=session.session_id,
                     )
                     await self.audit_sink.emit(observed_event)
                     _emit_otel_governance_span(self, observed_event)
@@ -201,6 +202,7 @@ async def _run(
                 reason=sr["message"],
                 mode="observe",
                 policy_version=self.policy_version,
+                session_id=session.session_id,
             )
             await self.audit_sink.emit(observe_event)
             _emit_otel_governance_span(self, observe_event)
@@ -249,10 +251,11 @@ async def _run(
             policy_version=self.policy_version,
             policy_error=post.policy_error,
             workflow=pre.workflow,
+            session_id=session.session_id,
         )
         await self.audit_sink.emit(post_event)
         _emit_otel_governance_span(self, post_event)
-        await _emit_workflow_events(self, envelope, workflow_events)
+        await _emit_workflow_events(self, envelope, session, workflow_events)
 
         span.set_attribute("governance.tool_success", tool_success)
         span.set_attribute("governance.postconditions_passed", post.postconditions_passed)
@@ -291,6 +294,7 @@ async def _emit_run_pre_audit(self: Edictum, envelope, session, action: AuditAct
         policy_version=self.policy_version,
         policy_error=pre.policy_error,
         workflow=pre.workflow,
+        session_id=session.session_id,
     )
     await self.audit_sink.emit(event)
     _emit_otel_governance_span(self, event)
@@ -347,14 +351,14 @@ async def _resolve_pending_approval(
 
         await self._workflow_runtime.record_approval(session, current.workflow_stage_id)
         current = await pipeline.pre_execute(envelope, session)
-        await _emit_workflow_events(self, envelope, current.workflow_events)
+        await _emit_workflow_events(self, envelope, session, current.workflow_events)
         if current.action != "pending_approval":
             return True, decision, current, False
 
     raise RuntimeError(f"workflow: exceeded maximum approval rounds ({_MAX_WORKFLOW_APPROVAL_ROUNDS})")
 
 
-async def _emit_workflow_events(self: Edictum, envelope, events: list[dict[str, Any]]) -> None:
+async def _emit_workflow_events(self: Edictum, envelope, session: Session, events: list[dict[str, Any]]) -> None:
     for record in events:
         workflow = record.get("workflow")
         action_name = record.get("action")
@@ -372,9 +376,12 @@ async def _emit_workflow_events(self: Edictum, envelope, events: list[dict[str, 
             mode=self.mode,
             policy_version=self.policy_version,
             workflow=dict(workflow),
+            session_id=session.session_id,
         )
         if action_name == AuditAction.WORKFLOW_COMPLETED.value:
             event.action = AuditAction.WORKFLOW_COMPLETED
+        elif action_name == AuditAction.WORKFLOW_STATE_UPDATED.value:
+            event.action = AuditAction.WORKFLOW_STATE_UPDATED
         await self.audit_sink.emit(event)
         _emit_otel_governance_span(self, event)
 
