@@ -321,6 +321,7 @@ async def _resolve_pending_approval(
             timeout=current.approval_timeout,
             timeout_action=current.approval_timeout_action,
             principal=principal_dict,
+            session_id=session.session_id,
         )
         await _emit_run_pre_audit(self, envelope, session, AuditAction.CALL_APPROVAL_REQUESTED, current)
         decision = await self._approval_backend.wait_for_decision(

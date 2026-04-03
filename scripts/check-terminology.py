@@ -52,6 +52,7 @@ DENIED_ALLOWLIST = {
     'assert "[DENIED]" not in result',
     'governance.action", "denied"',
     'or "denied"',
+    'status == "denied"',
 }
 
 # "shadow" needs special handling — prose should say "observe mode" / "observe-mode".

@@ -458,6 +458,7 @@ class OpenAIAgentsAdapter:
             timeout=decision.approval_timeout,
             timeout_action=decision.approval_timeout_action,
             principal=principal_dict,
+            session_id=self._session.session_id,
         )
         await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_APPROVAL_REQUESTED)
 

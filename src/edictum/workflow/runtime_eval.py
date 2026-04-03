@@ -33,8 +33,7 @@ async def evaluate_runtime(runtime: WorkflowRuntime, session: Session, envelope:
         allowed, allowed_eval, invalid_eval = runtime.evaluate_current_stage(stage, envelope)
         if allowed:
             _enrich_state(state, allowed_eval, envelope)
-            if changed:
-                await runtime.save_state(session, state)
+            await runtime.save_state(session, state)
             allowed_eval.events.extend(events)
             return allowed_eval
 
