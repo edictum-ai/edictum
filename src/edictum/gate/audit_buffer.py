@@ -14,14 +14,21 @@ from typing import Any
 
 from edictum.audit import RedactionPolicy
 
+_ACTION_MAP = {
+    "call_denied": "call_blocked",
+    "call_would_deny": "call_would_block",
+    "call_approval_requested": "call_asked",
+    "call_approval_denied": "call_approval_blocked",
+}
+
 
 @dataclass(frozen=True)
 class GateAuditEvent:
     """Audit event aligned with core AuditEvent schema.
 
-    WAL events use the same field names as core AuditEvent so they can be
-    sent directly to the console without a translation layer. Fields that
-    don't apply to Gate (run_id, principal, session counters) are omitted.
+    WAL events stay close to core AuditEvent field names so the flush path
+    can upconvert them to the current server wire format. Fields that don't
+    apply to Gate (run_id, principal, session counters) are omitted.
     """
 
     # Identity
@@ -35,7 +42,8 @@ class GateAuditEvent:
     side_effect: str  # tool category as side_effect label
 
     # Governance decision — same names as core AuditEvent
-    action: str  # "call_allowed" | "call_denied" | "call_would_deny"
+    action: str  # WAL values: "call_allowed" | "call_denied" | "call_would_deny"
+    # Upconverted to server wire values by _to_console_event via _ACTION_MAP.
     decision_source: str | None
     decision_name: str | None  # rule_id
     reason: str | None
@@ -321,62 +329,56 @@ class AuditBuffer:
 
     @staticmethod
     def _to_console_event(raw: dict) -> dict:
-        """Map a WAL event to Console EventPayload schema.
+        """Map a WAL event to the current server event payload schema.
 
         WAL events are already aligned with core AuditEvent field names.
-        This method just selects the top-level fields the console expects
-        and packs everything else into payload.
+        This method upconverts legacy action values and flattens the
+        remaining fields to match the server wire format.
         """
-        # Top-level fields the console expects
         action = raw.get("action", raw.get("decision", "call_allowed"))
-        mode = raw.get("mode", "enforce")
+        if not isinstance(action, str):
+            action = str(action)
+        wire_action = _ACTION_MAP.get(action, action)
 
-        # Build payload from all remaining fields
-        payload: dict[str, object] = {}
-        for key in (
-            "decision_name",
-            "decision_source",
-            "reason",
-            "tool_args",
-            "side_effect",
-            "contracts_evaluated",
-            "policy_version",
-            "policy_error",
-            "duration_ms",
-            "assistant",
-            "user",
-            "cwd",
-        ):
-            val = raw.get(key)
-            if val is not None and val != "" and val != [] and val is not False:
-                payload[key] = val
-
-        # Backward compat: old WAL events used different field names
-        if "rule_id" in raw and "decision_name" not in payload:
-            payload["decision_name"] = raw["rule_id"]
-        if "tool_category" in raw and "side_effect" not in payload:
-            payload["side_effect"] = raw["tool_category"]
-        if "args_preview" in raw and "tool_args" not in payload:
+        tool_args = raw.get("tool_args")
+        if "args_preview" in raw and tool_args is None:
             preview = raw["args_preview"]
             try:
-                payload["tool_args"] = json.loads(preview)
+                tool_args = json.loads(preview)
             except (json.JSONDecodeError, ValueError):
-                payload["tool_args"] = {"_preview": preview}
+                tool_args = {"_preview": preview}
+
+        rules_evaluated = raw.get("rules_evaluated")
+        if rules_evaluated is None:
+            rules_evaluated = raw.get("contracts_evaluated", [])
+
+        decision_name = raw.get("decision_name", raw.get("rule_id"))
+        side_effect = raw.get("side_effect", raw.get("tool_category"))
 
         # Default agent_id from user if not set
         agent_id = raw.get("agent_id", "")
         if not agent_id:
             agent_id = raw.get("user", "")
 
-        return {
+        event = {
+            "schema_version": raw.get("schema_version", "0.3.0"),
             "call_id": raw.get("call_id", str(uuid.uuid4())),
             "agent_id": agent_id,
             "tool_name": raw.get("tool_name", ""),
-            "decision": action,
-            "mode": mode,
+            "action": wire_action,
+            "mode": raw.get("mode", "enforce"),
             "timestamp": raw.get("timestamp", datetime.now(UTC).isoformat()),
-            "payload": payload or None,
+            "tool_args": tool_args,
+            "side_effect": side_effect,
+            "decision_name": decision_name,
+            "decision_source": raw.get("decision_source"),
+            "reason": raw.get("reason"),
+            "rules_evaluated": rules_evaluated,
+            "policy_version": raw.get("policy_version"),
+            "policy_error": raw.get("policy_error", False),
+            "duration_ms": raw.get("duration_ms", 0),
         }
+        return {key: value for key, value in event.items() if value is not None}
 
     def _verify_wal_path(self) -> str | None:
         """Verify WAL path hasn't been replaced by a symlink. Returns real path or None."""
@@ -469,7 +471,7 @@ class AuditBuffer:
         )
         try:
             response = client.post(
-                "/api/v1/events",
+                "/v1/events",
                 json=payload,
             )
             response.raise_for_status()

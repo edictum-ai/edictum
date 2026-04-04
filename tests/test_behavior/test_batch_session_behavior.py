@@ -59,7 +59,7 @@ class TestMemoryBackendBatchGet:
 class TestServerBackendBatchGet:
     @pytest.mark.asyncio
     async def test_single_post_call(self):
-        """batch_get makes a single POST to /api/v1/sessions/batch."""
+        """batch_get makes a single POST to /v1/sessions/batch."""
         client = MagicMock()
         client.post = AsyncMock(return_value={"values": {"k1": "v1", "k2": "v2"}})
         backend = ServerBackend(client)
@@ -67,7 +67,7 @@ class TestServerBackendBatchGet:
         result = await backend.batch_get(["k1", "k2"])
 
         client.post.assert_called_once_with(
-            "/api/v1/sessions/batch",
+            "/v1/sessions/batch",
             {"keys": ["k1", "k2"]},
         )
         assert result == {"k1": "v1", "k2": "v2"}

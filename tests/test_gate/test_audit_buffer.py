@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from edictum.gate.audit_buffer import AuditBuffer, GateAuditEvent, build_audit_event
 from edictum.gate.config import AuditConfig
@@ -189,24 +190,24 @@ class TestBuildAuditEvent:
 
 
 class TestConsoleEventMapping:
-    """Verify _to_console_event maps WAL fields to Console EventPayload schema."""
+    """Verify _to_console_event maps WAL fields to the current server schema."""
 
     def test_allow_maps_to_call_allowed(self) -> None:
         raw = {"action": "call_allowed", "mode": "enforce", "tool_name": "Bash"}
         result = AuditBuffer._to_console_event(raw)
-        assert result["decision"] == "call_allowed"
+        assert result["action"] == "call_allowed"
 
     def test_deny_enforce_maps_to_call_denied(self) -> None:
         raw = {"action": "call_denied", "mode": "enforce", "tool_name": "Bash"}
         result = AuditBuffer._to_console_event(raw)
-        assert result["decision"] == "call_denied"
+        assert result["action"] == "call_blocked"
 
     def test_deny_observe_maps_to_call_would_deny(self) -> None:
         raw = {"action": "call_would_deny", "mode": "observe", "tool_name": "Bash"}
         result = AuditBuffer._to_console_event(raw)
-        assert result["decision"] == "call_would_deny"
+        assert result["action"] == "call_would_block"
 
-    def test_decision_name_in_payload(self) -> None:
+    def test_decision_fields_flattened(self) -> None:
         raw = {
             "action": "call_denied",
             "mode": "enforce",
@@ -216,9 +217,9 @@ class TestConsoleEventMapping:
             "reason": "Denied: secrets",
         }
         result = AuditBuffer._to_console_event(raw)
-        assert result["payload"]["decision_name"] == "block-secret-file-reads"
-        assert result["payload"]["decision_source"] == "yaml_precondition"
-        assert result["payload"]["reason"] == "Denied: secrets"
+        assert result["decision_name"] == "block-secret-file-reads"
+        assert result["decision_source"] == "yaml_precondition"
+        assert result["reason"] == "Denied: secrets"
 
     def test_scope_enforcement_decision_source(self) -> None:
         raw = {
@@ -229,9 +230,9 @@ class TestConsoleEventMapping:
             "decision_source": "gate_scope",
         }
         result = AuditBuffer._to_console_event(raw)
-        assert result["payload"]["decision_source"] == "gate_scope"
+        assert result["decision_source"] == "gate_scope"
 
-    def test_tool_args_in_payload(self) -> None:
+    def test_tool_args_flattened(self) -> None:
         raw = {
             "action": "call_allowed",
             "mode": "enforce",
@@ -239,7 +240,7 @@ class TestConsoleEventMapping:
             "tool_args": {"command": "ls -la"},
         }
         result = AuditBuffer._to_console_event(raw)
-        assert result["payload"]["tool_args"] == {"command": "ls -la"}
+        assert result["tool_args"] == {"command": "ls -la"}
 
     def test_backward_compat_args_preview_parsed(self) -> None:
         """Old WAL events with args_preview are still handled."""
@@ -250,7 +251,7 @@ class TestConsoleEventMapping:
             "args_preview": '{"command": "ls -la"}',
         }
         result = AuditBuffer._to_console_event(raw)
-        assert result["payload"]["tool_args"] == {"command": "ls -la"}
+        assert result["tool_args"] == {"command": "ls -la"}
 
     def test_backward_compat_truncated_args_preview_wrapped(self) -> None:
         """Old WAL events with truncated args_preview are wrapped."""
@@ -261,7 +262,7 @@ class TestConsoleEventMapping:
             "args_preview": '{"command": "very long...',  # invalid JSON (truncated)
         }
         result = AuditBuffer._to_console_event(raw)
-        assert result["payload"]["tool_args"]["_preview"] == '{"command": "very long...'
+        assert result["tool_args"]["_preview"] == '{"command": "very long...'
 
     def test_empty_agent_id_falls_back_to_user(self) -> None:
         raw = {
@@ -289,3 +290,52 @@ class TestConsoleEventMapping:
         raw = {"action": "call_allowed", "mode": "observe", "tool_name": "Bash"}
         result = AuditBuffer._to_console_event(raw)
         assert result["mode"] == "observe"
+
+    def test_contracts_evaluated_upconverts_to_rules_evaluated(self) -> None:
+        raw = {
+            "action": "call_allowed",
+            "mode": "enforce",
+            "tool_name": "Bash",
+            "contracts_evaluated": [{"name": "rule-1"}],
+        }
+        result = AuditBuffer._to_console_event(raw)
+        assert result["rules_evaluated"] == [{"name": "rule-1"}]
+        assert "payload" not in result
+        assert "decision" not in result
+
+
+class TestConsoleFlush:
+    def test_flush_posts_current_endpoint_and_wire_payload(self, tmp_path: Path) -> None:
+        config = _make_audit_config(tmp_path)
+        buffer = AuditBuffer(config)
+        buffer.write(
+            _make_event(
+                action="call_denied",
+                decision_name="gate-scope-enforcement",
+                decision_source="gate_scope",
+                reason="blocked",
+                contracts_evaluated=[{"name": "rule-1"}],
+            )
+        )
+        console_config = MagicMock(url="https://console.example.com", api_key="secret", agent_id="gate-agent")
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_client.post.return_value = mock_response
+
+        with patch("httpx.Client", return_value=mock_client):
+            flushed = buffer.flush_to_console(console_config)
+
+        assert flushed == 1
+        mock_client.post.assert_called_once()
+        path = mock_client.post.call_args.args[0]
+        payload = mock_client.post.call_args.kwargs["json"]
+        assert path == "/v1/events"
+        assert payload["events"][0]["action"] == "call_blocked"
+        assert payload["events"][0]["decision_name"] == "gate-scope-enforcement"
+        assert payload["events"][0]["decision_source"] == "gate_scope"
+        assert payload["events"][0]["rules_evaluated"] == [{"name": "rule-1"}]
+        assert "payload" not in payload["events"][0]
+        assert "decision" not in payload["events"][0]
+        mock_response.raise_for_status.assert_called_once_with()
+        mock_client.close.assert_called_once_with()

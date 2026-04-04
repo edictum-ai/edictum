@@ -43,7 +43,7 @@ class TestServerApprovalBackend:
         assert request.timeout_action == "block"
 
         mock_client.post.assert_called_once_with(
-            "/api/v1/approvals",
+            "/v1/approvals",
             {
                 "agent_id": "test-agent",
                 "tool_name": "delete_file",
@@ -98,10 +98,10 @@ class TestServerApprovalBackend:
         assert decision.status == ApprovalStatus.APPROVED
 
     @pytest.mark.asyncio
-    async def test_wait_for_decision_denied(self, mock_client):
+    async def test_wait_for_decision_rejected(self, mock_client):
         mock_client.post.return_value = {"id": "approval-2", "status": "pending"}
         mock_client.get.return_value = {
-            "status": "denied",
+            "status": "rejected",
             "decided_by": "security@example.com",
             "decision_reason": "Too risky",
         }
@@ -116,9 +116,27 @@ class TestServerApprovalBackend:
         assert decision.status == ApprovalStatus.DENIED
 
     @pytest.mark.asyncio
-    async def test_wait_for_decision_server_timeout(self, mock_client):
+    async def test_wait_for_decision_legacy_denied_status(self, mock_client):
+        mock_client.post.return_value = {"id": "approval-legacy-denied", "status": "pending"}
+        mock_client.get.return_value = {
+            "status": "denied",
+            "decided_by": "security@example.com",
+            "decision_reason": "Legacy rejection",
+        }
+
+        backend = ServerApprovalBackend(mock_client, poll_interval=0.01)
+        await backend.request_approval("tool", {}, "msg")
+
+        decision = await backend.wait_for_decision("approval-legacy-denied")
+        assert decision.approved is False
+        assert decision.approver == "security@example.com"
+        assert decision.reason == "Legacy rejection"
+        assert decision.status == ApprovalStatus.DENIED
+
+    @pytest.mark.asyncio
+    async def test_wait_for_decision_server_timed_out(self, mock_client):
         mock_client.post.return_value = {"id": "approval-3", "status": "pending"}
-        mock_client.get.return_value = {"status": "timeout"}
+        mock_client.get.return_value = {"status": "timed_out"}
 
         backend = ServerApprovalBackend(mock_client, poll_interval=0.01)
         await backend.request_approval("tool", {}, "msg", timeout_action="block")
@@ -130,13 +148,34 @@ class TestServerApprovalBackend:
     @pytest.mark.asyncio
     async def test_wait_for_decision_timeout_action_allow(self, mock_client):
         mock_client.post.return_value = {"id": "approval-4", "status": "pending"}
-        mock_client.get.return_value = {"status": "timeout"}
+        mock_client.get.return_value = {"status": "timed_out"}
 
         backend = ServerApprovalBackend(mock_client, poll_interval=0.01)
         await backend.request_approval("tool", {}, "msg", timeout_action="allow")
 
         decision = await backend.wait_for_decision("approval-4")
         assert decision.approved is True
+        assert decision.status == ApprovalStatus.TIMEOUT
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("timeout_action", "approved"),
+        [("block", False), ("allow", True)],
+    )
+    async def test_wait_for_decision_legacy_timeout_status_respects_timeout_action(
+        self,
+        mock_client,
+        timeout_action,
+        approved,
+    ):
+        mock_client.post.return_value = {"id": "approval-legacy-timeout", "status": "pending"}
+        mock_client.get.return_value = {"status": "timeout"}
+
+        backend = ServerApprovalBackend(mock_client, poll_interval=0.01)
+        await backend.request_approval("tool", {}, "msg", timeout_action=timeout_action)
+
+        decision = await backend.wait_for_decision("approval-legacy-timeout")
+        assert decision.approved is approved
         assert decision.status == ApprovalStatus.TIMEOUT
 
     @pytest.mark.asyncio
@@ -154,6 +193,7 @@ class TestServerApprovalBackend:
         decision = await backend.wait_for_decision("approval-5")
         assert decision.approved is True
         assert mock_client.get.call_count == 3
+        mock_client.get.assert_called_with("/v1/approvals/approval-5")
 
     @pytest.mark.asyncio
     async def test_implements_protocol(self, mock_client):

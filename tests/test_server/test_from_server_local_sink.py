@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import base64
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from edictum import AuditAction, Edictum
 from edictum.audit import CollectingAuditSink
+from edictum.server.audit_sink import ServerAuditSink
 from edictum.storage import MemoryBackend
 
 VALID_BUNDLE_YAML = """\
@@ -28,6 +30,23 @@ rules:
     then:
       action: block
       message: "Destructive command denied."
+"""
+
+WORKFLOW_YAML = """\
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: server-workflow
+stages:
+  - id: read-context
+    tools: [Read]
+    exit:
+      - condition: file_read("spec.md")
+        message: Read the spec
+  - id: implement
+    entry:
+      - condition: stage_complete("read-context")
+    tools: [Edit]
 """
 
 
@@ -132,6 +151,45 @@ class TestFromServerLocalSink:
             # Both local_sink and custom sink received events
             assert len(guard.local_sink.events) >= 2
             assert custom_sink.emit.call_count >= 2
+            await guard.close()
+
+    @pytest.mark.asyncio
+    async def test_from_server_custom_server_sink_loads_workflow_snapshots(self):
+        client = _make_client_mock()
+        custom_sink = ServerAuditSink(client, batch_size=50, flush_interval=999)
+
+        p_client, p_sink, p_approval, p_backend, p_source = _server_patches()
+        with p_client as mock_cls, p_sink, p_approval, p_backend, p_source as mock_src_cls:
+            mock_cls.return_value = client
+            mock_src_cls.return_value = _make_source_mock()
+
+            guard = await Edictum.from_server(
+                "https://example.com",
+                "key",
+                "agent-1",
+                bundle_name="default",
+                audit_sink=custom_sink,
+                auto_watch=False,
+                storage_backend=MemoryBackend(),
+                workflow_content=WORKFLOW_YAML,
+            )
+
+            workflow = await custom_sink._resolve_workflow_snapshot(
+                SimpleNamespace(
+                    action=AuditAction.WORKFLOW_STAGE_ADVANCED,
+                    session_id="workflow-session",
+                    workflow={"stage_id": "read-context"},
+                )
+            )
+
+            assert workflow == {
+                "name": "server-workflow",
+                "active_stage": "read-context",
+                "completed_stages": [],
+                "blocked_reason": None,
+                "pending_approval": {"required": False},
+                "stage_id": "read-context",
+            }
             await guard.close()
 
     @pytest.mark.asyncio

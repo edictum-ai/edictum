@@ -106,6 +106,8 @@ async def _from_server(
     from edictum.server.backend import ServerBackend
     from edictum.server.client import EdictumServerClient
     from edictum.server.rule_source import ServerContractSource
+    from edictum.session import Session
+    from edictum.workflow.state import build_workflow_snapshot
     from edictum.yaml_engine.compiler import compile_contracts
     from edictum.yaml_engine.loader import load_bundle_string
 
@@ -144,7 +146,7 @@ async def _from_server(
     if bundle_name is not None:
         try:
             response = await client.get(
-                f"/api/v1/bundles/{bundle_name}/current",
+                f"/v1/rulesets/{bundle_name}/current",
                 env=client.env,
             )
             yaml_b64 = response.get("yaml_bytes", "")
@@ -230,6 +232,18 @@ async def _from_server(
     guard._verify_signatures = verify_signatures
     guard._signing_public_key = signing_public_key
 
+    if effective_workflow_runtime is not None and hasattr(effective_sink, "_workflow_snapshot_provider"):
+
+        async def _workflow_snapshot_provider(event: Any) -> dict[str, Any] | None:
+            session_id = getattr(event, "session_id", None)
+            if not isinstance(session_id, str) or not session_id:
+                return None
+            session = Session(session_id, effective_backend)
+            state = await effective_workflow_runtime.state(session)
+            return build_workflow_snapshot(effective_workflow_runtime.definition, state)
+
+        effective_sink._workflow_snapshot_provider = _workflow_snapshot_provider
+
     if auto_watch:
         await _start_sse_watcher(guard)
 
@@ -271,7 +285,7 @@ async def _start_sse_watcher(self: Edictum) -> None:
                             logger.warning("Server client missing during SSE assignment update")
                             continue
                         response = await server_client.get(
-                            f"/api/v1/bundles/{new_name}/current",
+                            f"/v1/rulesets/{new_name}/current",
                             env=server_client.env,
                         )
                         yaml_b64 = response.get("yaml_bytes", "")

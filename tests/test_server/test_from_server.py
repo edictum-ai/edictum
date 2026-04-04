@@ -102,7 +102,7 @@ class TestFromServer:
                 allow_insecure=False,
             )
             client.get.assert_called_once_with(
-                "/api/v1/bundles/default/current",
+                "/v1/rulesets/default/current",
                 env="production",
             )
 
@@ -129,7 +129,7 @@ class TestFromServer:
 
             assert guard.environment == "staging"
             client.get.assert_called_once_with(
-                "/api/v1/bundles/default/current",
+                "/v1/rulesets/default/current",
                 env="staging",
             )
             await guard.close()
@@ -218,7 +218,7 @@ class TestFromServer:
                 allow_insecure=False,
             )
             client.get.assert_called_once_with(
-                "/api/v1/bundles/devops-agent/current",
+                "/v1/rulesets/devops-agent/current",
                 env="production",
             )
             await guard.close()
@@ -346,7 +346,7 @@ class TestFromServer:
             assert isinstance(guard, Edictum)
             assert len(guard._state.preconditions) == 1
             client.get.assert_called_once_with(
-                "/api/v1/bundles/my-bundle/current",
+                "/v1/rulesets/my-bundle/current",
                 env="production",
             )
             await guard.close()
