@@ -66,6 +66,23 @@ class TestAuditLineageBehavior:
         assert len(guard.local_sink.events) >= 2
         assert {event.parent_session_id for event in guard.local_sink.events} == {"parent-789"}
 
+    @pytest.mark.security
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("parent_session_id", ["parent\x00bad", "parent:bad", "parent/bad"])
+    async def test_run_drops_invalid_parent_session_id_from_audit_events(self, parent_session_id):
+        guard = Edictum(backend=MemoryBackend())
+
+        await guard.run(
+            "Read",
+            {"path": "spec.md"},
+            lambda path: "ok",
+            session_id="session-789",
+            metadata={"parent_session_id": parent_session_id},
+        )
+
+        assert len(guard.local_sink.events) >= 2
+        assert {event.parent_session_id for event in guard.local_sink.events} == {None}
+
     @pytest.mark.asyncio
     async def test_workflow_events_use_run_session_id(self):
         guard = Edictum.from_yaml_string(

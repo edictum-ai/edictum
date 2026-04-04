@@ -15,7 +15,7 @@ from edictum.audit import AuditAction, AuditEvent
 from edictum.envelope import create_envelope
 from edictum.otel import has_otel
 from edictum.pipeline import CheckPipeline, PreDecision
-from edictum.session import Session
+from edictum.session import Session, _validate_session_id
 
 if TYPE_CHECKING:
     from edictum._guard import Edictum
@@ -401,9 +401,13 @@ def _parent_session_id(envelope) -> str | None:
     if not isinstance(metadata, dict):
         return None
     value = metadata.get("parent_session_id")
-    if isinstance(value, str) and value:
-        return value
-    return None
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        _validate_session_id(value)
+    except ValueError:
+        return None
+    return value
 
 
 def _emit_otel_governance_span(self: Edictum, audit_event: AuditEvent) -> None:
