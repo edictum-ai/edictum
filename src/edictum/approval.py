@@ -77,8 +77,7 @@ def _approval_backend_accepts_session_id(backend: ApprovalBackend) -> bool:
     except (TypeError, ValueError):
         return True
     return any(
-        parameter.name == "session_id" or parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters
+        parameter.name == "session_id" or parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters
     )
 
 
