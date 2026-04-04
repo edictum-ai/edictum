@@ -14,7 +14,7 @@ from edictum.audit import AuditAction, AuditEvent
 from edictum.envelope import Principal, create_envelope
 from edictum.findings import Finding, PostCallResult, build_findings
 from edictum.pipeline import CheckPipeline
-from edictum.session import Session, _validate_session_id
+from edictum.session import Session, validate_session_id
 from edictum.workflow.state import build_workflow_snapshot
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ class CrewAIAdapter:
         if not isinstance(value, str) or not value:
             return None
         try:
-            _validate_session_id(value)
+            validate_session_id(value)
         except ValueError:
             return None
         return value

@@ -13,7 +13,7 @@ from edictum.audit import AuditAction, AuditEvent
 from edictum.envelope import Principal, create_envelope
 from edictum.findings import Finding, build_findings
 from edictum.pipeline import CheckPipeline
-from edictum.session import Session
+from edictum.session import Session, validate_session_id
 
 logger = logging.getLogger(__name__)
 _MAX_WORKFLOW_APPROVAL_ROUNDS = 32
@@ -53,6 +53,7 @@ class ClaudeAgentSDKAdapter:
         self._pending_decisions: dict[str, Any] = {}
         self._principal = principal
         self._principal_resolver = principal_resolver
+        self._parent_session_id: str | None = None
 
     @property
     def session_id(self) -> str:
@@ -67,6 +68,16 @@ class ClaudeAgentSDKAdapter:
         if self._principal_resolver is not None:
             return self._principal_resolver(tool_name, tool_input)
         return self._principal
+
+    def _audit_parent_session_id(self) -> str | None:
+        value = self._parent_session_id
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            validate_session_id(value)
+        except ValueError:
+            return None
+        return value
 
     def to_hook_callables(
         self,
@@ -172,6 +183,8 @@ class ClaudeAgentSDKAdapter:
                                 run_id=envelope.run_id,
                                 call_id=envelope.call_id,
                                 call_index=envelope.call_index,
+                                session_id=self._session_id,
+                                parent_session_id=self._audit_parent_session_id(),
                                 tool_name=envelope.tool_name,
                                 tool_args=self._guard.redaction.redact_args(envelope.args),
                                 side_effect=envelope.side_effect.value,
@@ -252,6 +265,8 @@ class ClaudeAgentSDKAdapter:
                     run_id=envelope.run_id,
                     call_id=envelope.call_id,
                     call_index=envelope.call_index,
+                    session_id=self._session_id,
+                    parent_session_id=self._audit_parent_session_id(),
                     tool_name=envelope.tool_name,
                     tool_args=self._guard.redaction.redact_args(envelope.args),
                     side_effect=envelope.side_effect.value,
@@ -312,6 +327,8 @@ class ClaudeAgentSDKAdapter:
                 run_id=envelope.run_id,
                 call_id=envelope.call_id,
                 call_index=envelope.call_index,
+                session_id=self._session_id,
+                parent_session_id=self._audit_parent_session_id(),
                 tool_name=envelope.tool_name,
                 tool_args=self._guard.redaction.redact_args(envelope.args),
                 side_effect=envelope.side_effect.value,
@@ -346,6 +363,8 @@ class ClaudeAgentSDKAdapter:
                     run_id=envelope.run_id,
                     call_id=envelope.call_id,
                     call_index=envelope.call_index,
+                    session_id=self._session_id,
+                    parent_session_id=self._audit_parent_session_id(),
                     tool_name=envelope.tool_name,
                     tool_args=self._guard.redaction.redact_args(envelope.args),
                     side_effect=envelope.side_effect.value,

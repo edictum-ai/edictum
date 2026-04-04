@@ -19,6 +19,11 @@ def _validate_session_id(session_id: str) -> None:
             raise ValueError(f"Invalid session_id: {session_id!r}")
 
 
+def validate_session_id(session_id: str) -> None:
+    """Validate a public session_id string."""
+    _validate_session_id(session_id)
+
+
 def _validate_key_component(name: str) -> None:
     """Validate a session-scoped key component.
 
@@ -45,7 +50,7 @@ class Session:
     """
 
     def __init__(self, session_id: str, backend: StorageBackend):
-        _validate_session_id(session_id)
+        validate_session_id(session_id)
         self._sid = session_id
         self._backend = backend
 

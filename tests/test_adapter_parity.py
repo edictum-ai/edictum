@@ -16,6 +16,7 @@ import pytest
 
 from edictum import Decision, Edictum, Principal, postcondition, precondition
 from edictum.audit import AuditAction
+from edictum.session import validate_session_id
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
 
@@ -264,6 +265,27 @@ class TestParityOnAllow:
         await pre_fn(adapter)
 
         assert on_allow.call_count == 1, f"{name} fired on_allow {on_allow.call_count} times, expected 1"
+
+
+class TestParityLineage:
+    """All adapters must emit validated session lineage in audit events."""
+
+    @pytest.mark.parametrize("name,cls,pre_fn", ALL_CONFIGS, ids=ALL_ADAPTER_IDS)
+    async def test_parent_session_id_in_audit(self, name, cls, pre_fn):
+        sink = NullAuditSink()
+        guard = _make_guard(audit_sink=sink)
+        adapter = cls(guard, session_id="child-session")
+        validate_session_id("parent-session")
+        adapter._parent_session_id = "parent-session"
+
+        await pre_fn(adapter)
+
+        allowed_events = [event for event in sink.events if event.action == AuditAction.CALL_ALLOWED]
+        assert allowed_events, f"{name} emitted no CALL_ALLOWED audit event"
+        assert allowed_events[0].session_id == "child-session", f"{name} lost session_id in audit event"
+        assert allowed_events[0].parent_session_id == "parent-session", (
+            f"{name} lost parent_session_id in audit event"
+        )
 
 
 # --- Post helpers for adapters with separate pre/post methods ---

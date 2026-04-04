@@ -19,7 +19,7 @@ from edictum.adapters.google_adk import GoogleADKAdapter
 from edictum.adapters.langchain import LangChainAdapter
 from edictum.adapters.openai_agents import OpenAIAgentsAdapter
 from edictum.approval import ApprovalDecision, ApprovalRequest, ApprovalStatus
-from edictum.session import Session
+from edictum.session import Session, validate_session_id
 from edictum.storage import MemoryBackend
 from edictum.workflow import WorkflowEvidence, WorkflowState
 from edictum.workflow.state import save_state
@@ -176,7 +176,7 @@ class AdapterHarness:
 
 def _build_langchain(guard: Edictum, session_id: str, parent_session_id: str | None) -> LangChainAdapter:
     adapter = LangChainAdapter(guard, session_id=session_id)
-    adapter._parent_session_id = parent_session_id
+    _set_parent_session_id(adapter, parent_session_id)
     return adapter
 
 
@@ -198,7 +198,7 @@ async def _post_langchain(
 
 def _build_crewai(guard: Edictum, session_id: str, parent_session_id: str | None) -> CrewAIAdapter:
     adapter = CrewAIAdapter(guard, session_id=session_id)
-    adapter._parent_session_id = parent_session_id
+    _set_parent_session_id(adapter, parent_session_id)
     return adapter
 
 
@@ -224,7 +224,7 @@ async def _post_crewai(
 
 def _build_openai(guard: Edictum, session_id: str, parent_session_id: str | None) -> OpenAIAgentsAdapter:
     adapter = OpenAIAgentsAdapter(guard, session_id=session_id)
-    adapter._parent_session_id = parent_session_id
+    _set_parent_session_id(adapter, parent_session_id)
     return adapter
 
 
@@ -244,7 +244,7 @@ async def _post_openai(
 
 def _build_google(guard: Edictum, session_id: str, parent_session_id: str | None) -> GoogleADKAdapter:
     adapter = GoogleADKAdapter(guard, session_id=session_id)
-    adapter._parent_session_id = parent_session_id
+    _set_parent_session_id(adapter, parent_session_id)
     return adapter
 
 
@@ -274,6 +274,14 @@ def _is_blocked_langchain(result: Any) -> bool:
 
 def _is_blocked_dict(result: Any) -> bool:
     return isinstance(result, dict) and "DENIED" in str(result.get("error", ""))
+
+
+def _set_parent_session_id(adapter: Any, value: str | None) -> None:
+    if value is None:
+        adapter._parent_session_id = None
+        return
+    validate_session_id(value)
+    adapter._parent_session_id = value
 
 
 ADAPTERS = [

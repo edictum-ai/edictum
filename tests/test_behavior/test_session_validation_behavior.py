@@ -20,6 +20,11 @@ class TestSessionIdValidation:
         session = Session("my-session-123", MemoryBackend())
         assert session.session_id == "my-session-123"
 
+    def test_validate_session_id_accepts_valid_string(self):
+        from edictum.session import validate_session_id
+
+        assert validate_session_id("public-session-123") is None
+
     @pytest.mark.security
     def test_empty_session_id_rejected(self):
         """Empty string is rejected."""
@@ -60,6 +65,13 @@ class TestSessionIdValidation:
         """DEL (0x7F) control character is rejected."""
         with pytest.raises(ValueError, match="Invalid session_id"):
             Session("sess\x7finjected", MemoryBackend())
+
+    @pytest.mark.security
+    def test_validate_session_id_rejects_colon(self):
+        from edictum.session import validate_session_id
+
+        with pytest.raises(ValueError, match="Invalid session_id"):
+            validate_session_id("sess:injected")
 
 
 class TestToolNameValidationInSession:
