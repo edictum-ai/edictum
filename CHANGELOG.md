@@ -11,6 +11,7 @@
 - Refreshed YAML examples and reviewer guidance to use `kind: Ruleset`, `rules:`, and `action:` (#178)
 - Bumped `langchain-core` from 1.2.17 to 1.2.22 (#177)
 - Bumped `pygments` from 2.19.2 to 2.20.0 (#183)
+- **Workflow final-stage completion** — final workflow stages without an explicit `exit:` gate or `approval:` remain the active stage after a successful tool call. Add an `exit:` gate or `approval:` to emit `workflow_completed` for the final stage. (#190)
 
 ### Removed
 - **Python CLI removed.** The `edictum` CLI commands (validate, check, test, diff, replay, gate, skill) are no longer part of the Python package. Use the Go binary (`edictum-go`) for all CLI workflows. The Python package is now library-only. (#180)

@@ -290,6 +290,19 @@ class TestGovernedToolRegistry:
         assert {event.session_id for event in sink.events} == {"child-1"}
         assert {event.parent_session_id for event in sink.events} == {"parent"}
 
+    async def test_invalid_parent_session_id_is_omitted_from_audit(self):
+        sink = NullAuditSink()
+        guard = make_guard(audit_sink=sink)
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard, session_id="child-1")
+        governed._parent_session_id = "parent:invalid"
+
+        result = await governed.execute("read_file", {"path": "/tmp/test.txt"})
+
+        assert result == "contents of /tmp/test.txt"
+        assert len(sink.events) >= 2
+        assert {event.parent_session_id for event in sink.events} == {None}
+
     async def test_set_principal(self):
         @precondition("*")
         def require_admin(tool_call):
