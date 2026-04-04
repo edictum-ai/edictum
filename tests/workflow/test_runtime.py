@@ -127,6 +127,211 @@ stages:
 
 
 @pytest.mark.asyncio
+async def test_runtime_set_stage_moves_state_non_destructively():
+    runtime = make_runtime(
+        """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: non-destructive-set-stage
+stages:
+  - id: read-context
+    tools: [Read]
+  - id: implement
+    entry:
+      - condition: stage_complete("read-context")
+    tools: [Edit]
+  - id: review
+    entry:
+      - condition: stage_complete("implement")
+    tools: [Read]
+  - id: push
+    entry:
+      - condition: stage_complete("review")
+    approval:
+      message: approve before push
+"""
+    )
+    session = Session("non-destructive-set-stage", MemoryBackend())
+
+    await _seed_state(
+        runtime,
+        session,
+        WorkflowState(
+            session_id="non-destructive-set-stage",
+            active_stage="push",
+            completed_stages=["read-context", "implement", "review"],
+            approvals={"review": "approved", "push": "approved"},
+            evidence=WorkflowEvidence(
+                reads=["spec.md"],
+                stage_calls={
+                    "implement": ["edit src/app.py"],
+                    "push": ["git push origin feature"],
+                },
+            ),
+            blocked_reason="Only review-safe git commands allowed",
+            pending_approval={
+                "required": True,
+                "stage_id": "push",
+                "message": "approve before push",
+            },
+            last_blocked_action={
+                "tool": "Bash",
+                "summary": "git push origin HEAD",
+                "message": "Only review-safe git commands allowed",
+                "timestamp": "2026-04-04T00:00:00Z",
+            },
+        ),
+    )
+
+    events = await runtime.set_stage(session, "review")
+    state = await runtime.state(session)
+
+    assert state.active_stage == "review"
+    assert state.completed_stages == ["read-context", "implement"]
+    assert state.approvals == {"review": "approved", "push": "approved"}
+    assert state.evidence.stage_calls == {
+        "implement": ["edit src/app.py"],
+        "push": ["git push origin feature"],
+    }
+    assert state.evidence.reads == ["spec.md"]
+    assert state.blocked_reason is None
+    assert state.pending_approval == {"required": False}
+    assert state.last_blocked_action is None
+    assert events == [
+        {
+            "action": AuditAction.WORKFLOW_STATE_UPDATED.value,
+            "workflow": {
+                "name": "non-destructive-set-stage",
+                "active_stage": "review",
+                "completed_stages": ["read-context", "implement"],
+                "blocked_reason": None,
+                "pending_approval": {"required": False},
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_set_stage_rejects_unknown_stage_id():
+    runtime = make_runtime(
+        """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: set-stage-unknown
+stages:
+  - id: implement
+    tools: [Edit]
+"""
+    )
+    session = Session("set-stage-unknown", MemoryBackend())
+
+    with pytest.raises(ValueError, match='workflow: unknown set stage "review"'):
+        await runtime.set_stage(session, "review")
+
+
+@pytest.mark.asyncio
+async def test_runtime_reset_remains_destructive():
+    runtime = make_runtime(
+        """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: destructive-reset-regression
+stages:
+  - id: read-context
+    tools: [Read]
+  - id: implement
+    entry:
+      - condition: stage_complete("read-context")
+    tools: [Edit]
+  - id: review
+    entry:
+      - condition: stage_complete("implement")
+    approval:
+      message: approve review
+"""
+    )
+    session = Session("destructive-reset-regression", MemoryBackend())
+
+    await _seed_state(
+        runtime,
+        session,
+        WorkflowState(
+            session_id="destructive-reset-regression",
+            active_stage="review",
+            completed_stages=["read-context", "implement"],
+            approvals={"review": "approved"},
+            evidence=WorkflowEvidence(
+                reads=["spec.md"],
+                stage_calls={"implement": ["edit src/app.py"]},
+            ),
+            blocked_reason="Only review-safe git commands allowed",
+            pending_approval={
+                "required": True,
+                "stage_id": "review",
+                "message": "approve review",
+            },
+            last_blocked_action={
+                "tool": "Bash",
+                "summary": "git push origin HEAD",
+                "message": "Only review-safe git commands allowed",
+                "timestamp": "2026-04-04T00:00:00Z",
+            },
+        ),
+    )
+
+    await runtime.reset(session, "read-context")
+    state = await runtime.state(session)
+
+    assert state.active_stage == "read-context"
+    assert state.completed_stages == []
+    assert state.approvals == {}
+    assert state.evidence.stage_calls == {}
+    assert state.evidence.reads == []
+    assert state.blocked_reason is None
+    assert state.pending_approval == {"required": False}
+    assert state.last_blocked_action == {
+        "tool": "Bash",
+        "summary": "git push origin HEAD",
+        "message": "Only review-safe git commands allowed",
+        "timestamp": "2026-04-04T00:00:00Z",
+    }
+
+
+@pytest.mark.asyncio
+async def test_runtime_set_stage_allows_tools_from_new_active_stage():
+    runtime = make_runtime(
+        """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: set-stage-evaluation
+stages:
+  - id: read-context
+    tools: [Read]
+  - id: implement
+    entry:
+      - condition: stage_complete("read-context")
+    tools: [Edit]
+  - id: review
+    entry:
+      - condition: stage_complete("implement")
+    tools: [Read]
+"""
+    )
+    session = Session("set-stage-evaluation", MemoryBackend())
+
+    await runtime.set_stage(session, "review")
+
+    decision = await runtime.evaluate(session, make_envelope("Read", {"path": "README.md"}))
+
+    assert decision.action == "allow"
+    assert decision.stage_id == "review"
+
+
+@pytest.mark.asyncio
 async def test_workflow_state_persistence_round_trip_preserves_enriched_fields():
     runtime = make_runtime(
         """

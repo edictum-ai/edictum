@@ -110,6 +110,25 @@ class WorkflowRuntime:
                 )
             ]
 
+    async def set_stage(self, session: Session, stage_id: str) -> list[dict[str, Any]]:
+        async with self._session_lock(session):
+            idx = self.definition.stage_index(stage_id)
+            if idx is None:
+                raise ValueError(f'workflow: unknown set stage "{stage_id}"')
+
+            state = await self.load_state(session)
+            state.active_stage = stage_id
+            state.completed_stages = stage_ids(self.definition.stages[:idx])
+            clear_runtime_status(state)
+            state.last_blocked_action = None
+            await self.save_state(session, state)
+            return [
+                build_workflow_event(
+                    "workflow_state_updated",
+                    build_workflow_snapshot(self.definition, state),
+                )
+            ]
+
     async def record_approval(self, session: Session, stage_id: str) -> None:
         async with self._session_lock(session):
             if self.definition.stage_by_id(stage_id) is None:
