@@ -7,6 +7,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
+from edictum.audit import RedactionPolicy
 from edictum.envelope import ToolCall
 from edictum.session import Session
 from edictum.workflow.result import (
@@ -19,6 +20,7 @@ from edictum.workflow.result import (
 APPROVED_STATUS = "approved"
 MAX_WORKFLOW_EVIDENCE_ITEMS = 1000
 MAX_WORKFLOW_EVIDENCE_LENGTH = 4096
+_REDACTION_POLICY = RedactionPolicy()
 
 
 def workflow_state_key(name: str) -> str:
@@ -125,9 +127,9 @@ def apply_evaluation_status(state: WorkflowState, evaluation: WorkflowEvaluation
         if state.pending_approval != default_pending_approval():
             state.pending_approval = default_pending_approval()
             changed = True
-        blocked_action = build_last_blocked_action(envelope, evaluation.reason)
-        if state.last_blocked_action != blocked_action:
-            state.last_blocked_action = blocked_action
+        blocked_action_fields = build_last_blocked_action_fields(envelope, evaluation.reason)
+        if _blocked_action_changed(state.last_blocked_action, blocked_action_fields):
+            state.last_blocked_action = build_last_blocked_action(blocked_action_fields)
             changed = True
         return changed
 
@@ -179,21 +181,39 @@ def hydrate_workflow_events(definition, state: WorkflowState, events: list[dict[
     return [build_workflow_event(str(event.get("action", "")), workflow) for event in events]
 
 
-def build_last_blocked_action(envelope: ToolCall, message: str) -> dict[str, str]:
+def build_last_blocked_action_fields(envelope: ToolCall, message: str) -> dict[str, str]:
     return {
         "tool": envelope.tool_name,
         "summary": summarize_tool_call(envelope),
         "message": _safe_status_text(message, ""),
+    }
+
+
+def build_last_blocked_action(fields: dict[str, str]) -> dict[str, str]:
+    return {
+        "tool": fields["tool"],
+        "summary": fields["summary"],
+        "message": fields["message"],
         "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
 
 
 def summarize_tool_call(envelope: ToolCall) -> str:
     if envelope.bash_command:
-        return _safe_status_text(envelope.bash_command, envelope.tool_name)
+        return _safe_status_text(_REDACTION_POLICY.redact_bash_command(envelope.bash_command), envelope.tool_name)
     if envelope.file_path:
         return _safe_status_text(envelope.file_path, envelope.tool_name)
     return envelope.tool_name
+
+
+def _blocked_action_changed(current: dict[str, Any] | None, fields: dict[str, str]) -> bool:
+    if current is None:
+        return True
+    return (
+        current.get("tool") != fields["tool"]
+        or current.get("summary") != fields["summary"]
+        or current.get("message") != fields["message"]
+    )
 
 
 def _append_unique_capped(items: list[str], item: str, limit: int) -> list[str]:

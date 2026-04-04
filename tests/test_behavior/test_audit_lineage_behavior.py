@@ -52,6 +52,21 @@ class TestAuditLineageBehavior:
         assert {event.session_id for event in guard.local_sink.events} == {"session-789"}
 
     @pytest.mark.asyncio
+    async def test_run_emits_audit_events_with_parent_session_id(self):
+        guard = Edictum(backend=MemoryBackend())
+
+        await guard.run(
+            "Read",
+            {"path": "spec.md"},
+            lambda path: "ok",
+            session_id="session-789",
+            metadata={"parent_session_id": "parent-789"},
+        )
+
+        assert len(guard.local_sink.events) >= 2
+        assert {event.parent_session_id for event in guard.local_sink.events} == {"parent-789"}
+
+    @pytest.mark.asyncio
     async def test_workflow_events_use_run_session_id(self):
         guard = Edictum.from_yaml_string(
             """

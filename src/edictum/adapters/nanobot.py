@@ -45,6 +45,7 @@ class GovernedToolRegistry:
         self._call_index = 0
         self._principal = principal
         self._principal_resolver = principal_resolver
+        self._parent_session_id: str | None = None
 
     @property
     def session_id(self) -> str:
@@ -88,6 +89,11 @@ class GovernedToolRegistry:
             environment=self._guard.environment,
             registry=self._guard.tool_registry,
             principal=self._resolve_principal(name, args),
+            metadata=(
+                {"parent_session_id": self._parent_session_id}
+                if self._parent_session_id is not None
+                else {}
+            ),
         )
         self._call_index += 1
 
@@ -134,6 +140,7 @@ class GovernedToolRegistry:
                                     run_id=envelope.run_id,
                                     call_id=envelope.call_id,
                                     call_index=envelope.call_index,
+                                    parent_session_id=self._parent_session_id,
                                     tool_name=envelope.tool_name,
                                     tool_args=self._guard.redaction.redact_args(envelope.args),
                                     side_effect=envelope.side_effect.value,
@@ -190,6 +197,7 @@ class GovernedToolRegistry:
                     run_id=envelope.run_id,
                     call_id=envelope.call_id,
                     call_index=envelope.call_index,
+                    parent_session_id=self._parent_session_id,
                     tool_name=envelope.tool_name,
                     tool_args=self._guard.redaction.redact_args(envelope.args),
                     side_effect=envelope.side_effect.value,
@@ -319,6 +327,7 @@ class GovernedToolRegistry:
                     run_id=envelope.run_id,
                     call_id=envelope.call_id,
                     call_index=envelope.call_index,
+                    parent_session_id=self._parent_session_id,
                     tool_name=envelope.tool_name,
                     tool_args=self._guard.redaction.redact_args(envelope.args),
                     side_effect=envelope.side_effect.value,
@@ -340,6 +349,7 @@ class GovernedToolRegistry:
                 run_id=envelope.run_id,
                 call_id=envelope.call_id,
                 call_index=envelope.call_index,
+                parent_session_id=self._parent_session_id,
                 tool_name=envelope.tool_name,
                 tool_args=self._guard.redaction.redact_args(envelope.args),
                 side_effect=envelope.side_effect.value,
@@ -383,13 +393,15 @@ class GovernedToolRegistry:
         Shares the same guard and inner registry but gets its own session.
         Used by SubagentManager to propagate governance to child agents.
         """
-        return GovernedToolRegistry(
+        child = GovernedToolRegistry(
             inner=self._inner,
             guard=self._guard,
             session_id=session_id,
             principal=self._principal,
             principal_resolver=self._principal_resolver,
         )
+        child._parent_session_id = self._session_id
+        return child
 
 
 class NanobotAdapter:

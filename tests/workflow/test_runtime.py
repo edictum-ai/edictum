@@ -206,6 +206,37 @@ stages:
 
 
 @pytest.mark.asyncio
+async def test_repeated_blocked_workflow_call_preserves_last_blocked_action_timestamp():
+    runtime = make_runtime(
+        """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: blocked-snapshot-stable
+stages:
+  - id: implement
+    tools: [Edit]
+"""
+    )
+    session = Session("blocked-snapshot-stable", MemoryBackend())
+    envelope = make_envelope("Bash", {"command": "git push origin HEAD"})
+
+    first = await runtime.evaluate(session, envelope)
+    first_state = await runtime.state(session)
+    second = await runtime.evaluate(session, envelope)
+    second_state = await runtime.state(session)
+
+    assert first.action == "block"
+    assert second.action == "block"
+    assert first_state.last_blocked_action is not None
+    assert second_state.last_blocked_action is not None
+    assert first_state.last_blocked_action["timestamp"] == second_state.last_blocked_action["timestamp"]
+    assert first.audit is not None
+    assert second.audit is not None
+    assert first.audit["last_blocked_action"]["timestamp"] == second.audit["last_blocked_action"]["timestamp"]
+
+
+@pytest.mark.asyncio
 async def test_pending_workflow_call_persists_pending_approval_snapshot():
     runtime = make_runtime(
         """

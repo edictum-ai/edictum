@@ -162,6 +162,7 @@ async def _run(
                         run_id=envelope.run_id,
                         call_id=envelope.call_id,
                         session_id=session.session_id,
+                        parent_session_id=_parent_session_id(envelope),
                         tool_name=envelope.tool_name,
                         tool_args=self.redaction.redact_args(envelope.args),
                         side_effect=envelope.side_effect.value,
@@ -193,6 +194,7 @@ async def _run(
                 run_id=envelope.run_id,
                 call_id=envelope.call_id,
                 session_id=session.session_id,
+                parent_session_id=_parent_session_id(envelope),
                 tool_name=envelope.tool_name,
                 tool_args=self.redaction.redact_args(envelope.args),
                 side_effect=envelope.side_effect.value,
@@ -238,6 +240,7 @@ async def _run(
             run_id=envelope.run_id,
             call_id=envelope.call_id,
             session_id=session.session_id,
+            parent_session_id=_parent_session_id(envelope),
             tool_name=envelope.tool_name,
             tool_args=self.redaction.redact_args(envelope.args),
             side_effect=envelope.side_effect.value,
@@ -279,6 +282,7 @@ async def _emit_run_pre_audit(self: Edictum, envelope, session, action: AuditAct
         run_id=envelope.run_id,
         call_id=envelope.call_id,
         session_id=session.session_id,
+        parent_session_id=_parent_session_id(envelope),
         tool_name=envelope.tool_name,
         tool_args=self.redaction.redact_args(envelope.args),
         side_effect=envelope.side_effect.value,
@@ -374,6 +378,7 @@ async def _emit_workflow_events(
             run_id=envelope.run_id,
             call_id=envelope.call_id,
             session_id=session.session_id,
+            parent_session_id=_parent_session_id(envelope),
             tool_name=envelope.tool_name,
             tool_args=self.redaction.redact_args(envelope.args),
             side_effect=envelope.side_effect.value,
@@ -389,6 +394,16 @@ async def _emit_workflow_events(
             event.action = AuditAction.WORKFLOW_STATE_UPDATED
         await self.audit_sink.emit(event)
         _emit_otel_governance_span(self, event)
+
+
+def _parent_session_id(envelope) -> str | None:
+    metadata = getattr(envelope, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get("parent_session_id")
+    if isinstance(value, str) and value:
+        return value
+    return None
 
 
 def _emit_otel_governance_span(self: Edictum, audit_event: AuditEvent) -> None:

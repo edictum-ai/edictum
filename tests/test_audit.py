@@ -310,10 +310,8 @@ class TestFileAuditSink:
         assert data["policy_version"] == "sha256:def789"
         assert data["policy_error"] is True
 
-    async def test_emit_includes_lineage_fields(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            path = f.name
-
+    async def test_emit_includes_lineage_fields(self, tmp_path):
+        path = tmp_path / "lineage.jsonl"
         sink = FileAuditSink(path)
         await sink.emit(
             AuditEvent(
@@ -324,6 +322,6 @@ class TestFileAuditSink:
             )
         )
 
-        data = json.loads(Path(path).read_text().strip())
+        data = json.loads(path.read_text().strip())
         assert data["session_id"] == "child-session"
         assert data["parent_session_id"] == "parent-session"

@@ -220,6 +220,19 @@ class TestGovernedToolRegistry:
         child = governed.for_subagent()
         assert child.session_id != "parent"  # Gets its own session
 
+    async def test_for_subagent_emits_parent_session_lineage(self):
+        sink = NullAuditSink()
+        guard = make_guard(audit_sink=sink)
+        inner = make_registry()
+        governed = GovernedToolRegistry(inner, guard, session_id="parent")
+
+        child = governed.for_subagent(session_id="child-1")
+        result = await child.execute("read_file", {"path": "/tmp/test.txt"})
+
+        assert result == "contents of /tmp/test.txt"
+        assert len(sink.events) >= 2
+        assert {event.parent_session_id for event in sink.events} == {"parent"}
+
     async def test_set_principal(self):
         @precondition("*")
         def require_admin(tool_call):
