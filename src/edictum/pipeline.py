@@ -305,9 +305,15 @@ class CheckPipeline:
 
             if workflow_eval.records:
                 contracts_evaluated.extend(workflow_eval.records)
-                workflow_meta = workflow_eval.audit
                 workflow_stage_id = workflow_eval.stage_id or None
-            if workflow_eval.records or workflow_eval.events or workflow_eval.stage_id:
+            if workflow_eval.audit is not None:
+                workflow_meta = workflow_eval.audit
+            if (
+                workflow_eval.records
+                or workflow_eval.events
+                or workflow_eval.stage_id
+                or workflow_eval.audit is not None
+            ):
                 workflow_involved = True
             workflow_events.extend(workflow_eval.events)
 

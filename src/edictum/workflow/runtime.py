@@ -26,7 +26,17 @@ from edictum.workflow.runtime_eval import (
     workflow_metadata,
     workflow_progress_event,
 )
-from edictum.workflow.state import load_state, record_approval, record_result, save_state
+from edictum.workflow.state import (
+    apply_evaluation_status,
+    build_workflow_event,
+    build_workflow_snapshot,
+    clear_runtime_status,
+    hydrate_workflow_events,
+    load_state,
+    record_approval,
+    record_result,
+    save_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +78,16 @@ class WorkflowRuntime:
 
     async def evaluate(self, session: Session, envelope: ToolCall) -> WorkflowEvaluation:
         async with self._session_lock(session):
-            return await evaluate_runtime(self, session, envelope)
+            evaluation = await evaluate_runtime(self, session, envelope)
+            state = await self.load_state(session)
+            state_changed = apply_evaluation_status(state, evaluation, envelope)
+            if state_changed:
+                await self.save_state(session, state)
+            evaluation.audit = build_workflow_snapshot(self.definition, state)
+            evaluation.events = hydrate_workflow_events(self.definition, state, evaluation.events)
+            return evaluation
 
-    async def reset(self, session: Session, stage_id: str) -> None:
+    async def reset(self, session: Session, stage_id: str) -> list[dict[str, Any]]:
         async with self._session_lock(session):
             idx = self.definition.stage_index(stage_id)
             if idx is None:
@@ -84,7 +101,14 @@ class WorkflowRuntime:
                 state.evidence.stage_calls.pop(stage.id, None)
             if idx == 0:
                 state.evidence.reads = []
+            clear_runtime_status(state)
             await self.save_state(session, state)
+            return [
+                build_workflow_event(
+                    "workflow_state_updated",
+                    build_workflow_snapshot(self.definition, state),
+                )
+            ]
 
     async def record_approval(self, session: Session, stage_id: str) -> None:
         async with self._session_lock(session):
@@ -110,7 +134,7 @@ class WorkflowRuntime:
                 return []
             events = await self.advance_after_success(state, stage_id, envelope)
             await self.save_state(session, state)
-            return events
+            return hydrate_workflow_events(self.definition, state, events)
 
     def evaluate_current_stage(
         self,

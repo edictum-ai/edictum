@@ -166,6 +166,8 @@ class TestAuditEvent:
         assert event.tool_success is None
         assert event.hooks_evaluated == []
         assert event.contracts_evaluated == []
+        assert event.session_id is None
+        assert event.parent_session_id is None
         assert event.policy_version is None
         assert event.policy_error is False
 
@@ -175,11 +177,15 @@ class TestAuditEvent:
             tool_name="Bash",
             tool_success=True,
             mode="observe",
+            session_id="child-session",
+            parent_session_id="parent-session",
         )
         assert event.action == AuditAction.CALL_EXECUTED
         assert event.tool_name == "Bash"
         assert event.tool_success is True
         assert event.mode == "observe"
+        assert event.session_id == "child-session"
+        assert event.parent_session_id == "parent-session"
 
     def test_policy_version_field(self):
         event = AuditEvent(
@@ -208,6 +214,7 @@ class TestAuditAction:
         assert AuditAction.CALL_ALLOWED.value == "call_allowed"
         assert AuditAction.CALL_EXECUTED.value == "call_executed"
         assert AuditAction.CALL_FAILED.value == "call_failed"
+        assert AuditAction.WORKFLOW_STATE_UPDATED.value == "workflow_state_updated"
         assert AuditAction.POSTCONDITION_WARNING.value == "postcondition_warning"
 
 
@@ -246,6 +253,19 @@ class TestStdoutAuditSink:
         data = json.loads(capsys.readouterr().out)
         assert data["policy_version"] == "sha256:abc123"
         assert data["policy_error"] is True
+
+    async def test_emit_includes_lineage_fields(self, capsys):
+        sink = StdoutAuditSink()
+        event = AuditEvent(
+            action=AuditAction.CALL_ALLOWED,
+            tool_name="Read",
+            session_id="child-session",
+            parent_session_id="parent-session",
+        )
+        await sink.emit(event)
+        data = json.loads(capsys.readouterr().out)
+        assert data["session_id"] == "child-session"
+        assert data["parent_session_id"] == "parent-session"
 
 
 class TestFileAuditSink:
@@ -289,3 +309,21 @@ class TestFileAuditSink:
         data = json.loads(Path(path).read_text().strip())
         assert data["policy_version"] == "sha256:def789"
         assert data["policy_error"] is True
+
+    async def test_emit_includes_lineage_fields(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            path = f.name
+
+        sink = FileAuditSink(path)
+        await sink.emit(
+            AuditEvent(
+                action=AuditAction.CALL_ALLOWED,
+                tool_name="Read",
+                session_id="child-session",
+                parent_session_id="parent-session",
+            )
+        )
+
+        data = json.loads(Path(path).read_text().strip())
+        assert data["session_id"] == "child-session"
+        assert data["parent_session_id"] == "parent-session"

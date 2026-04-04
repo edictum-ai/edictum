@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def default_pending_approval() -> dict[str, Any]:
+    return {"required": False}
+
+
 @dataclass
 class WorkflowEvaluation:
     """Workflow pre-execution decision."""
@@ -35,6 +39,9 @@ class WorkflowState:
     completed_stages: list[str] = field(default_factory=list)
     approvals: dict[str, str] = field(default_factory=dict)
     evidence: WorkflowEvidence = field(default_factory=WorkflowEvidence)
+    blocked_reason: str | None = None
+    pending_approval: dict[str, Any] = field(default_factory=default_pending_approval)
+    last_blocked_action: dict[str, Any] | None = None
 
     def completed(self, stage_id: str) -> bool:
         return stage_id in self.completed_stages
@@ -50,3 +57,5 @@ class WorkflowState:
             self.evidence.reads = []
         if self.evidence.stage_calls is None:
             self.evidence.stage_calls = {}
+        if not isinstance(self.pending_approval, dict) or "required" not in self.pending_approval:
+            self.pending_approval = default_pending_approval()

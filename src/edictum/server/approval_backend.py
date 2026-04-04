@@ -43,6 +43,7 @@ class ServerApprovalBackend:
         timeout_action: str = "block",
         principal: dict | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> ApprovalRequest:
         """Create an approval request on the server."""
         body = {
@@ -64,6 +65,7 @@ class ServerApprovalBackend:
             timeout_action=timeout_action,
             principal=principal,
             metadata=metadata or {},
+            session_id=session_id,
         )
         self._pending[response["id"]] = request
         return request

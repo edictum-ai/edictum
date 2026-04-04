@@ -30,6 +30,7 @@ class ApprovalRequest:
     timeout_action: str = "block"  # block | allow
     principal: dict | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    session_id: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -58,6 +59,7 @@ class ApprovalBackend(Protocol):
         timeout_action: str = "block",
         principal: dict | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> ApprovalRequest: ...
 
     async def wait_for_decision(
@@ -89,6 +91,7 @@ class LocalApprovalBackend:
         timeout_action: str = "block",
         principal: dict | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> ApprovalRequest:
         approval_id = str(uuid.uuid4())
         request = ApprovalRequest(
@@ -100,6 +103,7 @@ class LocalApprovalBackend:
             timeout_action=timeout_action,
             principal=principal,
             metadata=metadata or {},
+            session_id=session_id,
         )
         self._pending[approval_id] = request
         print(f"[APPROVAL REQUIRED] {message}")

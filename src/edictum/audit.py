@@ -27,6 +27,7 @@ class AuditAction(StrEnum):
     CALL_FAILED = "call_failed"
     WORKFLOW_STAGE_ADVANCED = "workflow_stage_advanced"
     WORKFLOW_COMPLETED = "workflow_completed"
+    WORKFLOW_STATE_UPDATED = "workflow_state_updated"
     POSTCONDITION_WARNING = "postcondition_warning"
     CALL_APPROVAL_REQUESTED = "call_approval_requested"
     CALL_APPROVAL_GRANTED = "call_approval_granted"
@@ -44,6 +45,8 @@ class AuditEvent:
     call_id: str = ""
     call_index: int = 0
     parent_call_id: str | None = None
+    session_id: str | None = None
+    parent_session_id: str | None = None
 
     # Tool
     tool_name: str = ""

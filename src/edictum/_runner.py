@@ -161,6 +161,7 @@ async def _run(
                         action=AuditAction.CALL_WOULD_DENY,
                         run_id=envelope.run_id,
                         call_id=envelope.call_id,
+                        session_id=session.session_id,
                         tool_name=envelope.tool_name,
                         tool_args=self.redaction.redact_args(envelope.args),
                         side_effect=envelope.side_effect.value,
@@ -191,6 +192,7 @@ async def _run(
                 action=observe_action,
                 run_id=envelope.run_id,
                 call_id=envelope.call_id,
+                session_id=session.session_id,
                 tool_name=envelope.tool_name,
                 tool_args=self.redaction.redact_args(envelope.args),
                 side_effect=envelope.side_effect.value,
@@ -235,6 +237,7 @@ async def _run(
             action=post_action,
             run_id=envelope.run_id,
             call_id=envelope.call_id,
+            session_id=session.session_id,
             tool_name=envelope.tool_name,
             tool_args=self.redaction.redact_args(envelope.args),
             side_effect=envelope.side_effect.value,
@@ -275,6 +278,7 @@ async def _emit_run_pre_audit(self: Edictum, envelope, session, action: AuditAct
         action=action,
         run_id=envelope.run_id,
         call_id=envelope.call_id,
+        session_id=session.session_id,
         tool_name=envelope.tool_name,
         tool_args=self.redaction.redact_args(envelope.args),
         side_effect=envelope.side_effect.value,
@@ -321,6 +325,7 @@ async def _resolve_pending_approval(
             timeout=current.approval_timeout,
             timeout_action=current.approval_timeout_action,
             principal=principal_dict,
+            session_id=session.session_id,
         )
         await _emit_run_pre_audit(self, envelope, session, AuditAction.CALL_APPROVAL_REQUESTED, current)
         decision = await self._approval_backend.wait_for_decision(
@@ -363,6 +368,7 @@ async def _emit_workflow_events(self: Edictum, envelope, events: list[dict[str, 
             action=AuditAction.WORKFLOW_STAGE_ADVANCED,
             run_id=envelope.run_id,
             call_id=envelope.call_id,
+            session_id=envelope.run_id,
             tool_name=envelope.tool_name,
             tool_args=self.redaction.redact_args(envelope.args),
             side_effect=envelope.side_effect.value,
@@ -374,6 +380,8 @@ async def _emit_workflow_events(self: Edictum, envelope, events: list[dict[str, 
         )
         if action_name == AuditAction.WORKFLOW_COMPLETED.value:
             event.action = AuditAction.WORKFLOW_COMPLETED
+        elif action_name == AuditAction.WORKFLOW_STATE_UPDATED.value:
+            event.action = AuditAction.WORKFLOW_STATE_UPDATED
         await self.audit_sink.emit(event)
         _emit_otel_governance_span(self, event)
 

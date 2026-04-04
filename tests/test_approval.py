@@ -42,6 +42,7 @@ class TestApprovalRequestFrozen:
         assert req.timeout_action == "block"
         assert req.principal is None
         assert req.metadata == {}
+        assert req.session_id is None
         assert req.created_at is not None
 
 
@@ -117,6 +118,16 @@ class TestLocalApprovalBackendRequestApproval:
         assert req.timeout_action == "allow"
         assert req.principal == {"role": "admin"}
         assert req.metadata == {"ticket": "T-123"}
+
+    async def test_passes_session_id(self):
+        backend = LocalApprovalBackend()
+        req = await backend.request_approval(
+            "Tool",
+            {"a": 1},
+            "msg",
+            session_id="workflow-session-123",
+        )
+        assert req.session_id == "workflow-session-123"
 
 
 class TestLocalApprovalBackendTimeout:

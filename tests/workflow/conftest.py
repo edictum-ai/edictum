@@ -52,6 +52,7 @@ class AutoApproveBackend:
         timeout_action: str = "block",
         principal: dict | None = None,
         metadata: dict | None = None,
+        session_id: str | None = None,
     ) -> ApprovalRequest:
         return ApprovalRequest(
             approval_id="auto-approve",
@@ -62,6 +63,7 @@ class AutoApproveBackend:
             timeout_action=timeout_action,
             principal=principal,
             metadata=metadata or {},
+            session_id=session_id,
         )
 
     async def wait_for_decision(self, approval_id: str, timeout: int | None = None) -> ApprovalDecision:
