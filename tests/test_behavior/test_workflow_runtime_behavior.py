@@ -8,7 +8,7 @@ from edictum.session import Session
 from edictum.storage import MemoryBackend
 from edictum.workflow import WorkflowEvidence, WorkflowState
 from edictum.workflow.state import save_state
-from tests.workflow.conftest import make_runtime
+from tests.workflow.conftest import make_envelope, make_runtime
 
 
 @pytest.mark.asyncio
@@ -88,3 +88,40 @@ stages:
 
     with pytest.raises(ValueError, match='workflow: unknown set stage "review"'):
         await runtime.set_stage(session, "review")
+
+
+@pytest.mark.asyncio
+@pytest.mark.security
+async def test_set_stage_to_approval_stage_still_requires_approval_before_advancing():
+    runtime = make_runtime(
+        """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: behavior-set-stage-approval-barrier
+stages:
+  - id: implement
+    tools: [Edit]
+  - id: review
+    entry:
+      - condition: stage_complete("implement")
+    approval:
+      message: Review required before push
+  - id: push
+    entry:
+      - condition: stage_complete("review")
+    tools: [Bash]
+"""
+    )
+    session = Session("behavior-set-stage-approval-barrier", MemoryBackend())
+
+    await runtime.set_stage(session, "review")
+
+    decision = await runtime.evaluate(session, make_envelope("Bash", {"command": "git push origin feature"}))
+    state = await runtime.state(session)
+
+    assert decision.action == "pending_approval"
+    assert decision.stage_id == "review"
+    assert state.active_stage == "review"
+    assert state.completed_stages == ["implement"]
+    assert state.approvals == {}
