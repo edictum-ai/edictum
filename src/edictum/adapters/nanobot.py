@@ -13,6 +13,7 @@ from edictum.audit import AuditAction, AuditEvent
 from edictum.envelope import Principal, create_envelope
 from edictum.pipeline import CheckPipeline
 from edictum.session import Session
+from edictum.workflow.state import build_workflow_snapshot
 
 logger = logging.getLogger(__name__)
 _MAX_WORKFLOW_APPROVAL_ROUNDS = 32
@@ -184,6 +185,10 @@ class GovernedToolRegistry:
                     decision.workflow_stage_id,
                     envelope,
                 )
+            workflow = decision.workflow
+            if decision.workflow_involved and self._guard._workflow_runtime is not None:
+                workflow_state = await self._guard._workflow_runtime.state(self._session)
+                workflow = build_workflow_snapshot(self._guard._workflow_runtime.definition, workflow_state)
 
             await self._session.record_execution(name, success=tool_success)
 
@@ -209,7 +214,7 @@ class GovernedToolRegistry:
                     mode=self._guard.mode,
                     policy_version=self._guard.policy_version,
                     policy_error=post_decision.policy_error,
-                    workflow=decision.workflow,
+                    workflow=workflow,
                 )
             )
             await self._emit_workflow_events(envelope, workflow_events)

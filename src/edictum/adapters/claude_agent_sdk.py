@@ -14,6 +14,7 @@ from edictum.envelope import Principal, create_envelope
 from edictum.findings import Finding, build_findings
 from edictum.pipeline import CheckPipeline
 from edictum.session import Session, validate_session_id
+from edictum.workflow.state import build_workflow_snapshot
 
 logger = logging.getLogger(__name__)
 _MAX_WORKFLOW_APPROVAL_ROUNDS = 32
@@ -149,6 +150,14 @@ class ClaudeAgentSDKAdapter:
                 self._pending_decisions[tool_use_id] = decision
                 return {}  # allow through
 
+            if decision.action == "pending_approval":
+                blocked_result, decision = await self._resolve_pending_approval(envelope, decision, span)
+                if blocked_result is not None:
+                    span.end()
+                    self._pending.pop(tool_use_id, None)
+                    self._pending_decisions.pop(tool_use_id, None)
+                    return blocked_result
+
             # Handle block
             if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
@@ -164,14 +173,6 @@ class ClaudeAgentSDKAdapter:
                 self._pending.pop(tool_use_id, None)
                 self._pending_decisions.pop(tool_use_id, None)
                 return self._deny(decision.reason or "")
-
-            if decision.action == "pending_approval":
-                blocked_result, decision = await self._resolve_pending_approval(envelope, decision, span)
-                if blocked_result is not None:
-                    span.end()
-                    self._pending.pop(tool_use_id, None)
-                    self._pending_decisions.pop(tool_use_id, None)
-                    return blocked_result
 
             # Handle per-rule observed blocks
             if decision.observed:
@@ -253,6 +254,10 @@ class ClaudeAgentSDKAdapter:
                     decision.workflow_stage_id,
                     envelope,
                 )
+            workflow = decision.workflow
+            if decision.workflow_involved and self._guard._workflow_runtime is not None:
+                workflow_state = await self._guard._workflow_runtime.state(self._session)
+                workflow = build_workflow_snapshot(self._guard._workflow_runtime.definition, workflow_state)
 
             # Record in session
             await self._session.record_execution(envelope.tool_name, success=tool_success)
@@ -280,7 +285,7 @@ class ClaudeAgentSDKAdapter:
                     mode=self._guard.mode,
                     policy_version=self._guard.policy_version,
                     policy_error=post_decision.policy_error,
-                    workflow=decision.workflow,
+                    workflow=workflow,
                 )
             )
             await self._emit_workflow_events(envelope, workflow_events)

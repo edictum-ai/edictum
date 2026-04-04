@@ -55,7 +55,7 @@ async def load_state(session: Session, definition) -> WorkflowState:
         blocked_reason=data.get("blocked_reason"),
         pending_approval=_coerce_pending_approval(data.get("pending_approval")),
         last_blocked_action=_coerce_optional_dict(data.get("last_blocked_action")),
-        last_recorded_evidence=_coerce_optional_dict(data.get("last_recorded_evidence")),
+        last_recorded_evidence=_coerce_recorded_evidence(data.get("last_recorded_evidence")),
     )
     state.ensure_defaults()
     if state.active_stage and definition.stage_by_id(state.active_stage) is None:
@@ -303,3 +303,23 @@ def _coerce_optional_dict(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     return dict(value)
+
+
+def _coerce_recorded_evidence(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    tool = value.get("tool")
+    summary = value.get("summary")
+    timestamp = value.get("timestamp")
+    if not isinstance(tool, str) or not isinstance(summary, str) or not isinstance(timestamp, str):
+        return None
+    safe_tool = _safe_status_text(tool, "")
+    safe_summary = _safe_status_text(summary, "")
+    safe_timestamp = _safe_status_text(timestamp, "")
+    if not safe_tool or not safe_summary or not safe_timestamp:
+        return None
+    return {
+        "tool": safe_tool,
+        "summary": safe_summary,
+        "timestamp": safe_timestamp,
+    }

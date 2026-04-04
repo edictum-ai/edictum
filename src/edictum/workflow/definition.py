@@ -15,8 +15,8 @@ class WorkflowMetadata:
     """Workflow document identity."""
 
     name: str
-    version: str = ""
     description: str = ""
+    version: str = ""
 
 
 @dataclass(frozen=True)
