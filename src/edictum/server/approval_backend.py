@@ -56,7 +56,7 @@ class ServerApprovalBackend:
         }
         if session_id is not None:
             body["session_id"] = session_id
-        response = await self._client.post("/api/v1/approvals", body)
+        response = await self._client.post("/v1/approvals", body)
 
         request = ApprovalRequest(
             approval_id=response["id"],
@@ -85,7 +85,7 @@ class ServerApprovalBackend:
         deadline = asyncio.get_running_loop().time() + effective_timeout
 
         while True:
-            response = await self._client.get(f"/api/v1/approvals/{approval_id}")
+            response = await self._client.get(f"/v1/approvals/{approval_id}")
             status = response["status"]
 
             if status == "approved":
@@ -97,7 +97,7 @@ class ServerApprovalBackend:
                     timestamp=datetime.now(UTC),
                 )
 
-            if status == "denied":
+            if status in {"rejected", "denied"}:
                 return ApprovalDecision(
                     approved=False,
                     approver=response.get("decided_by"),
@@ -106,7 +106,7 @@ class ServerApprovalBackend:
                     timestamp=datetime.now(UTC),
                 )
 
-            if status == "timeout":
+            if status in {"timed_out", "timeout"}:
                 return ApprovalDecision(
                     approved=(timeout_action == "allow"),
                     status=ApprovalStatus.TIMEOUT,

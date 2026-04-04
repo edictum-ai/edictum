@@ -18,7 +18,7 @@ _STABLE_CONNECTION_SECS = 30.0
 class ServerContractSource:
     """Receives rule bundle updates from edictum-server via SSE.
 
-    Subscribes to /api/v1/stream and yields updated bundles.
+    Subscribes to /v1/stream and yields updated bundles.
     Implements auto-reconnect with exponential backoff.
     """
 
@@ -69,7 +69,7 @@ class ServerContractSource:
                 async with httpx_sse.aconnect_sse(
                     http_client,
                     "GET",
-                    "/api/v1/stream",
+                    "/v1/stream",
                     params=params,
                     # Separate connect timeout from stream idle timeout.
                     # The default client timeout (30s) applies to all phases —

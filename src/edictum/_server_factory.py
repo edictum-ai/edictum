@@ -144,7 +144,7 @@ async def _from_server(
     if bundle_name is not None:
         try:
             response = await client.get(
-                f"/api/v1/bundles/{bundle_name}/current",
+                f"/v1/rulesets/{bundle_name}/current",
                 env=client.env,
             )
             yaml_b64 = response.get("yaml_bytes", "")
@@ -271,7 +271,7 @@ async def _start_sse_watcher(self: Edictum) -> None:
                             logger.warning("Server client missing during SSE assignment update")
                             continue
                         response = await server_client.get(
-                            f"/api/v1/bundles/{new_name}/current",
+                            f"/v1/rulesets/{new_name}/current",
                             env=server_client.env,
                         )
                         yaml_b64 = response.get("yaml_bytes", "")

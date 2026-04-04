@@ -5,11 +5,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from copy import deepcopy
 from typing import Any
 
 from edictum.server.client import EdictumServerClient
 
 logger = logging.getLogger(__name__)
+
+_ACTION_MAP = {
+    "call_denied": "call_blocked",
+    "call_would_deny": "call_would_block",
+    "call_approval_requested": "call_asked",
+    "call_approval_denied": "call_approval_blocked",
+}
 
 
 class ServerAuditSink:
@@ -65,25 +73,51 @@ class ServerAuditSink:
 
     def _map_event(self, event: Any) -> dict[str, Any]:
         """Map an AuditEvent to the server EventPayload format."""
-        return {
+        payload: dict[str, Any] = {
+            "schema_version": getattr(event, "schema_version", "0.3.0"),
             "call_id": event.call_id,
             "agent_id": self._client.agent_id,
             "tool_name": event.tool_name,
-            "decision": event.action.value,
+            "tool_args": deepcopy(event.tool_args),
+            "side_effect": event.side_effect,
+            "environment": getattr(event, "environment", None) or self._client.env,
+            "principal": deepcopy(event.principal),
+            "action": self._map_action(getattr(event.action, "value", event.action)),
+            "decision_source": event.decision_source,
+            "decision_name": event.decision_name,
+            "reason": event.reason,
+            "hooks_evaluated": deepcopy(getattr(event, "hooks_evaluated", [])),
+            "rules_evaluated": deepcopy(getattr(event, "contracts_evaluated", [])),
             "mode": event.mode,
+            "policy_version": event.policy_version,
             "timestamp": event.timestamp.isoformat(),
-            "payload": {
-                "tool_args": event.tool_args,
-                "side_effect": event.side_effect,
-                "environment": getattr(event, "environment", None) or self._client.env,
-                "principal": event.principal,
-                "decision_source": event.decision_source,
-                "decision_name": event.decision_name,
-                "reason": event.reason,
-                "policy_version": event.policy_version,
-                "bundle_name": self._client.bundle_name,
-            },
+            "run_id": getattr(event, "run_id", ""),
+            "call_index": getattr(event, "call_index", 0),
+            "parent_call_id": getattr(event, "parent_call_id", None),
+            "tool_success": getattr(event, "tool_success", None),
+            "postconditions_passed": getattr(event, "postconditions_passed", None),
+            "duration_ms": getattr(event, "duration_ms", 0),
+            "error": getattr(event, "error", None),
+            "result_summary": getattr(event, "result_summary", None),
+            "session_attempt_count": getattr(event, "session_attempt_count", 0),
+            "session_execution_count": getattr(event, "session_execution_count", 0),
+            "policy_error": getattr(event, "policy_error", False),
         }
+        session_id = getattr(event, "session_id", None)
+        if session_id is not None:
+            payload["session_id"] = session_id
+        parent_session_id = getattr(event, "parent_session_id", None)
+        if parent_session_id is not None:
+            payload["parent_session_id"] = parent_session_id
+        workflow = getattr(event, "workflow", None)
+        if isinstance(workflow, dict):
+            payload["workflow"] = deepcopy(workflow)
+        return payload
+
+    def _map_action(self, action: Any) -> str:
+        if not isinstance(action, str):
+            return str(action)
+        return _ACTION_MAP.get(action, action)
 
     async def flush(self) -> None:
         """Flush all buffered events to the server."""
@@ -99,7 +133,7 @@ class ServerAuditSink:
             events = list(self._buffer)
             self._buffer.clear()
         try:
-            await self._client.post("/api/v1/events", {"events": events})
+            await self._client.post("/v1/events", {"events": events})
         except Exception as exc:
             # Non-retryable client errors (4xx except 429): raise immediately.
             # Auth errors (401/403) will never succeed on retry — surfacing them

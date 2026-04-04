@@ -29,7 +29,7 @@ class ServerBackend:
         All other errors propagate so the pipeline fails closed.
         """
         try:
-            response = await self._client.get(f"/api/v1/sessions/{key}")
+            response = await self._client.get(f"/v1/sessions/{key}")
             return response.get("value")
         except EdictumServerError as exc:
             if exc.status_code == 404:
@@ -38,12 +38,12 @@ class ServerBackend:
 
     async def set(self, key: str, value: str) -> None:
         """Set a value in the server session store."""
-        await self._client.put(f"/api/v1/sessions/{key}", {"value": value})
+        await self._client.put(f"/v1/sessions/{key}", {"value": value})
 
     async def delete(self, key: str) -> None:
         """Delete a key from the server session store."""
         try:
-            await self._client.delete(f"/api/v1/sessions/{key}")
+            await self._client.delete(f"/v1/sessions/{key}")
         except EdictumServerError as exc:
             if exc.status_code != 404:
                 raise
@@ -51,7 +51,7 @@ class ServerBackend:
     async def increment(self, key: str, amount: float = 1) -> float:
         """Atomically increment a counter on the server."""
         response = await self._client.post(
-            f"/api/v1/sessions/{key}/increment",
+            f"/v1/sessions/{key}/increment",
             {"amount": amount},
         )
         return response["value"]
@@ -70,7 +70,7 @@ class ServerBackend:
             return {}
         try:
             response = await self._client.post(
-                "/api/v1/sessions/batch",
+                "/v1/sessions/batch",
                 {"keys": keys},
             )
             values = response.get("values", {})

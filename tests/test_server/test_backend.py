@@ -27,7 +27,7 @@ class TestServerBackend:
         backend = ServerBackend(mock_client)
         result = await backend.get("my-key")
         assert result == "hello"
-        mock_client.get.assert_called_once_with("/api/v1/sessions/my-key")
+        mock_client.get.assert_called_once_with("/v1/sessions/my-key")
 
     @pytest.mark.asyncio
     async def test_get_returns_none_on_404(self, mock_client):
@@ -65,14 +65,14 @@ class TestServerBackend:
         mock_client.put.return_value = {"ok": True}
         backend = ServerBackend(mock_client)
         await backend.set("key", "value")
-        mock_client.put.assert_called_once_with("/api/v1/sessions/key", {"value": "value"})
+        mock_client.put.assert_called_once_with("/v1/sessions/key", {"value": "value"})
 
     @pytest.mark.asyncio
     async def test_delete(self, mock_client):
         mock_client.delete.return_value = {}
         backend = ServerBackend(mock_client)
         await backend.delete("key")
-        mock_client.delete.assert_called_once_with("/api/v1/sessions/key")
+        mock_client.delete.assert_called_once_with("/v1/sessions/key")
 
     @pytest.mark.asyncio
     async def test_delete_ignores_404(self, mock_client):
@@ -94,7 +94,7 @@ class TestServerBackend:
         result = await backend.increment("counter", 2.0)
         assert result == 5.0
         mock_client.post.assert_called_once_with(
-            "/api/v1/sessions/counter/increment",
+            "/v1/sessions/counter/increment",
             {"amount": 2.0},
         )
 
@@ -105,7 +105,7 @@ class TestServerBackend:
         result = await backend.increment("counter")
         assert result == 1.0
         mock_client.post.assert_called_once_with(
-            "/api/v1/sessions/counter/increment",
+            "/v1/sessions/counter/increment",
             {"amount": 1},
         )
 

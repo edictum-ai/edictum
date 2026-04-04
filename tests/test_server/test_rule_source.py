@@ -28,12 +28,18 @@ def _make_sse_event(data: dict, event_type: str = "contract_update") -> MagicMoc
     return ev
 
 
-def _install_fake_httpx_sse(events: list[MagicMock], captured_params: list[dict]):
+def _install_fake_httpx_sse(
+    events: list[MagicMock],
+    captured_params: list[dict],
+    captured_urls: list[str] | None = None,
+):
     """Install a fake httpx_sse module that captures params and yields events."""
 
     @asynccontextmanager
     async def fake_aconnect_sse(http_client, method, url, *, params=None, **kwargs):
         captured_params.append(params or {})
+        if captured_urls is not None:
+            captured_urls.append(url)
         source = MagicMock()
 
         async def aiter():
@@ -97,12 +103,14 @@ class TestServerContractSource:
 
         event = _make_sse_event({"yaml": "test", "revision_hash": "abc"})
         captured: list[dict] = []
-        _install_fake_httpx_sse([event], captured)
+        captured_urls: list[str] = []
+        _install_fake_httpx_sse([event], captured, captured_urls)
 
         async for _bundle in source.watch():
             await source.close()
 
         assert len(captured) == 1
+        assert captured_urls == ["/v1/stream"]
         assert captured[0]["env"] == "staging"
         assert captured[0]["bundle_name"] == "devops-agent"
 

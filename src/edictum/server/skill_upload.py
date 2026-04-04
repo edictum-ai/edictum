@@ -25,7 +25,7 @@ def upload_scan_results(
     (server may reject with 401).
     """
     payload = format_json(classifications, skills_dir=skills_dir)
-    url = server_url.rstrip("/") + "/api/v1/skill-scan"
+    url = server_url.rstrip("/") + "/v1/skill-scan"
 
     headers: dict[str, str] = {"Content-Type": "application/json"}
     token = os.environ.get("EDICTUM_CONSOLE_TOKEN")
