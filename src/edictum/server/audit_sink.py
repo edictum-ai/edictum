@@ -118,9 +118,7 @@ class ServerAuditSink:
     def _needs_workflow_snapshot(self, event: Any, workflow: Any) -> bool:
         action = getattr(getattr(event, "action", None), "value", getattr(event, "action", None))
         return (
-            isinstance(action, str)
-            and action in _WORKFLOW_PROGRESS_ACTIONS
-            and not self._has_full_workflow(workflow)
+            isinstance(action, str) and action in _WORKFLOW_PROGRESS_ACTIONS and not self._has_full_workflow(workflow)
         )
 
     def _has_full_workflow(self, workflow: Any) -> bool:
