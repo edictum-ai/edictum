@@ -283,9 +283,7 @@ class TestParityLineage:
         allowed_events = [event for event in sink.events if event.action == AuditAction.CALL_ALLOWED]
         assert allowed_events, f"{name} emitted no CALL_ALLOWED audit event"
         assert allowed_events[0].session_id == "child-session", f"{name} lost session_id in audit event"
-        assert allowed_events[0].parent_session_id == "parent-session", (
-            f"{name} lost parent_session_id in audit event"
-        )
+        assert allowed_events[0].parent_session_id == "parent-session", f"{name} lost parent_session_id in audit event"
 
 
 # --- Post helpers for adapters with separate pre/post methods ---
