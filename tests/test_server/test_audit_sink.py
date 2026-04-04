@@ -222,6 +222,37 @@ class TestServerAuditSink:
         assert mapped["action"] == wire_action
 
     @pytest.mark.asyncio
+    async def test_emit_upconverts_workflow_progress_events_with_snapshot_provider(self, mock_client):
+        sink = ServerAuditSink(mock_client, batch_size=50, flush_interval=999)
+        sink._workflow_snapshot_provider = AsyncMock(
+            return_value={
+                "name": "coding-guard",
+                "active_stage": "local-review",
+                "completed_stages": ["read-context", "implement"],
+                "pending_approval": {"required": False},
+            }
+        )
+        event = _make_event(
+            action=AuditAction.WORKFLOW_STAGE_ADVANCED,
+            session_id="session-123",
+            workflow={"stage_id": "implement", "to_stage_id": "local-review"},
+        )
+
+        await sink.emit(event)
+        await sink.flush()
+
+        payload = mock_client.post.call_args.args[1]["events"][0]
+        assert payload["workflow"] == {
+            "name": "coding-guard",
+            "active_stage": "local-review",
+            "completed_stages": ["read-context", "implement"],
+            "pending_approval": {"required": False},
+            "stage_id": "implement",
+            "to_stage_id": "local-review",
+        }
+        sink._workflow_snapshot_provider.assert_awaited_once_with(event)
+
+    @pytest.mark.asyncio
     async def test_cancellation_preserves_events(self, mock_client):
         """CancelledError during POST must not lose events from the buffer."""
 

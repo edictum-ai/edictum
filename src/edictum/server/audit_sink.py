@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from typing import Any
 
@@ -18,6 +19,13 @@ _ACTION_MAP = {
     "call_approval_requested": "call_asked",
     "call_approval_denied": "call_approval_blocked",
 }
+_WORKFLOW_PROGRESS_ACTIONS = frozenset(
+    {
+        "workflow_stage_advanced",
+        "workflow_completed",
+        "workflow_state_updated",
+    }
+)
 
 
 class ServerAuditSink:
@@ -44,10 +52,11 @@ class ServerAuditSink:
         self._flush_task: asyncio.Task | None = None
         self._flush_task_loop: asyncio.AbstractEventLoop | None = None
         self._lock = threading.Lock()
+        self._workflow_snapshot_provider: Callable[[Any], Awaitable[dict[str, Any] | None]] | None = None
 
     async def emit(self, event: Any) -> None:
         """Convert an AuditEvent to server format and add to batch buffer."""
-        payload = self._map_event(event)
+        payload = await self._prepare_payload(event)
         with self._lock:
             self._buffer.append(payload)
             needs_flush = len(self._buffer) >= self._batch_size
@@ -71,8 +80,61 @@ class ServerAuditSink:
                 self._flush_task = asyncio.create_task(self._auto_flush())
                 self._flush_task_loop = current_loop
 
-    def _map_event(self, event: Any) -> dict[str, Any]:
+    async def _prepare_payload(self, event: Any) -> dict[str, Any]:
+        workflow = await self._resolve_workflow_snapshot(event)
+        return self._map_event(event, workflow=workflow)
+
+    async def _resolve_workflow_snapshot(self, event: Any) -> dict[str, Any] | None:
+        workflow = getattr(event, "workflow", None)
+        if not self._needs_workflow_snapshot(event, workflow):
+            if isinstance(workflow, dict):
+                return deepcopy(workflow)
+            return None
+
+        provider = self._workflow_snapshot_provider
+        if provider is None:
+            if isinstance(workflow, dict):
+                return deepcopy(workflow)
+            return None
+
+        try:
+            snapshot = await provider(event)
+        except Exception:
+            logger.warning("Failed to load workflow snapshot for audit event", exc_info=True)
+            if isinstance(workflow, dict):
+                return deepcopy(workflow)
+            return None
+
+        if not isinstance(snapshot, dict):
+            if isinstance(workflow, dict):
+                return deepcopy(workflow)
+            return None
+
+        merged = deepcopy(snapshot)
+        if isinstance(workflow, dict):
+            merged.update(deepcopy(workflow))
+        return merged
+
+    def _needs_workflow_snapshot(self, event: Any, workflow: Any) -> bool:
+        action = getattr(getattr(event, "action", None), "value", getattr(event, "action", None))
+        return (
+            isinstance(action, str)
+            and action in _WORKFLOW_PROGRESS_ACTIONS
+            and not self._has_full_workflow(workflow)
+        )
+
+    def _has_full_workflow(self, workflow: Any) -> bool:
+        if not isinstance(workflow, dict):
+            return False
+        required_keys = {"name", "active_stage", "completed_stages", "pending_approval"}
+        return required_keys.issubset(workflow)
+
+    def _map_event(self, event: Any, *, workflow: dict[str, Any] | None = None) -> dict[str, Any]:
         """Map an AuditEvent to the server EventPayload format."""
+        if workflow is None:
+            event_workflow = getattr(event, "workflow", None)
+            if isinstance(event_workflow, dict):
+                workflow = event_workflow
         payload: dict[str, Any] = {
             "schema_version": getattr(event, "schema_version", "0.3.0"),
             "call_id": event.call_id,
@@ -109,7 +171,6 @@ class ServerAuditSink:
         parent_session_id = getattr(event, "parent_session_id", None)
         if parent_session_id is not None:
             payload["parent_session_id"] = parent_session_id
-        workflow = getattr(event, "workflow", None)
         if isinstance(workflow, dict):
             payload["workflow"] = deepcopy(workflow)
         return payload
