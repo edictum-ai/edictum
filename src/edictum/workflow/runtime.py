@@ -36,6 +36,7 @@ from edictum.workflow.state import (
     record_approval,
     record_result,
     save_state,
+    set_stage_pending_approval,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,10 +118,17 @@ class WorkflowRuntime:
                 raise ValueError(f'workflow: unknown set stage "{stage_id}"')
 
             state = await self.load_state(session)
+            stage = self.definition.stages[idx]
             state.active_stage = stage_id
             state.completed_stages = stage_ids(self.definition.stages[:idx])
             clear_runtime_status(state)
             state.last_blocked_action = None
+            set_stage_pending_approval(
+                state,
+                stage.id,
+                stage.approval.message if stage.approval is not None else "",
+                required=stage.approval is not None and state.approvals.get(stage.id) != "approved",
+            )
             await self.save_state(session, state)
             return [
                 build_workflow_event(

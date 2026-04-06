@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from edictum.audit import AuditAction
 from edictum.session import Session
 from edictum.storage import MemoryBackend
 from edictum.workflow import WorkflowEvidence, WorkflowState
@@ -115,7 +116,30 @@ stages:
     )
     session = Session("behavior-set-stage-approval-barrier", MemoryBackend())
 
-    await runtime.set_stage(session, "review")
+    events = await runtime.set_stage(session, "review")
+    state = await runtime.state(session)
+
+    assert state.pending_approval == {
+        "required": True,
+        "stage_id": "review",
+        "message": "Review required before push",
+    }
+    assert events == [
+        {
+            "action": AuditAction.WORKFLOW_STATE_UPDATED.value,
+            "workflow": {
+                "name": "behavior-set-stage-approval-barrier",
+                "active_stage": "review",
+                "completed_stages": ["implement"],
+                "blocked_reason": None,
+                "pending_approval": {
+                    "required": True,
+                    "stage_id": "review",
+                    "message": "Review required before push",
+                },
+            },
+        }
+    ]
 
     decision = await runtime.evaluate(session, make_envelope("Bash", {"command": "git push origin feature"}))
     state = await runtime.state(session)

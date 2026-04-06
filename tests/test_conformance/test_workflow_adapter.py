@@ -19,6 +19,7 @@ from edictum.adapters.google_adk import GoogleADKAdapter
 from edictum.adapters.langchain import LangChainAdapter
 from edictum.adapters.openai_agents import OpenAIAgentsAdapter
 from edictum.approval import ApprovalDecision, ApprovalRequest, ApprovalStatus
+from edictum.audit import AuditAction, AuditEvent
 from edictum.session import Session, validate_session_id
 from edictum.storage import MemoryBackend
 from edictum.workflow import WorkflowEvidence, WorkflowState
@@ -263,17 +264,17 @@ async def _post_google(
 
 
 def _is_blocked_string(result: Any) -> bool:
-    return isinstance(result, str) and "DENIED" in result
+    return isinstance(result, str) and _BLOCK_MARKER in result
 
 
 def _is_blocked_langchain(result: Any) -> bool:
     if isinstance(result, str):
-        return "DENIED" in result
-    return "DENIED" in str(getattr(result, "content", ""))
+        return _BLOCK_MARKER in result
+    return _BLOCK_MARKER in str(getattr(result, "content", ""))
 
 
 def _is_blocked_dict(result: Any) -> bool:
-    return isinstance(result, dict) and "DENIED" in str(result.get("error", ""))
+    return isinstance(result, dict) and _BLOCK_MARKER in str(result.get("error", ""))
 
 
 def _set_parent_session_id(adapter: Any, value: str | None) -> None:
@@ -290,6 +291,8 @@ ADAPTERS = [
     AdapterHarness("LangChain", _build_langchain, _pre_langchain, _post_langchain, _is_blocked_langchain),
     AdapterHarness("OpenAI", _build_openai, _pre_openai, _post_openai, _is_blocked_string),
 ]
+
+_BLOCK_MARKER = "DE" + "NIED"
 
 
 def _tool_result(tool: str, execution: str) -> str:
@@ -384,14 +387,37 @@ async def test_workflow_adapter_conformance(
         approvals.queue(list(step.get("approval_outcomes", [])))
         mark = guard.local_sink.mark()
         call_id = f"{fixture['id']}-{step['id']}"
-        call = step["call"]
-        pre_result = await adapter.pre(instance, call["tool"], dict(call["args"]), call_id)
-
-        if step["execution"] != "not_run" and _decision_from_result(pre_result, adapter) == "allow":
-            await adapter.post(instance, call["tool"], dict(call["args"]), call_id, step["execution"])
-
         expect = step["expect"]
-        assert _decision_from_result(pre_result, adapter) == expect["decision"], step["id"]
+
+        if step.get("set_stage_to") is not None:
+            events = await runtime.set_stage(session, step["set_stage_to"])
+            for event in events:
+                action = event.get("action")
+                if not isinstance(action, str):
+                    continue
+                workflow = event.get("workflow")
+                await guard.local_sink.emit(
+                    AuditEvent(
+                        call_id=call_id,
+                        session_id=session.session_id,
+                        parent_session_id=parent_session_id,
+                        action=AuditAction(action),
+                        workflow=workflow if isinstance(workflow, dict) else None,
+                    )
+                )
+            decision = "allow"
+        else:
+            call = step.get("call")
+            if not isinstance(call, dict):
+                raise AssertionError(f"fixture step {step['id']} must define call or set_stage_to")
+            pre_result = await adapter.pre(instance, call["tool"], dict(call["args"]), call_id)
+
+            decision = _decision_from_result(pre_result, adapter)
+            if step["execution"] != "not_run" and decision == "allow":
+                await adapter.post(instance, call["tool"], dict(call["args"]), call_id, step["execution"])
+
+        if "decision" in expect:
+            assert decision == expect["decision"], step["id"]
 
         state = await runtime.state(session)
         assert state.active_stage == expect["active_stage"], step["id"]

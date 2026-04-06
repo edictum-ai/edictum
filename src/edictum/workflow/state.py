@@ -121,6 +121,14 @@ def clear_runtime_status(state: WorkflowState) -> None:
     state.pending_approval = default_pending_approval()
 
 
+def set_stage_pending_approval(state: WorkflowState, stage_id: str, message: str, *, required: bool) -> None:
+    state.ensure_defaults()
+    if not required:
+        state.pending_approval = default_pending_approval()
+        return
+    state.pending_approval = _build_pending_approval(stage_id, message)
+
+
 def apply_evaluation_status(state: WorkflowState, evaluation: WorkflowEvaluation, envelope: ToolCall) -> bool:
     state.ensure_defaults()
     changed = False
