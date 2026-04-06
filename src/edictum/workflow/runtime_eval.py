@@ -17,8 +17,19 @@ if TYPE_CHECKING:
 
 async def evaluate_runtime(runtime: WorkflowRuntime, session: Session, envelope: ToolCall) -> WorkflowEvaluation:
     state = await runtime.load_state(session)
+    evaluation, changed = await evaluate_runtime_state(runtime, state, envelope)
+    if changed:
+        await runtime.save_state(session, state)
+    return evaluation
+
+
+async def evaluate_runtime_state(
+    runtime: WorkflowRuntime,
+    state: WorkflowState,
+    envelope: ToolCall,
+) -> tuple[WorkflowEvaluation, bool]:
     if not state.active_stage:
-        return WorkflowEvaluation(action="allow")
+        return WorkflowEvaluation(action="allow"), False
 
     changed = False
     events: list[dict[str, Any]] = []
@@ -31,34 +42,24 @@ async def evaluate_runtime(runtime: WorkflowRuntime, session: Session, envelope:
 
         allowed, allowed_eval, invalid_eval = runtime.evaluate_current_stage(stage, envelope)
         if allowed:
-            if changed:
-                await runtime.save_state(session, state)
             allowed_eval.events.extend(events)
-            return allowed_eval
+            return allowed_eval, changed
 
         next_index, has_next = runtime.next_index(stage.id)
         if invalid_eval is not None and not has_next:
-            if changed:
-                await runtime.save_state(session, state)
             invalid_eval.events.extend(events)
-            return invalid_eval
+            return invalid_eval, changed
 
         completion, complete = await runtime.evaluate_completion(stage, state, envelope, has_next)
         if not complete:
             if completion.action:
-                if changed:
-                    await runtime.save_state(session, state)
                 completion.events.extend(events)
-                return completion
+                return completion, changed
             if invalid_eval is not None:
-                if changed:
-                    await runtime.save_state(session, state)
                 invalid_eval.events.extend(events)
-                return invalid_eval
-            if changed:
-                await runtime.save_state(session, state)
+                return invalid_eval, changed
             completion.events.extend(events)
-            return completion
+            return completion, changed
 
         if not state.completed(stage.id):
             state.completed_stages.append(stage.id)
@@ -66,8 +67,7 @@ async def evaluate_runtime(runtime: WorkflowRuntime, session: Session, envelope:
         if not has_next:
             state.active_stage = ""
             events.append(workflow_progress_event("workflow_completed", runtime.definition.metadata.name, stage.id, ""))
-            await runtime.save_state(session, state)
-            return WorkflowEvaluation(action="allow", events=events)
+            return WorkflowEvaluation(action="allow", events=events), True
 
         next_stage_id = runtime.definition.stages[next_index].id
         state.active_stage = next_stage_id
@@ -138,9 +138,15 @@ async def evaluate_completion(
     next_state = clone_state(state)
     if not next_state.completed(stage.id):
         next_state.completed_stages.append(stage.id)
+    next_state.active_stage = next_stage.id
     failure, blocked = await evaluate_gates(runtime, next_stage, next_state, envelope, next_stage.entry)
     if blocked:
         return failure, False
+    if stage.exit or stage.approval is not None:
+        return WorkflowEvaluation(), True
+    next_stage_eval, _ = await evaluate_runtime_state(runtime, next_state, envelope)
+    if next_stage_eval.action == "block":
+        return WorkflowEvaluation(), False
     return WorkflowEvaluation(), True
 
 

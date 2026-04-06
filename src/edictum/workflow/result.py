@@ -14,7 +14,7 @@ def default_pending_approval() -> dict[str, Any]:
 class WorkflowEvaluation:
     """Workflow pre-execution decision."""
 
-    action: str = "allow"  # "allow" | "block" | "pending_approval"
+    action: str = ""  # "" | "allow" | "block" | "pending_approval"
     reason: str = ""
     stage_id: str = ""
     records: list[dict[str, Any]] = field(default_factory=list)

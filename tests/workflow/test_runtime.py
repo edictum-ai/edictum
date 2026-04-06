@@ -213,6 +213,58 @@ stages:
 
 
 @pytest.mark.asyncio
+async def test_runtime_set_stage_to_unapproved_approval_stage_persists_pending_snapshot():
+    runtime = make_runtime(
+        """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: set-stage-pending-approval
+stages:
+  - id: implement
+    tools: [Edit]
+  - id: review
+    entry:
+      - condition: stage_complete("implement")
+    approval:
+      message: Review required before push
+  - id: push
+    entry:
+      - condition: stage_complete("review")
+    tools: [Bash]
+"""
+    )
+    session = Session("set-stage-pending-approval", MemoryBackend())
+
+    events = await runtime.set_stage(session, "review")
+    state = await runtime.state(session)
+
+    assert state.active_stage == "review"
+    assert state.completed_stages == ["implement"]
+    assert state.pending_approval == {
+        "required": True,
+        "stage_id": "review",
+        "message": "Review required before push",
+    }
+    assert events == [
+        {
+            "action": AuditAction.WORKFLOW_STATE_UPDATED.value,
+            "workflow": {
+                "name": "set-stage-pending-approval",
+                "active_stage": "review",
+                "completed_stages": ["implement"],
+                "blocked_reason": None,
+                "pending_approval": {
+                    "required": True,
+                    "stage_id": "review",
+                    "message": "Review required before push",
+                },
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_set_stage_rejects_unknown_stage_id():
     runtime = make_runtime(
         """
@@ -329,6 +381,51 @@ stages:
 
     assert decision.action == "allow"
     assert decision.stage_id == "review"
+
+
+@pytest.mark.asyncio
+async def test_runtime_no_exit_stage_only_advances_on_legitimate_next_stage_work():
+    runtime = make_runtime(
+        """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: no-exit-advancement-regression
+stages:
+  - id: implement
+    tools: [Edit]
+  - id: local-verify
+    entry:
+      - condition: stage_complete("implement")
+    tools: [Bash]
+    checks:
+      - command_matches: "^npm test$"
+        message: "Only npm test is allowed in local-verify"
+"""
+    )
+    session = Session("no-exit-advancement-regression", MemoryBackend())
+
+    await _seed_state(
+        runtime,
+        session,
+        WorkflowState(
+            session_id="no-exit-advancement-regression",
+            active_stage="implement",
+            completed_stages=[],
+        ),
+    )
+
+    decision = await runtime.evaluate(
+        session,
+        make_envelope("Write", {"path": "src/generated.ts", "content": "export const value = 1;"}),
+    )
+    state = await runtime.state(session)
+
+    assert decision.action == "block"
+    assert decision.stage_id == "implement"
+    assert decision.reason == "Tool is not allowed in this workflow stage"
+    assert state.active_stage == "implement"
+    assert state.completed_stages == []
 
 
 @pytest.mark.asyncio
