@@ -429,6 +429,41 @@ stages:
 
 
 @pytest.mark.asyncio
+async def test_runtime_no_exit_stage_does_not_advance_on_current_stage_check_failure():
+    runtime = make_runtime(
+        """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: no-exit-check-barrier
+stages:
+  - id: implement
+    tools: [Bash]
+    checks:
+      - command_not_matches: "^git push"
+        message: Push is blocked during implement
+  - id: push
+    entry:
+      - condition: stage_complete("implement")
+    tools: [Bash]
+"""
+    )
+    session = Session("no-exit-check-barrier", MemoryBackend())
+
+    decision = await runtime.evaluate(
+        session,
+        make_envelope("Bash", {"command": "git push origin feature"}),
+    )
+    state = await runtime.state(session)
+
+    assert decision.action == "block"
+    assert decision.stage_id == "implement"
+    assert decision.reason == "Push is blocked during implement"
+    assert state.active_stage == "implement"
+    assert state.completed_stages == []
+
+
+@pytest.mark.asyncio
 async def test_workflow_state_persistence_round_trip_preserves_enriched_fields():
     runtime = make_runtime(
         """

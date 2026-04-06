@@ -79,6 +79,25 @@ workflows:
           - condition: command_matches("^npm test$")
             message: "Run npm test successfully before moving on"
 
+  no-exit-check-barrier:
+    apiVersion: edictum/v1
+    kind: Workflow
+    metadata:
+      name: no-exit-check-barrier
+    stages:
+      - id: implement
+        description: "Implement without pushing yet"
+        tools: [Bash]
+        checks:
+          - command_not_matches: "^git push"
+            message: "Push is blocked during implement"
+
+      - id: push
+        description: "Push only after implement is complete"
+        entry:
+          - condition: stage_complete("implement")
+        tools: [Bash]
+
 fixtures:
   - id: wf-001
     workflow: core-dev-process
@@ -259,7 +278,7 @@ fixtures:
 
   - id: wf-006
     workflow: core-dev-process
-    description: "exit gates must pass"
+    description: "current-stage checks block before exit gates"
     initial_state:
       session_id: session-006
       active_stage: local-verify
@@ -289,7 +308,7 @@ fixtures:
             reads:
               - specs/008.md
             stage_calls: {}
-          message_contains: "Run npm test successfully before moving on"
+          message_contains: "Only npm test is allowed in local-verify"
 
   - id: wf-007
     workflow: entry-gated-verify
@@ -394,3 +413,31 @@ fixtures:
             reads:
               - specs/008.md
             stage_calls: {}
+
+  - id: wf-009
+    workflow: no-exit-check-barrier
+    description: "current-stage check failures block before auto-advance"
+    initial_state:
+      session_id: session-009
+      active_stage: implement
+      completed_stages: []
+      approvals: {}
+      evidence:
+        reads: []
+        stage_calls: {}
+    steps:
+      - id: attempt-push-during-implement
+        call:
+          tool: Bash
+          args:
+            command: git push origin feature-branch
+        execution: not_run
+        expect:
+          decision: block
+          active_stage: implement
+          completed_stages: []
+          approvals: {}
+          evidence:
+            reads: []
+            stage_calls: {}
+          message_contains: "Push is blocked during implement"

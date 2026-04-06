@@ -46,7 +46,7 @@ async def evaluate_runtime_state(
             return allowed_eval, changed
 
         next_index, has_next = runtime.next_index(stage.id)
-        if invalid_eval is not None and not has_next:
+        if current_stage_invalid_blocks_advance(invalid_eval) or (invalid_eval is not None and not has_next):
             invalid_eval.events.extend(events)
             return invalid_eval, changed
 
@@ -209,6 +209,16 @@ def evaluation_from_record(
         records=[record],
         audit=audit,
     )
+
+
+def current_stage_invalid_blocks_advance(invalid_eval: WorkflowEvaluation | None) -> bool:
+    if invalid_eval is None:
+        return False
+    for record in invalid_eval.records:
+        metadata = record.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("gate_kind") == "check":
+            return True
+    return False
 
 
 def workflow_progress_event(action: str, name: str, from_stage_id: str, to_stage_id: str) -> dict[str, Any]:
