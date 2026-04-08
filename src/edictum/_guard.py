@@ -181,11 +181,11 @@ class Edictum:
 
     @property
     def local_sink(self) -> CollectingAuditSink:
-        """The local in-memory audit event collector.
+        """The local in-memory decision-log collector.
 
         Always present regardless of construction method (``__init__``,
         ``from_yaml()``, ``from_server()``). Use ``mark()`` /
-        ``since_mark()`` to inspect governance decisions programmatically.
+        ``since_mark()`` to inspect rule decisions programmatically.
         """
         return self._local_sink
 
@@ -200,7 +200,7 @@ class Edictum:
 
     @property
     def policy_version(self) -> str | None:
-        """SHA256 hash identifying the active rule bundle."""
+        """SHA256 hash identifying the active ruleset."""
         return self._state.policy_version
 
     @policy_version.setter
@@ -208,7 +208,7 @@ class Edictum:
         self._state = replace(self._state, policy_version=value)
 
     async def reload(self, contracts_yaml: bytes | str) -> None:
-        """Atomically replace all rules from a YAML bundle.
+        """Atomically replace all rules from a YAML ruleset.
 
         Builds a complete ``_CompiledState``, then swaps via a single
         reference assignment. Concurrent evaluations see either

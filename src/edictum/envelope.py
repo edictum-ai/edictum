@@ -32,7 +32,7 @@ class SideEffect(StrEnum):
 
 @dataclass(frozen=True)
 class Principal:
-    """Identity context for audit attribution.
+    """Identity context for decision-log attribution.
 
     NOTE: ``claims`` is a mutable dict held inside a frozen dataclass.
     The *reference* is immutable (you cannot reassign ``principal.claims``),
@@ -107,7 +107,7 @@ class ToolCall:
 
 
 class ToolRegistry:
-    """Maps tool names to governance properties.
+    """Maps tool names to rule-engine properties.
 
     Unregistered tools default to IRREVERSIBLE.
     """

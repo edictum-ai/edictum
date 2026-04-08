@@ -3,7 +3,7 @@ kind: Ruleset
 
 metadata:
   name: nanobot-agent
-  description: "Governance rules for nanobot AI agents"
+  description: "Behavior rules for nanobot AI agents"
 
 defaults:
   mode: enforce
@@ -72,7 +72,7 @@ rules:
       timeout: 300
       timeout_action: block
 
-  # Deny writing outside allowed paths
+  # Block writing outside allowed paths
   - id: block-write-outside-workspace
     type: pre
     tool: write_file
@@ -83,7 +83,7 @@ rules:
       action: block
       message: "Cannot write outside workspace: {args.path}"
 
-  # Deny editing outside allowed paths
+  # Block editing outside allowed paths
   - id: block-edit-outside-workspace
     type: pre
     tool: edit_file
@@ -94,7 +94,7 @@ rules:
       action: block
       message: "Cannot edit outside workspace: {args.path}"
 
-  # Deny reading sensitive files
+  # Block reading sensitive files
   - id: block-sensitive-reads
     type: pre
     tool: read_file

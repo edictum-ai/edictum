@@ -1,4 +1,4 @@
-"""CheckPipeline — single source of governance logic."""
+"""CheckPipeline — single source of rule-evaluation logic."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PreDecision:
-    """Result of pre-execution governance evaluation."""
+    """Result of pre-execution rule evaluation."""
 
     action: str  # "allow" | "block" | "pending_approval"
     reason: str | None = None
@@ -42,7 +42,7 @@ class PreDecision:
 
 @dataclass
 class PostDecision:
-    """Result of post-execution governance evaluation."""
+    """Result of post-execution rule evaluation."""
 
     tool_success: bool
     postconditions_passed: bool
@@ -54,9 +54,9 @@ class PostDecision:
 
 
 class CheckPipeline:
-    """Orchestrates all governance checks.
+    """Orchestrates all rule checks.
 
-    This is the single source of truth for governance logic.
+    This is the single source of truth for rule-evaluation logic.
     Adapters call pre_execute() and post_execute(), then translate
     the structured results into framework-specific formats.
     """
@@ -69,7 +69,7 @@ class CheckPipeline:
         tool_call: ToolCall,
         session: Session,
     ) -> PreDecision:
-        """Run all pre-execution governance checks."""
+        """Run all pre-execution rule checks."""
         hooks_evaluated: list[dict] = []
         contracts_evaluated: list[dict] = []
         has_observed_deny = False
@@ -409,7 +409,7 @@ class CheckPipeline:
         tool_response: Any,
         tool_success: bool,
     ) -> PostDecision:
-        """Run all post-execution governance checks."""
+        """Run all post-execution rule checks."""
         warnings: list[str] = []
         contracts_evaluated: list[dict] = []
         redacted_response: Any = None

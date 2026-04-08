@@ -14,7 +14,7 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class AuditSink(Protocol):
-    """Protocol for audit event consumers."""
+    """Protocol for decision-log consumers."""
 
     async def emit(self, event: Any) -> None: ...
 
@@ -57,7 +57,7 @@ class AuditEvent:
     # Principal
     principal: dict | None = None
 
-    # Governance decision
+    # Rule decision
     action: AuditAction = AuditAction.CALL_DENIED
     decision_source: str | None = None
     decision_name: str | None = None
@@ -86,7 +86,7 @@ class AuditEvent:
 
 
 class RedactionPolicy:
-    """Redact sensitive data from audit events.
+    """Redact sensitive data from decision-log events.
 
     Recurses into dicts AND lists. Normalizes keys to lowercase.
     Caps total payload size. Detects common secret patterns in values.
@@ -290,7 +290,7 @@ class CompositeSink:
 
 
 class StdoutAuditSink:
-    """Emit audit events as JSON to stdout."""
+    """Emit decision-log events as JSON to stdout."""
 
     def __init__(self, redaction: RedactionPolicy | None = None):
         self._redaction = redaction or RedactionPolicy()
@@ -304,7 +304,7 @@ class StdoutAuditSink:
 
 
 class FileAuditSink:
-    """Emit audit events as JSON lines to a file."""
+    """Emit decision-log events as JSON lines to a file."""
 
     def __init__(self, path: str | Path, redaction: RedactionPolicy | None = None):
         self._path = Path(path)
@@ -329,7 +329,7 @@ class MarkEvictedError(Exception):
 
 
 class CollectingAuditSink:
-    """In-memory audit sink for programmatic inspection.
+    """In-memory decision-log sink for programmatic inspection.
 
     Stores emitted events in a bounded ring buffer. Supports mark-based
     windowed queries so callers can ask "what happened since my last check?"

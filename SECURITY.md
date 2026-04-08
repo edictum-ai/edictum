@@ -1,52 +1,52 @@
 # Security Policy
 
-## Reporting a Vulnerability
+## Reporting A Vulnerability
 
-If you discover a security vulnerability in Edictum, please report it responsibly.
+If you find a vulnerability in Edictum, report it privately.
 
 **Email:** [security@edictum.ai](mailto:security@edictum.ai)
 
-**Do not** open a public GitHub issue for security vulnerabilities.
+Do not open a public GitHub issue for vulnerability reports.
 
 ## Response Timeline
 
 | Stage | SLA |
-|-------|-----|
+| --- | --- |
 | Acknowledgment | 48 hours |
 | Triage and severity assessment | 7 days |
-| Fix for critical/high severity | Best effort, typically within 30 days |
+| Fix for critical or high severity issues | Best effort, typically within 30 days |
 
 ## Supported Versions
 
 | Version | Supported |
-|---------|-----------|
+| --- | --- |
 | Latest release | Yes |
-| Older releases | Security fixes only, on a case-by-case basis |
+| Older releases | Fixes only on a case-by-case basis |
 
 ## Scope
 
 This policy covers:
 
-- **edictum** -- core Python library (this repo, [PyPI](https://pypi.org/project/edictum/))
-- **edictum gate** -- coding assistant governance layer (`pip install edictum[gate]`)
-- **edictum-console** -- self-hostable operations console ([GitHub](https://github.com/edictum-ai/edictum-console))
+- `edictum`: core Python library in this repo
+- `edictum[gate]`: coding assistant runtime enforcement
+- `edictum-console`: self-hostable control plane and review UI
 
 ## Safe Harbor
 
-We consider security research conducted in good faith to be authorized. We will not pursue legal action against researchers who:
+Good-faith security research is authorized. We will not pursue legal action against researchers who:
 
-- Make a good-faith effort to avoid privacy violations, data destruction, or service disruption
-- Only interact with accounts they own or with explicit permission
-- Report vulnerabilities promptly and provide sufficient detail for reproduction
-- Do not publicly disclose the vulnerability before a fix is available
+- avoid privacy violations, data destruction, and service disruption
+- only use accounts they own or have explicit permission to test
+- report vulnerabilities promptly with enough detail to reproduce
+- avoid public disclosure before a fix is available
 
-## Security Design
+## Enforcement Model
 
-Edictum's core enforcement is designed around these principles:
+Edictum's core runtime is built around a few simple rules:
 
-- **No LLM in the enforcement path.** Contracts evaluate tool names and arguments against YAML conditions using deterministic pattern matching. The evaluation pipeline never calls an LLM.
-- **Fail closed.** Contract parse errors, type mismatches, missing fields, and unhandled exceptions in the pipeline all result in deny decisions. The agent never silently passes when the system encounters an error.
-- **Zero runtime dependencies.** The core library has no third-party dependencies, minimizing supply chain attack surface.
-- **Automatic secret redaction.** API keys, tokens, passwords, and connection strings are redacted from audit events and denial messages before they reach any sink.
+- No LLM in the enforcement path. Rules match tool names, tool arguments, output, session state, and workflow state with deterministic code.
+- Fail closed. Rule parse errors, type mismatches, missing fields, and unhandled pipeline errors turn into block decisions.
+- Core stays small. The standalone library has no required third-party runtime dependencies.
+- Secret redaction happens before data is written to a decision log destination or surfaced in a block message.
 
-For details on Edictum's security model, threat boundaries, and adversarial test coverage, see [docs.edictum.ai](https://docs.edictum.ai).
+For more detail on threat boundaries and adversarial coverage, see [docs.edictum.ai](https://docs.edictum.ai).

@@ -38,7 +38,7 @@ class GeminiCliFormat:
     """Parse Gemini CLI BeforeTool hook stdin, format output.
 
     Gemini CLI uses snake_case tool names and top-level tool_name/tool_input/cwd.
-    Deny exits with code 2 and reason on stderr (stdout for the gate).
+    Block exits with code 2 and reason on stderr (stdout for the gate).
     """
 
     def parse_stdin(self, data: dict) -> tuple[str, dict, str]:
@@ -57,7 +57,7 @@ class GeminiCliFormat:
         """Format decision for Gemini CLI.
 
         Allow: empty JSON object {}, exit 0.
-        Deny: reason string, exit 2.
+        Block: reason string, exit 2.
         """
         if decision != "block":
             return json.dumps({}), 0
@@ -68,6 +68,6 @@ class GeminiCliFormat:
         elif reason:
             deny_reason = reason
         elif rule_id:
-            deny_reason = f"Denied by rule '{rule_id}'"
+            deny_reason = f"Blocked by rule '{rule_id}'"
 
         return deny_reason, 2

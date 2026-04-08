@@ -1,6 +1,6 @@
 """Edictum OpenTelemetry integration.
 
-Emits governance-specific spans for every rule evaluation.
+Emits rule-evaluation spans for every rule evaluation.
 Gracefully degrades to no-op if OpenTelemetry is not installed.
 
 Install: pip install edictum[otel]

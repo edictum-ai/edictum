@@ -62,7 +62,7 @@ class OpenCodeFormat:
         """Format decision for OpenCode.
 
         Allow: {"allow": true}.
-        Deny: {"allow": false, "reason": "..."}.
+        Block: {"allow": false, "reason": "..."}.
         """
         if decision != "block":
             return json.dumps({"allow": True}), 0
@@ -73,7 +73,7 @@ class OpenCodeFormat:
         elif reason:
             deny_reason = reason
         elif rule_id:
-            deny_reason = f"Denied by rule '{rule_id}'"
+            deny_reason = f"Blocked by rule '{rule_id}'"
 
         output = {
             "allow": False,

@@ -1,114 +1,90 @@
 # Edictum Architecture
 
-> Runtime safety for AI agents. Stop agents before they break things.
+> Developer agent behavior platform for Python. Rulesets, workflow gates, adapters, and decision logs around one deterministic pipeline.
 
-## What It Does
+## Shape Of The Repo
 
-Edictum sits between an agent's decision to call a tool and actual execution. It enforces rules, hooks, audit trails, and operation limits. When a rule is violated, it tells the agent **why** so it can self-correct.
+Edictum has two Python layers:
 
-## Package Structure
+- `src/edictum/` is the standalone core library. It loads rulesets, evaluates tool calls, tracks local session state, runs workflow gates, and emits decision logs.
+- `src/edictum/server/` is the server SDK. It implements the same core protocols over HTTP so a Python agent can use a remote approval backend, remote rule source, remote session store, and remote log destination.
 
-```
+The server itself is a separate deployment. This repo ships the core library and the Python server client.
+
+## Package Layout
+
+```text
 src/edictum/
-├── __init__.py          # Edictum class, guard.run(), exceptions, re-exports
-├── envelope.py          # ToolCall (frozen), SideEffect, ToolRegistry, BashClassifier
-├── hooks.py             # HookDecision (ALLOW/DENY)
-├── rules.py         # Decision, @precondition, @postcondition, @session_contract
-├── limits.py            # OperationLimits (attempt + execution + per-tool caps)
-├── pipeline.py          # CheckPipeline — single source of governance logic
-├── session.py           # Session (atomic counters via StorageBackend)
-├── storage.py           # StorageBackend protocol + MemoryBackend
-├── audit.py             # AuditEvent, RedactionPolicy, Stdout/File sinks
-├── telemetry.py         # OpenTelemetry (graceful no-op if absent)
-├── builtins.py          # deny_sensitive_reads()
-├── types.py             # Internal types (HookRegistration, ToolConfig)
-└── adapters/
-    ├── langchain.py         # LangChain adapter (pre/post tool call hooks)
-    ├── crewai.py            # CrewAI adapter (before/after hooks)
-    ├── agno.py              # Agno adapter (wrap-around hook)
-    ├── semantic_kernel.py   # Semantic Kernel adapter (filter pattern)
-    ├── openai_agents.py     # OpenAI Agents SDK adapter (guardrails)
-    └── claude_agent_sdk.py  # Claude Agent SDK adapter (hook dict)
+├── __init__.py
+├── _guard.py              # Edictum class and public construction paths
+├── _runner.py             # guard.run() execution path
+├── _factory.py            # from_yaml(), from_template(), from_multiple()
+├── rules.py               # Python rule decorators
+├── pipeline.py            # Deterministic pre/post evaluation pipeline
+├── envelope.py            # ToolCall model, tool registry, bash classifier
+├── session.py             # Local session counters and state helpers
+├── approval.py            # Human approval backends
+├── audit.py               # Decision log event model and log destinations
+├── evaluation.py          # Dry-run evaluation results
+├── findings.py            # Structured post-rule violations
+├── workflow/              # WorkflowDefinition, WorkflowRuntime, loaders, evaluators
+├── yaml_engine/           # Ruleset schema, loader, composer, compiler, templates
+├── adapters/
+│   ├── langchain.py
+│   ├── crewai.py
+│   ├── agno.py
+│   ├── semantic_kernel.py
+│   ├── openai_agents.py
+│   ├── claude_agent_sdk.py
+│   ├── google_adk.py
+│   └── nanobot.py
+├── gate/                  # Coding assistant hook runtime
+├── server/                # HTTP-backed SDK implementations
+├── skill/                 # Skill scanning and risk analysis
+└── telemetry.py / otel.py # Optional OpenTelemetry integration
 ```
 
-## The Flow
+## Runtime Flow
 
-Every tool call passes through:
+1. A framework adapter, Gate hook, or direct `guard.run()` call creates a `ToolCall`.
+2. `CheckPipeline.pre_execute()` evaluates before-hooks, pre rules, sandbox rules, session rules, approvals, and workflow stage rules.
+3. If the decision is `block`, execution stops and a decision log event is emitted. If the decision is `ask`, execution pauses for approval. If the decision is `allow`, the tool runs.
+4. `CheckPipeline.post_execute()` evaluates post rules, records workflow evidence, updates session counters, and emits the final decision log event.
 
-```
-Agent decides to call tool
-    │
-    ▼
-Adapter creates ToolCall (deep-copied, classified)
-Increments attempt_count (BEFORE governance)
-    │
-    ▼
-Pipeline.pre_execute() — 5 steps:
-    1. Attempt limit (>= max_attempts?)
-    2. Before hooks (user-defined, can DENY)
-    3. Checks (rule checks, can BLOCK)
-    4. Session rules (cross-turn state, can BLOCK)
-    5. Execution limits (>= max_tool_calls? per-tool?)
-    │
-    ├── BLOCK → audit event → tell agent why → agent self-corrects
-    │
-    └── ALLOW → tool executes
-                    │
-                    ▼
-            Pipeline.post_execute():
-                1. Postconditions (observe-only, warnings)
-                2. After hooks
-                3. Session record (exec count, consecutive failures)
-                    │
-                    ▼
-                Audit event (CALL_EXECUTED or CALL_FAILED)
-```
+The pipeline is the single source of truth. Adapters are translation layers. They should not contain separate rule logic.
 
-## Key Design Decisions
+## Workflow Module
 
-**Pipeline owns ALL governance logic.** Adapters are thin translation layers. Adding a second adapter doesn't fork governance behavior.
+The workflow runtime is separate from one-shot rules because it tracks process across calls:
 
-**Two counter types:**
-- `max_attempts` — caps ALL PreToolUse events (including blocked). Catches block loops.
-- `max_tool_calls` — caps executions only (PostToolUse). Caps total work done.
+- `workflow/definition.py` validates `kind: Workflow` documents.
+- `workflow/load.py` parses workflow YAML from files or strings.
+- `workflow/runtime.py` manages stage state, entry gates, exit gates, command checks, and approvals.
+- `workflow/runtime_eval.py` evaluates a live `ToolCall` against the active workflow stage.
+- `workflow/evaluator_exec.py` provides the opt-in trusted `exec(...)` evaluator for stage conditions.
 
-**Postconditions are observe-only.** They emit warnings, never block. For pure/read tools: suggest retry. For write/irreversible: warn only.
+Workflow state is attached to the same session model the rules pipeline uses, so stage moves, approvals, evidence, and tool-call decisions stay aligned.
 
-**Observe mode** (`mode="observe"`): full pipeline runs, audit emits `CALL_WOULD_DENY`, but tool executes anyway.
+## Adapters
 
-**Zero runtime deps.** OpenTelemetry via optional `edictum[otel]`.
+The Python SDK ships eight adapters:
 
-**Redaction at write time.** Destructive by design — no recovery. Sensitive keys, secret value patterns (OpenAI/AWS/JWT/GitHub/Slack), 32KB payload cap.
+- `LangChainAdapter`
+- `CrewAIAdapter`
+- `AgnoAdapter`
+- `SemanticKernelAdapter`
+- `OpenAIAgentsAdapter`
+- `ClaudeAgentSDKAdapter`
+- `GoogleADKAdapter`
+- `NanobotAdapter`
 
-**BashClassifier is a heuristic, not a security boundary.** Conservative READ allowlist + shell operator detection. Defense in depth with `deny_sensitive_reads()`.
+Each adapter maps its framework's tool-call lifecycle onto the same core pipeline. The adapter owns translation. The pipeline owns decisions.
 
-## Usage Modes
+## Design Notes
 
-**1. Framework-agnostic (`guard.run()`):**
-```python
-guard = Edictum(rules=[deny_sensitive_reads()])
-result = await guard.run("Bash", {"command": "ls"}, my_bash_fn)
-```
-
-**2. Framework adapters (6 supported):**
-
-All adapters are thin translation layers — governance logic stays in the pipeline.
-
-```python
-from edictum.adapters.langchain import LangChainAdapter
-from edictum.adapters.crewai import CrewAIAdapter
-from edictum.adapters.agno import AgnoAdapter
-from edictum.adapters.semantic_kernel import SemanticKernelAdapter
-from edictum.adapters.openai_agents import OpenAIAgentsAdapter
-from edictum.adapters.claude_agent_sdk import ClaudeAgentSDKAdapter
-
-adapter = LangChainAdapter(guard, session_id="session-1")
-```
-
-## What This Is NOT
-
-- Not prompt injection defense
-- Not content safety filtering
-- Not network egress control
-- Not a security boundary for Bash
-- Not concurrency-safe across workers (MemoryBackend is single-process)
+- Core stays standalone. No runtime network dependency is required for local enforcement.
+- YAML rulesets and Python decorators both compile to the same runtime model.
+- Workflow gates are explicit opt-in stateful process enforcement on top of per-call rules.
+- Decision logs are structured and redact sensitive values before emission.
+- OpenTelemetry is optional. If the dependency is missing, tracing is a no-op.
+- The `gate/` package is the coding-assistant runtime layer, not a separate rules engine.

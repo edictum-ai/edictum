@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 class ClaudeAgentSDKAdapter:
     """Translate Edictum pipeline decisions into Claude SDK hook format.
 
-    The adapter does NOT contain governance logic -- that lives in
+    The adapter does NOT contain rule logic -- that lives in
     CheckPipeline. The adapter only:
     1. Creates envelopes from SDK input
     2. Manages pending state (envelope + span) between Pre/Post
@@ -130,7 +130,7 @@ class ClaudeAgentSDKAdapter:
         )
         self._call_index += 1
 
-        # Increment attempts BEFORE governance
+        # Increment attempts before rule evaluation
         await self._session.increment_attempts()
 
         # Start OTel span

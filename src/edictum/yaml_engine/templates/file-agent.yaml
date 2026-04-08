@@ -3,7 +3,7 @@ kind: Ruleset
 
 metadata:
   name: file-agent
-  description: "Contracts for file-handling agents. Blocks sensitive reads and destructive bash."
+  description: "Rules for file-handling agents. Block sensitive reads and destructive bash."
 
 defaults:
   mode: enforce
@@ -17,7 +17,7 @@ rules:
         contains_any: [".env", ".secret", "kubeconfig", "credentials", ".pem", "id_rsa"]
     then:
       action: block
-      message: "Sensitive file '{args.path}' denied."
+      message: "Sensitive file '{args.path}' blocked."
       tags: [secrets, dlp]
 
   - id: block-destructive-bash
@@ -30,7 +30,7 @@ rules:
         - args.command: { contains: '> /dev/' }
     then:
       action: block
-      message: "Destructive command denied: '{args.command}'."
+      message: "Destructive command blocked: '{args.command}'."
       tags: [destructive, safety]
 
   - id: block-write-outside-target
@@ -41,5 +41,5 @@ rules:
         starts_with: /
     then:
       action: block
-      message: "Write to absolute path '{args.path}' denied. Use relative paths."
+      message: "Write to absolute path '{args.path}' blocked. Use relative paths."
       tags: [write-scope]

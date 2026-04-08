@@ -1,4 +1,4 @@
-"""Built-in preconditions for common safety patterns."""
+"""Built-in pre-rules for common safety patterns."""
 
 from __future__ import annotations
 
@@ -12,16 +12,16 @@ def deny_sensitive_reads(
     sensitive_paths: list[str] | None = None,
     sensitive_commands: list[str] | None = None,
 ) -> Callable:
-    """Built-in precondition: block reads of sensitive files/data.
+    """Built-in pre-rule: block reads of sensitive files and data.
 
-    Default denied paths:
+    Default blocked paths:
     - ~/.ssh/
     - /var/run/secrets/ (k8s)
     - /.env, /.aws/credentials
     - /.git-credentials
     - /id_rsa, /id_ed25519
 
-    Default denied commands:
+    Default blocked commands:
     - printenv, env (dump all env vars)
     """
     default_paths = [
@@ -45,7 +45,7 @@ def deny_sensitive_reads(
             for pattern in paths:
                 if pattern in tool_call.file_path:
                     return Decision.fail(
-                        f"Access to sensitive path denied: {tool_call.file_path}. "
+                        f"Access to sensitive path blocked: {tool_call.file_path}. "
                         "This file may contain secrets or credentials."
                     )
 
@@ -55,7 +55,7 @@ def deny_sensitive_reads(
             for blocked in commands:
                 if cmd == blocked or cmd.startswith(blocked + " "):
                     return Decision.fail(
-                        f"Sensitive command denied: {blocked}. "
+                        f"Sensitive command blocked: {blocked}. "
                         "This command may expose secrets or environment variables."
                     )
             # Check if bash is reading a sensitive path

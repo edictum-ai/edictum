@@ -58,9 +58,9 @@ def _check_scope(
             real_prefix = os.path.realpath(prefix.rstrip(os.sep)) + os.sep
             if real == real_prefix.rstrip(os.sep) or real.startswith(real_prefix):
                 return True, ""
-        return False, f"Denied: file path '{file_path}' is outside the project directory"
+        return False, f"Blocked: file path '{file_path}' is outside the project directory"
     except (OSError, ValueError):
-        return False, f"Denied: cannot resolve file path '{file_path}'"
+        return False, f"Blocked: cannot resolve file path '{file_path}'"
 
 
 def _validate_stdin(data: Any) -> tuple[str, dict, str] | tuple[None, None, str]:
@@ -123,16 +123,16 @@ def _run_check_inner(
     """Inner check logic, separated so exceptions propagate to run_check."""
     # Size check
     if len(stdin_data) > _MAX_STDIN_SIZE:
-        return format_handler.format_output("block", None, "Denied: stdin payload too large", 0)
+        return format_handler.format_output("block", None, "Blocked: stdin payload too large", 0)
 
     # Parse JSON
     try:
         parsed = json.loads(stdin_data)
     except (json.JSONDecodeError, ValueError):
-        return format_handler.format_output("block", None, "Denied: invalid JSON in stdin", 0)
+        return format_handler.format_output("block", None, "Blocked: invalid JSON in stdin", 0)
 
     if not isinstance(parsed, dict):
-        return format_handler.format_output("block", None, "Denied: stdin must be a JSON object", 0)
+        return format_handler.format_output("block", None, "Blocked: stdin must be a JSON object", 0)
 
     # Auto-detect Cursor when hook is registered as claude-code but stdin
     # contains Cursor-specific fields (cursor_version, workspace_roots).
@@ -148,20 +148,20 @@ def _run_check_inner(
     try:
         tool_name, tool_input, parsed_cwd = format_handler.parse_stdin(parsed)
     except Exception:
-        return format_handler.format_output("block", None, "Denied: failed to parse stdin", 0)
+        return format_handler.format_output("block", None, "Blocked: failed to parse stdin", 0)
 
     effective_cwd = parsed_cwd or cwd
 
     # Validate tool_name
     if not tool_name or not isinstance(tool_name, str):
-        return format_handler.format_output("block", None, "Denied: missing or invalid tool_name", 0)
+        return format_handler.format_output("block", None, "Blocked: missing or invalid tool_name", 0)
 
     # Reject control characters in tool_name
     if any(ord(c) < 32 or c == "\x7f" for c in tool_name):
-        return format_handler.format_output("block", None, "Denied: invalid characters in tool_name", 0)
+        return format_handler.format_output("block", None, "Blocked: invalid characters in tool_name", 0)
 
     if not isinstance(tool_input, dict):
-        return format_handler.format_output("block", None, "Denied: tool_input must be a JSON object", 0)
+        return format_handler.format_output("block", None, "Blocked: tool_input must be a JSON object", 0)
 
     # Resolve category
     category = resolve_category(tool_name)
@@ -175,21 +175,21 @@ def _run_check_inner(
     if not contract_paths:
         if fail_open:
             return format_handler.format_output("allow", None, None, 0)
-        return format_handler.format_output("block", None, "Denied: no rule paths configured", 0)
+        return format_handler.format_output("block", None, "Blocked: no rule paths configured", 0)
 
     # Filter to existing paths
     existing_paths = [p for p in contract_paths if os.path.exists(p)]
     if not existing_paths:
         if fail_open:
             return format_handler.format_output("allow", None, None, 0)
-        return format_handler.format_output("block", None, "Denied: no rule files found", 0)
+        return format_handler.format_output("block", None, "Blocked: no rule files found", 0)
 
     try:
         guard = Edictum.from_yaml(*existing_paths)
     except (EdictumConfigError, Exception):
         if getattr(config, "fail_open", False):
             return format_handler.format_output("allow", None, None, 0)
-        return format_handler.format_output("block", None, "Denied: failed to load rules", 0)
+        return format_handler.format_output("block", None, "Blocked: failed to load rules", 0)
 
     # Write rule manifest for Console coverage reporting
     _write_contract_manifest(existing_paths, guard, config)

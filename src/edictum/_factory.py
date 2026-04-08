@@ -35,7 +35,7 @@ class TemplateInfo:
 
 
 class _NullSink:
-    """No-op audit sink for when stdout is disabled and no file is configured."""
+    """No-op log destination for when stdout is disabled and no file is configured."""
 
     async def emit(self, event):
         pass
@@ -76,7 +76,7 @@ def _build_guard_from_compiled(
             insecure=otel_config.get("insecure", True),
         )
 
-    # Auto-configure audit sink from observability block if not explicitly provided
+    # Auto-configure the log destination from the observability block when needed.
     if audit_sink is None:
         obs_file = obs_config.get("file")
         obs_stdout = obs_config.get("stdout", True)
@@ -159,16 +159,16 @@ def _from_yaml(
     workflow_path: str | Path | None = None,
     workflow_exec_evaluator_enabled: bool = False,
 ) -> Edictum | tuple[Edictum, CompositionReport]:
-    """Create an Edictum instance from one or more YAML rule bundles.
+    """Create an Edictum instance from one or more YAML rulesets.
 
     Args:
         *paths: One or more paths to YAML rule files. When multiple
-            paths are given, bundles are composed left-to-right (later
+            paths are given, rulesets are composed left-to-right (later
             layers override earlier ones).
         tools: Tool side-effect classifications. Merged with any ``tools:``
             section in the YAML bundle (parameter wins on conflict).
-        mode: Override the bundle's default mode (enforce/observe).
-        audit_sink: Custom audit sink, or a list of sinks (auto-wrapped
+        mode: Override the ruleset's default mode (enforce/observe).
+        audit_sink: Custom log destination, or a list of sinks (auto-wrapped
             in CompositeSink).
         redaction: Custom redaction policy.
         backend: Custom storage backend.
@@ -200,7 +200,7 @@ def _from_yaml(
     if not paths:
         raise EdictumConfigError("from_yaml() requires at least one path")
 
-    # Load all bundles
+    # Load all rulesets
     loaded: list[tuple[dict, Any]] = []
     for p in paths:
         loaded.append(load_bundle(p))

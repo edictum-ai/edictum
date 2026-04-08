@@ -53,7 +53,7 @@ class CursorFormat:
         """Format decision for Cursor.
 
         Allow: {"decision": "allow"}, exit 0.
-        Deny: {"decision": "block", "reason": "..."}, exit 0.
+        Block: {"decision": "block", "reason": "..."}, exit 0.
         """
         if decision != "block":
             return json.dumps({"decision": "allow"}), 0
@@ -64,7 +64,7 @@ class CursorFormat:
         elif reason:
             deny_reason = reason
         elif rule_id:
-            deny_reason = f"Denied by rule '{rule_id}'"
+            deny_reason = f"Blocked by rule '{rule_id}'"
 
         output = {
             "decision": "block",

@@ -4,12 +4,12 @@ kind: Ruleset
 metadata:
   name: coding-assistant-base
   description: >
-    Opinionated starting rules for coding assistant governance.
+    Opinionated starting rules for coding assistant runtime enforcement.
     Covers secret file access, destructive commands, git safety,
     system modifications, and package installations.
     Customize to fit your workflow — this file is yours.
 
-# Observe mode logs what WOULD be denied without blocking anything.
+# Observe mode logs what WOULD be blocked without blocking anything.
 # Switch to 'enforce' when you're confident in your rule set.
 defaults:
   mode: observe
@@ -63,7 +63,7 @@ rules:
           - '\.pypirc$'
     then:
       action: block
-      message: "Denied: this file may contain secrets"
+      message: "Blocked: this file may contain secrets"
       tags: [security, secrets]
 
   - id: block-secret-file-writes
@@ -86,7 +86,7 @@ rules:
           - '\.pypirc$'
     then:
       action: block
-      message: "Denied: this file may contain secrets"
+      message: "Blocked: this file may contain secrets"
       tags: [security, secrets]
 
   - id: block-secret-file-edits
@@ -109,7 +109,7 @@ rules:
           - '\.pypirc$'
     then:
       action: block
-      message: "Denied: this file may contain secrets"
+      message: "Blocked: this file may contain secrets"
       tags: [security, secrets]
 
   - id: block-env-dump-commands
@@ -124,7 +124,7 @@ rules:
           - 'export\s+-p'
     then:
       action: block
-      message: "Denied: environment variable access is restricted"
+      message: "Blocked: environment variable access is restricted"
       tags: [security, secrets]
 
   # -- Destructive Command Protection ------------------------------------------
@@ -143,7 +143,7 @@ rules:
           - ':(){.*};:'
     then:
       action: block
-      message: "Denied: destructive command"
+      message: "Blocked: destructive command"
       tags: [security, destructive]
 
   # -- Git Safety ---------------------------------------------------------------
@@ -161,7 +161,7 @@ rules:
           - 'git\s+branch\s+-D'
     then:
       action: block
-      message: "Denied: destructive git operation"
+      message: "Blocked: destructive git operation"
       tags: [git, destructive]
 
   # -- Scope Enforcement --------------------------------------------------------
@@ -185,7 +185,7 @@ rules:
           - '/usr/local/bin/'
     then:
       action: block
-      message: "Denied: system modification"
+      message: "Blocked: system modification"
       tags: [security, system]
 
   # -- Package Install Protection -----------------------------------------------
@@ -204,7 +204,7 @@ rules:
           - 'go\s+install\b'
     then:
       action: block
-      message: "Denied: package installation"
+      message: "Blocked: package installation"
       tags: [audit, packages]
 
   # -- Gate Self-Protection ----------------------------------------------------
@@ -226,7 +226,7 @@ rules:
     then:
       action: block
       message: >-
-        Denied: this is a Gate infrastructure file. Gate configuration is
+        Blocked: this is a Gate infrastructure file. Gate configuration is
         managed by humans, not by the governed assistant. Tell the human
         what needs to change and they will update it in their terminal.
       tags: [security, gate-protection]
@@ -245,7 +245,7 @@ rules:
     then:
       action: block
       message: >-
-        Denied: this is a Gate infrastructure file. Gate configuration is
+        Blocked: this is a Gate infrastructure file. Gate configuration is
         managed by humans, not by the governed assistant. Tell the human
         what needs to change and they will update it in their terminal.
       tags: [security, gate-protection]
@@ -264,7 +264,7 @@ rules:
     then:
       action: block
       message: >-
-        Denied: this is a Gate infrastructure file. Gate configuration is
+        Blocked: this is a Gate infrastructure file. Gate configuration is
         managed by humans, not by the governed assistant. Tell the human
         what needs to change and they will update it in their terminal.
       tags: [security, gate-protection]
@@ -283,7 +283,7 @@ rules:
     then:
       action: block
       message: >-
-        Denied: Gate infrastructure cannot be modified by the assistant.
+        Blocked: Gate infrastructure cannot be modified by the assistant.
         Gate configuration is managed by humans in a terminal. Tell the
         human what command to run and they will execute it themselves.
       tags: [security, gate-protection]

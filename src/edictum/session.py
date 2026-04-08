@@ -43,7 +43,7 @@ class Session:
     All methods are ASYNC because StorageBackend is async.
 
     Counter semantics:
-    - attempt_count: every PreToolUse, including denied (pre-execution)
+    - attempt_count: every PreToolUse, including blocked pre-execution calls
     - execution_count: every PostToolUse (tool actually ran)
     - per_tool_exec_count:{tool}: per-tool execution count
     - consecutive_failures: resets on success, increments on failure
@@ -62,7 +62,7 @@ class Session:
         return f"s:{self._sid}:{suffix}"
 
     async def increment_attempts(self) -> int:
-        """Increment attempt counter. Called in PreToolUse (before governance)."""
+        """Increment attempt counter. Called in PreToolUse before rule evaluation."""
         return int(await self._backend.increment(self._key("attempts")))
 
     async def attempt_count(self) -> int:

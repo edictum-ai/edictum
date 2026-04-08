@@ -71,7 +71,7 @@ async def _from_server(
         approval_backend: Override the default ``ServerApprovalBackend``.
         storage_backend: Override the default ``ServerBackend``.
         mode: Enforcement mode (``"enforce"`` or ``"observe"``).
-        on_block: Callback invoked when a tool call is denied.
+        on_block: Callback invoked when a tool call is blocked.
         on_allow: Callback invoked when a tool call is allowed.
         success_check: Callable ``(tool_name, result) -> bool``.
         principal: Static principal for all tool calls.
@@ -362,7 +362,7 @@ async def _close(self: Edictum) -> None:
     """
     await _stop_sse_watcher(self)
 
-    # Flush audit sink if it supports close()
+    # Flush the log destination if it supports close()
     sink_close = getattr(self.audit_sink, "close", None)
     if sink_close is not None:
         result = sink_close()

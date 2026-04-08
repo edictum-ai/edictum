@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 class CrewAIAdapter:
     """Translate Edictum pipeline decisions into CrewAI hook format.
 
-    The adapter does NOT contain governance logic -- that lives in
+    The adapter does NOT contain rule logic -- that lives in
     CheckPipeline. The adapter only:
     1. Creates envelopes from CrewAI hook context
     2. Manages pending state (envelope + span) between before/after hooks
@@ -186,7 +186,7 @@ class CrewAIAdapter:
         )
         self._call_index += 1
 
-        # Increment attempts BEFORE governance
+        # Increment attempts before rule evaluation
         await self._session.increment_attempts()
 
         # Start OTel span

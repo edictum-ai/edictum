@@ -17,7 +17,7 @@ MAX_EXEC_REAP_TIMEOUT_SECONDS = 5.0
 class ExecEvaluator:
     """Run trusted exec(...) workflow gate conditions.
 
-    Subprocess stdout is copied into workflow evidence and may reach audit sinks.
+    Subprocess stdout is copied into workflow evidence and may reach decision-log destinations.
     Callers should only enable this evaluator for commands whose output is safe to retain.
     """
 

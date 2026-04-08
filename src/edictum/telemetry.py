@@ -35,7 +35,7 @@ class _NoOpSpan:
 
 
 class GovernanceTelemetry:
-    """OTel integration. No-op if opentelemetry not installed.
+    """OTel integration for rule evaluation. No-op if opentelemetry not installed.
 
     Install: pip install edictum[otel]
     """
@@ -53,8 +53,8 @@ class GovernanceTelemetry:
         if not self._meter:
             return
         self._denied_counter = self._meter.create_counter(
-            "edictum.calls.denied",
-            description="Number of denied tool calls",
+            "edictum.calls.blocked",
+            description="Number of blocked tool calls",
         )
         self._allowed_counter = self._meter.create_counter(
             "edictum.calls.allowed",

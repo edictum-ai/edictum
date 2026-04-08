@@ -1,4 +1,4 @@
-"""Google ADK adapter -- plugin and agent callback integration for tool governance."""
+"""Google ADK adapter -- plugin and agent callback integration for tool-call rules."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 class GoogleADKAdapter:
     """Translate Edictum pipeline decisions into Google ADK plugin/callback format.
 
-    The adapter does NOT contain governance logic -- that lives in
+    The adapter does NOT contain rule logic -- that lives in
     CheckPipeline. The adapter only:
     1. Creates envelopes from ADK tool callback data
     2. Manages pending state (envelope + span) between before/after
@@ -36,11 +36,11 @@ class GoogleADKAdapter:
     Two integration paths:
 
     - ``as_plugin()`` returns a BasePlugin for Runner(plugins=[...]).
-      Applies governance globally to ALL agents/tools. Recommended path.
+      Applies rule evaluation globally to ALL agents/tools. Recommended path.
       Note: Plugins are NOT invoked in ADK's live/streaming mode.
 
     - ``as_agent_callbacks()`` returns (before_cb, after_cb, error_cb) for LlmAgent.
-      Use for per-agent scoping or live/streaming mode governance.
+      Use for per-agent scoping or live/streaming mode rule evaluation.
     """
 
     def __init__(
@@ -110,7 +110,7 @@ class GoogleADKAdapter:
         call_id: str,
         tool_context: Any = None,
     ) -> dict | None:
-        """Run pre-execution governance. Returns denial dict or None to allow.
+        """Run pre-execution rule evaluation. Returns a denial dict or None to allow.
 
         Exposed for direct testing without framework imports.
         """
@@ -142,7 +142,7 @@ class GoogleADKAdapter:
         )
         self._call_index += 1
 
-        # Increment attempts BEFORE governance
+        # Increment attempts before rule evaluation
         await self._session.increment_attempts()
 
         # Start OTel span — invariant: span is ALWAYS ended.
@@ -236,7 +236,7 @@ class GoogleADKAdapter:
             raise
 
     async def _post(self, call_id: str, tool_response: Any = None) -> PostCallResult:
-        """Run post-execution governance. Returns PostCallResult with violations.
+        """Run post-execution rule evaluation. Returns PostCallResult with violations.
 
         Exposed for direct testing without framework imports.
         """
@@ -560,7 +560,7 @@ class GoogleADKAdapter:
     ) -> Any:
         """Return a Plugin for Runner(plugins=[...]).
 
-        The plugin applies governance to ALL tools across ALL agents
+        The plugin applies rule evaluation to ALL tools across ALL agents
         managed by the runner. This is the recommended integration path.
 
         Args:
@@ -570,7 +570,7 @@ class GoogleADKAdapter:
 
         Note:
             Plugins are NOT invoked in ADK's live/streaming mode.
-            Use as_agent_callbacks() if live mode governance is needed.
+            Use as_agent_callbacks() if live mode rule evaluation is needed.
         """
         from google.adk.plugins.base_plugin import BasePlugin
 
@@ -626,7 +626,7 @@ class GoogleADKAdapter:
         """Return (before_tool_callback, after_tool_callback, error_tool_callback) for LlmAgent.
 
         Use this for per-agent scoping or when live/streaming mode
-        governance is needed (plugins don't run in live mode).
+        rule evaluation is needed (plugins don't run in live mode).
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions

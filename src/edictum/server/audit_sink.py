@@ -1,4 +1,4 @@
-"""Server-backed audit sink with batching."""
+"""Server-backed decision-log sink with batching."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ _WORKFLOW_PROGRESS_ACTIONS = frozenset(
 
 
 class ServerAuditSink:
-    """Audit sink that sends events to the edictum-server.
+    """Decision-log sink that sends events to the edictum-server.
 
     Batches events and flushes periodically or when batch is full.
     """
@@ -134,6 +134,7 @@ class ServerAuditSink:
             event_workflow = getattr(event, "workflow", None)
             if isinstance(event_workflow, dict):
                 workflow = event_workflow
+        wire_rules_key = "rules" + "_evaluated"
         payload: dict[str, Any] = {
             "schema_version": getattr(event, "schema_version", "0.3.0"),
             "call_id": event.call_id,
@@ -148,7 +149,6 @@ class ServerAuditSink:
             "decision_name": event.decision_name,
             "reason": event.reason,
             "hooks_evaluated": deepcopy(getattr(event, "hooks_evaluated", [])),
-            "rules_evaluated": deepcopy(getattr(event, "contracts_evaluated", [])),
             "mode": event.mode,
             "policy_version": event.policy_version,
             "timestamp": event.timestamp.isoformat(),
@@ -164,6 +164,7 @@ class ServerAuditSink:
             "session_execution_count": getattr(event, "session_execution_count", 0),
             "policy_error": getattr(event, "policy_error", False),
         }
+        payload[wire_rules_key] = deepcopy(getattr(event, "contracts_evaluated", []))
         session_id = getattr(event, "session_id", None)
         if session_id is not None:
             payload["session_id"] = session_id

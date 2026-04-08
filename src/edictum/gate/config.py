@@ -102,7 +102,7 @@ def load_gate_config(path: Path | None = None) -> GateConfig:
 
 def _parse_config(raw: dict[str, Any]) -> GateConfig:
     """Parse a raw config dict into a GateConfig."""
-    # Contracts
+    # Rules
     contracts_raw = raw.get("rules", [])
     if not contracts_raw:
         contracts_raw = [str(DEFAULT_GATE_DIR / "rules" / "base.yaml")]

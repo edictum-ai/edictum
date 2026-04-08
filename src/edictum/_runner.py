@@ -1,4 +1,4 @@
-"""Execution logic for Edictum.run() — governance pipeline with tool execution."""
+"""Execution logic for Edictum.run() — rule pipeline with tool execution."""
 
 from __future__ import annotations
 
@@ -412,7 +412,7 @@ def _parent_session_id(envelope) -> str | None:
 
 
 def _emit_otel_governance_span(self: Edictum, audit_event: AuditEvent) -> None:
-    """Emit an OTel span with governance attributes from an AuditEvent."""
+    """Emit an OTel span with rule-evaluation attributes from an AuditEvent."""
     if not has_otel():
         return
 

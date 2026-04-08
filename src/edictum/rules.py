@@ -1,4 +1,4 @@
-"""Pre/Post Conditions — rule decorators for tool governance."""
+"""Rule decorators for tool-call behavior."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def postcondition(tool: str, when: Callable | None = None):
 
 
 def session_contract(func: Callable) -> Callable:
-    """Cross-turn governance using persisted atomic counters.
+    """Cross-turn rules using persisted atomic counters.
 
     The decorated function **must** accept a ``session`` parameter —
     the pipeline calls ``rule(session)`` at evaluation time.

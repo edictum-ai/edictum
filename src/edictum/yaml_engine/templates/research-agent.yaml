@@ -3,7 +3,7 @@ kind: Ruleset
 
 metadata:
   name: research-agent
-  description: "Contracts for research agents. Rate limits and output caps."
+  description: "Rules for research agents. Rate limits and output caps."
 
 defaults:
   mode: enforce
@@ -17,7 +17,7 @@ rules:
         contains_any: [".env", ".secret", "credentials"]
     then:
       action: block
-      message: "Sensitive file '{args.path}' denied."
+      message: "Sensitive file '{args.path}' blocked."
       tags: [secrets]
 
   - id: pii-in-output

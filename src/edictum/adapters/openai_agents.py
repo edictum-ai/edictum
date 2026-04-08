@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 class OpenAIAgentsAdapter:
     """Translate Edictum pipeline decisions into OpenAI Agents SDK guardrail format.
 
-    The adapter does NOT contain governance logic -- that lives in
+    The adapter does NOT contain rule logic -- that lives in
     CheckPipeline. The adapter only:
     1. Creates envelopes from SDK guardrail data
     2. Manages pending state (envelope + span) between input/output guardrails
@@ -169,7 +169,7 @@ class OpenAIAgentsAdapter:
         return input_gr, output_gr
 
     async def _pre(self, tool_name: str, tool_input: dict, call_id: str) -> str | None:
-        """Run pre-execution governance. Returns denial reason string or None to allow.
+        """Run pre-execution rule evaluation. Returns a denial reason string or None to allow.
 
         Exposed for direct testing without framework imports.
         """
@@ -185,7 +185,7 @@ class OpenAIAgentsAdapter:
         )
         self._call_index += 1
 
-        # Increment attempts BEFORE governance
+        # Increment attempts before rule evaluation
         await self._session.increment_attempts()
 
         # Start OTel span
@@ -273,7 +273,7 @@ class OpenAIAgentsAdapter:
             raise
 
     async def _post(self, call_id: str, tool_response: Any = None) -> PostCallResult:
-        """Run post-execution governance. Returns PostCallResult with violations.
+        """Run post-execution rule evaluation. Returns PostCallResult with violations.
 
         Exposed for direct testing without framework imports.
         """

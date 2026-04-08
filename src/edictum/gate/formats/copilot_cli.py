@@ -12,7 +12,7 @@ NOTE: toolArgs is a JSON *string*, not an object. Must be parsed with json.loads
 
 Copilot CLI output schema:
   Allow: omit output or empty JSON, exit 0.
-  Deny: {"permissionDecision": "block", "permissionDecisionReason": "..."}, exit 0.
+  Block: {"permissionDecision": "block", "permissionDecisionReason": "..."}, exit 0.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ class CopilotCliFormat:
         """Format decision for Copilot CLI.
 
         Allow: empty JSON, exit 0.
-        Deny: {"permissionDecision": "block", "permissionDecisionReason": "..."}, exit 0.
+        Block: {"permissionDecision": "block", "permissionDecisionReason": "..."}, exit 0.
         """
         if decision != "block":
             return json.dumps({}), 0
@@ -73,7 +73,7 @@ class CopilotCliFormat:
         elif reason:
             deny_reason = reason
         elif rule_id:
-            deny_reason = f"Denied by rule '{rule_id}'"
+            deny_reason = f"Blocked by rule '{rule_id}'"
 
         output = {
             "permissionDecision": "block",

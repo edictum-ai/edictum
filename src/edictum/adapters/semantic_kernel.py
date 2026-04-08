@@ -1,4 +1,4 @@
-"""Semantic Kernel adapter — kernel filter for tool call governance."""
+"""Semantic Kernel adapter — kernel filter for tool-call rules."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 class SemanticKernelAdapter:
     """Translate Edictum pipeline decisions into Semantic Kernel filter format.
 
-    The adapter does NOT contain governance logic -- that lives in
+    The adapter does NOT contain rule logic -- that lives in
     CheckPipeline. The adapter only:
     1. Creates envelopes from SK AutoFunctionInvocationContext
     2. Manages pending state (envelope + span) between pre/post
@@ -146,7 +146,7 @@ class SemanticKernelAdapter:
                     logger.exception("on_postcondition_warn callback raised")
 
     async def _pre(self, tool_name: str, tool_input: dict, call_id: str) -> dict | str:
-        """Pre-execution governance. Returns {} to allow or denial string to deny."""
+        """Pre-execution rule evaluation. Returns {} to allow or a denial string to block."""
         envelope = create_envelope(
             tool_name=tool_name,
             tool_input=tool_input,
@@ -243,7 +243,7 @@ class SemanticKernelAdapter:
             raise
 
     async def _post(self, call_id: str, tool_response: Any = None) -> PostCallResult:
-        """Post-execution governance. Returns PostCallResult with violations."""
+        """Post-execution rule evaluation. Returns PostCallResult with violations."""
         pending = self._pending.pop(call_id, None)
         if not pending:
             return PostCallResult(result=tool_response)

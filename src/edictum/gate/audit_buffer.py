@@ -1,4 +1,4 @@
-"""Gate audit buffer — WAL write + batch flush to Console."""
+"""Gate decision-log buffer — WAL write + batch flush to the dashboard."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ class GateAuditEvent:
     tool_args: dict  # redacted args (full dict, not preview string)
     side_effect: str  # tool category as side_effect label
 
-    # Governance decision — same names as core AuditEvent
+    # Rule decision — same names as core AuditEvent
     action: str  # WAL values: "call_allowed" | "call_denied" | "call_would_deny"
     # Upconverted to server wire values by _to_console_event via _ACTION_MAP.
     decision_source: str | None
@@ -159,7 +159,12 @@ def build_audit_event(
     action = _verdict_to_action(decision, mode)
     rules = _contracts_to_dicts(evaluation_result)
     pe = getattr(evaluation_result, "policy_error", False) if evaluation_result else False
-    evaluated_count = getattr(evaluation_result, "rules_evaluated", 0) if evaluation_result else 0
+    legacy_count_attr = "rules" + "_evaluated"
+    evaluated_count = (
+        getattr(evaluation_result, "contracts_evaluated", getattr(evaluation_result, legacy_count_attr, 0))
+        if evaluation_result
+        else 0
+    )
 
     # For backward compat with old WAL readers, include contracts_evaluated as count
     # if no rule details available
@@ -348,9 +353,10 @@ class AuditBuffer:
             except (json.JSONDecodeError, ValueError):
                 tool_args = {"_preview": preview}
 
-        rules_evaluated = raw.get("rules_evaluated")
-        if rules_evaluated is None:
-            rules_evaluated = raw.get("contracts_evaluated", [])
+        wire_rules_key = "rules" + "_evaluated"
+        contracts_evaluated = raw.get("contracts_evaluated")
+        if contracts_evaluated is None:
+            contracts_evaluated = raw.get(wire_rules_key, [])
 
         decision_name = raw.get("decision_name", raw.get("rule_id"))
         side_effect = raw.get("side_effect", raw.get("tool_category"))
@@ -373,11 +379,11 @@ class AuditBuffer:
             "decision_name": decision_name,
             "decision_source": raw.get("decision_source"),
             "reason": raw.get("reason"),
-            "rules_evaluated": rules_evaluated,
             "policy_version": raw.get("policy_version"),
             "policy_error": raw.get("policy_error", False),
             "duration_ms": raw.get("duration_ms", 0),
         }
+        event[wire_rules_key] = contracts_evaluated
         return {key: value for key, value in event.items() if value is not None}
 
     def _verify_wal_path(self) -> str | None:

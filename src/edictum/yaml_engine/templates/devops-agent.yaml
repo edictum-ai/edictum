@@ -3,7 +3,7 @@ kind: Ruleset
 
 metadata:
   name: devops-agent
-  description: "Contracts for DevOps agents. Prod gates, ticket requirements, PII detection."
+  description: "Rules for DevOps agents. Production gates, ticket requirements, and PII detection."
 
 defaults:
   mode: enforce
@@ -17,7 +17,7 @@ rules:
         contains_any: [".env", ".secret", "kubeconfig", "credentials", ".pem", "id_rsa"]
     then:
       action: block
-      message: "Sensitive file '{args.path}' denied."
+      message: "Sensitive file '{args.path}' blocked."
       tags: [secrets, dlp]
 
   - id: block-destructive-bash
@@ -30,7 +30,7 @@ rules:
         - args.command: { contains: '> /dev/' }
     then:
       action: block
-      message: "Destructive command denied: '{args.command}'."
+      message: "Destructive command blocked: '{args.command}'."
       tags: [destructive, safety]
 
   - id: prod-deploy-requires-senior

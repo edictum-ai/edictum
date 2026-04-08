@@ -1,4 +1,4 @@
-"""LangChain adapter — wrap-around middleware for tool call governance."""
+"""LangChain adapter — wrap-around middleware for tool-call rules."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 class LangChainAdapter:
     """Translate Edictum pipeline decisions into LangChain middleware format.
 
-    The adapter does NOT contain governance logic -- that lives in
+    The adapter does NOT contain rule logic -- that lives in
     CheckPipeline. The adapter only:
     1. Creates envelopes from LangChain ToolCallRequest
     2. Manages pending state (envelope + span) between pre/post
@@ -213,7 +213,7 @@ class LangChainAdapter:
         return wrapper
 
     async def _pre_tool_call(self, request: Any) -> Any | None:
-        """Run pre-execution governance. Returns denial ToolMessage or None to allow."""
+        """Run pre-execution rule evaluation. Returns a block ToolMessage or None to allow."""
         tool_name = request.tool_call["name"]
         tool_args = request.tool_call["args"]
         tool_call_id = request.tool_call["id"]
@@ -313,7 +313,7 @@ class LangChainAdapter:
             raise
 
     async def _post_tool_call(self, request: Any, result: Any) -> PostCallResult:
-        """Run post-execution governance. Returns PostCallResult with violations."""
+        """Run post-execution rule evaluation. Returns PostCallResult with violations."""
         tool_call_id = request.tool_call["id"]
         pending = self._pending.pop(tool_call_id, None)
         if not pending:

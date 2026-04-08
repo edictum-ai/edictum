@@ -1,4 +1,4 @@
-"""Nanobot adapter — governed ToolRegistry for multi-channel AI agents."""
+"""Nanobot adapter — ruled ToolRegistry for multi-channel AI agents."""
 
 from __future__ import annotations
 
@@ -23,9 +23,9 @@ if TYPE_CHECKING:
 
 
 class GovernedToolRegistry:
-    """Drop-in replacement for nanobot's ToolRegistry with edictum governance.
+    """Drop-in replacement for nanobot's ToolRegistry with Edictum rules.
 
-    Wraps every tool execution with pre/post governance checks.
+    Wraps every tool execution with pre/post rule checks.
     Used by swapping into AgentLoop.__init__().
     """
 
@@ -84,7 +84,7 @@ class GovernedToolRegistry:
         return str(self._inner.get_description(name))
 
     async def execute(self, name: str, args: dict) -> str:
-        """Execute a tool with governance wrapping.
+        """Execute a tool with rule wrapping.
 
         Returns a string result. Blocks reuse the adapter's existing marker
         so the LLM can see the reason and adjust.
@@ -176,7 +176,7 @@ class GovernedToolRegistry:
             # Execute the tool via inner registry
             result = await self._inner.execute(name, args)
 
-            # Post-execution governance
+            # Post-execution rule evaluation
             tool_success = self._check_tool_success(name, result)
             post_decision = await self._pipeline.post_execute(envelope, result, tool_success)
 
@@ -411,7 +411,7 @@ class GovernedToolRegistry:
         """Create a child GovernedToolRegistry for a sub-agent.
 
         Shares the same guard and inner registry but gets its own session.
-        Used by SubagentManager to propagate governance to child agents.
+        Used by SubagentManager to propagate rule evaluation to child agents.
         """
         child = GovernedToolRegistry(
             inner=self._inner,
@@ -425,7 +425,7 @@ class GovernedToolRegistry:
 
 
 class NanobotAdapter:
-    """Adapter for integrating edictum governance with nanobot agents.
+    """Adapter for integrating Edictum rules with nanobot agents.
 
     Usage::
 
@@ -448,7 +448,7 @@ class NanobotAdapter:
         self._principal_resolver = principal_resolver
 
     def wrap_registry(self, registry: Any) -> GovernedToolRegistry:
-        """Wrap a nanobot ToolRegistry with governance.
+        """Wrap a nanobot ToolRegistry with rule evaluation.
 
         Returns a GovernedToolRegistry that can be used as a drop-in
         replacement for the original.
