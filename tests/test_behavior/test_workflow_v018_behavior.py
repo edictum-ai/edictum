@@ -160,9 +160,7 @@ stages:
       - condition: stage_complete("implement")
     terminal: true
 """)
-    session = await _session_with_state(
-        rt, session_id="s1", active_stage="done", completed_stages=["implement"]
-    )
+    session = await _session_with_state(rt, session_id="s1", active_stage="done", completed_stages=["implement"])
 
     for tool in ("Edit", "Read", "Bash"):
         result = await rt.evaluate(session, _envelope(tool, path="x"))
@@ -189,9 +187,7 @@ stages:
         message: "Run pytest"
     terminal: true
 """)
-    session = await _session_with_state(
-        rt, session_id="s1", active_stage="verify", completed_stages=["implement"]
-    )
+    session = await _session_with_state(rt, session_id="s1", active_stage="verify", completed_stages=["implement"])
     result = await rt.evaluate(session, _envelope("Bash", command="pytest"))
     assert result.action == "allow"
 
@@ -277,9 +273,7 @@ stages:
         message: "Run pytest"
     terminal: true
 """)
-    session = await _session_with_state(
-        rt, session_id="s1", active_stage="verify", completed_stages=["implement"]
-    )
+    session = await _session_with_state(rt, session_id="s1", active_stage="verify", completed_stages=["implement"])
     envelope = _envelope("Bash", command="pytest")
     result = await rt.evaluate(session, envelope)
     assert result.action == "allow"
@@ -314,9 +308,7 @@ stages:
     result = await rt.evaluate(session, envelope)
     assert result.action == "allow"
 
-    await rt.record_result(
-        session, result.stage_id, envelope, mcp_result={"outcome": "passing", "run_id": "42"}
-    )
+    await rt.record_result(session, result.stage_id, envelope, mcp_result={"outcome": "passing", "run_id": "42"})
 
     state = await rt.state(session)
     assert "mcp__ci__status" in state.evidence.mcp_results
@@ -366,12 +358,8 @@ stages:
       - condition: stage_complete("check-ci")
     tools: ["mcp__deploy__*"]
 """)
-    evidence = WorkflowEvidence(
-        mcp_results={"mcp__ci__status": [{"outcome": "passing", "branch": "main"}]}
-    )
-    session = await _session_with_state(
-        rt, session_id="s1", active_stage="check-ci", evidence=evidence
-    )
+    evidence = WorkflowEvidence(mcp_results={"mcp__ci__status": [{"outcome": "passing", "branch": "main"}]})
+    session = await _session_with_state(rt, session_id="s1", active_stage="check-ci", evidence=evidence)
 
     result = await rt.evaluate(session, _envelope("mcp__deploy__trigger", env="prod"))
     assert result.action == "allow"
@@ -399,12 +387,8 @@ stages:
       - condition: stage_complete("check-ci")
     tools: ["mcp__deploy__*"]
 """)
-    evidence = WorkflowEvidence(
-        mcp_results={"mcp__ci__status": [{"outcome": "failing", "branch": "main"}]}
-    )
-    session = await _session_with_state(
-        rt, session_id="s1", active_stage="check-ci", evidence=evidence
-    )
+    evidence = WorkflowEvidence(mcp_results={"mcp__ci__status": [{"outcome": "failing", "branch": "main"}]})
+    session = await _session_with_state(rt, session_id="s1", active_stage="check-ci", evidence=evidence)
 
     result = await rt.evaluate(session, _envelope("mcp__deploy__trigger", env="prod"))
     assert result.action == "block"

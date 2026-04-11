@@ -277,7 +277,7 @@ def _stage_has_wildcard_tools(stage: WorkflowStage) -> bool:
 
 
 def _terminal_complete_block(runtime: WorkflowRuntime, stage: WorkflowStage) -> WorkflowEvaluation:
-    reason = "Workflow is complete — no further tool calls are accepted"
+    reason = "workflow complete — no further tool calls are accepted"
     audit = workflow_metadata(
         runtime.definition.metadata.name,
         stage.id,
