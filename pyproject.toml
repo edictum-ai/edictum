@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "edictum"
-version = "0.17.0"
+version = "0.18.0"
 description = "Runtime safety for AI agents. Stop agents before they break things."
 readme = "README.md"
 license = "MIT"

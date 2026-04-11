@@ -735,3 +735,37 @@ stages:
     # Deploy must be blocked: None → "" → str("") != "None" → gate unmet.
     result = await rt2.evaluate(session2, _envelope("Deploy"))
     assert result.action == "block"
+
+
+@pytest.mark.asyncio
+@pytest.mark.security
+async def test_mcp_result_matches_missing_key_does_not_coerce_to_none_string():
+    """A missing mcp_result field must not match a gate expecting the string 'None'.
+
+    result.get(field_name) returns None when the key is absent — without an
+    explicit field presence check, str(None) == "None" would allow an empty
+    dict {} to satisfy any gate checking for the literal "None", bypassing
+    the exit gate entirely.
+    """
+    wf_none_gate = """
+apiVersion: edictum/v1
+kind: Workflow
+metadata:
+  name: mcp-missing-key-wf
+stages:
+  - id: scan
+    tools: [mcp__scanner]
+    exit:
+      - condition: mcp_result_matches("mcp__scanner", "status", "None")
+        message: must not advance via missing-key coercion
+  - id: deploy
+    tools: [Deploy]
+"""
+    rt = _runtime(wf_none_gate)
+    session = Session("sec-missing-key", MemoryBackend())
+    envelope = _envelope("mcp__scanner")
+    # Record an empty dict — "status" key is absent.
+    await rt.record_result(session, "scan", envelope, mcp_result={})
+    # Deploy must be blocked: missing key must not match "None" gate.
+    result = await rt.evaluate(session, _envelope("Deploy"))
+    assert result.action == "block"

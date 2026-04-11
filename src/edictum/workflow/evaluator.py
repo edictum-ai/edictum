@@ -111,7 +111,7 @@ class McpResultMatchesEvaluator:
         tool, field_name, value = req.parsed.extra
         mcp_results = req.state.evidence.mcp_results
         results_for_tool = mcp_results.get(tool, [])
-        passed = any(str(result.get(field_name)) == value for result in results_for_tool)
+        passed = any(field_name in result and str(result[field_name]) == value for result in results_for_tool)
         return FactResult(
             passed=passed,
             evidence=tool,
