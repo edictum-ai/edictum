@@ -17,7 +17,6 @@ from edictum.storage import MemoryBackend
 from edictum.workflow import WorkflowEvidence, WorkflowRuntime, WorkflowState, load_workflow_string
 from edictum.workflow.state import save_state
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
