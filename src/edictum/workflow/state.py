@@ -119,7 +119,7 @@ def record_result(state: WorkflowState, stage_id: str, envelope: ToolCall, mcp_r
     if mcp_result is not None:
         existing = state.evidence.mcp_results.get(envelope.tool_name, [])
         state.evidence.mcp_results[envelope.tool_name] = _append_dict_capped(
-            existing, dict(mcp_result), MAX_WORKFLOW_EVIDENCE_ITEMS
+            existing, _coerce_mcp_result(mcp_result), MAX_WORKFLOW_EVIDENCE_ITEMS
         )
 
 
@@ -348,14 +348,22 @@ def _coerce_recorded_evidence(value: Any) -> dict[str, str] | None:
 
 
 def _coerce_mcp_result(value: Any) -> dict[str, Any]:
-    """Sanitize one MCP result dict loaded from persisted state.
+    """Sanitize one MCP result dict — applied both on ingest and on load.
 
     String values are passed through _safe_status_text to strip control
-    characters and enforce the length limit. Non-string values are kept as-is.
+    characters and enforce the length limit.  None is converted to the empty
+    string so that str(None) == "None" cannot produce a false positive in gate
+    evaluation.  All other non-string values are kept as-is.
     """
     if not isinstance(value, dict):
         return {}
-    return {
-        (k if isinstance(k, str) else str(k)): (_safe_status_text(v, "") if isinstance(v, str) else v)
-        for k, v in value.items()
-    }
+    result: dict[str, Any] = {}
+    for k, v in value.items():
+        key = k if isinstance(k, str) else str(k)
+        if isinstance(v, str):
+            result[key] = _safe_status_text(v, "")
+        elif v is None:
+            result[key] = ""
+        else:
+            result[key] = v
+    return result

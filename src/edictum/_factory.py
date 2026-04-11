@@ -328,6 +328,8 @@ def _from_bundle_dict(
     approval_backend: ApprovalBackend | None = None,
     on_block: Callable[[ToolCall, str, str | None], None] | None = None,
     on_allow: Callable[[ToolCall], None] | None = None,
+    workflow_content: str | bytes | None = None,
+    workflow_exec_evaluator_enabled: bool = False,
 ) -> Edictum:
     """Create an Edictum instance from an already-parsed bundle dict."""
     from edictum.yaml_engine.compiler import compile_contracts
@@ -345,6 +347,10 @@ def _from_bundle_dict(
     _validate_pre_selectors(bundle)
     _validate_sandbox_contracts(bundle)
     compiled = compile_contracts(bundle)
+    workflow_runtime = _load_workflow_runtime(
+        workflow_content=workflow_content,
+        workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
+    )
     return _build_guard_from_compiled(
         cls,
         compiled,
@@ -362,7 +368,7 @@ def _from_bundle_dict(
         principal=principal,
         principal_resolver=None,
         approval_backend=approval_backend,
-        workflow_runtime=None,
+        workflow_runtime=workflow_runtime,
     )
 
 

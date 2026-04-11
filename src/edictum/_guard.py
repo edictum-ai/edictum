@@ -416,6 +416,8 @@ class Edictum:
         approval_backend: ApprovalBackend | None = None,
         on_block: Callable[[ToolCall, str, str | None], None] | None = None,
         on_allow: Callable[[ToolCall], None] | None = None,
+        workflow_content: str | bytes | None = None,
+        workflow_exec_evaluator_enabled: bool = False,
     ) -> Edictum:
         """Create an Edictum instance from an already-parsed bundle dict."""
         from edictum._factory import _from_bundle_dict
@@ -433,6 +435,8 @@ class Edictum:
             approval_backend=approval_backend,
             on_block=on_block,
             on_allow=on_allow,
+            workflow_content=workflow_content,
+            workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
         )
 
     @classmethod
