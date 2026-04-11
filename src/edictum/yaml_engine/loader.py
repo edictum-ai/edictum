@@ -197,6 +197,59 @@ def _load_data(raw_bytes: bytes) -> tuple[dict, BundleHash]:
     return normalized, bundle_hash
 
 
+_MAX_EXTENDS_DEPTH = 50
+
+
+def resolve_ruleset_extends(rulesets: dict[str, dict], name: str, *, _seen: frozenset[str] | None = None) -> dict:
+    """Resolve extends: inheritance for a named ruleset within a registry.
+
+    Merges parent rules before child rules. Child defaults override parent defaults.
+
+    Args:
+        rulesets: Mapping of ruleset names to raw ruleset dicts.
+        name: Name of the ruleset to resolve.
+
+    Returns:
+        Merged ruleset dict ready for compilation.
+
+    Raises:
+        KeyError: If a referenced ruleset is not in the registry.
+        ValueError: If a circular extends reference is detected or the chain
+            exceeds the maximum depth (_MAX_EXTENDS_DEPTH).
+    """
+    seen = _seen or frozenset()
+    if name in seen:
+        raise ValueError(f"extends: circular reference detected for ruleset '{name}'")
+    if len(seen) >= _MAX_EXTENDS_DEPTH:
+        raise ValueError(f"extends: inheritance chain exceeds maximum depth ({_MAX_EXTENDS_DEPTH})")
+    child = dict(rulesets[name])
+    parent_name = child.pop("extends", None)
+    if parent_name is None:
+        return child
+    parent = resolve_ruleset_extends(rulesets, str(parent_name), _seen=seen | {name})
+    return _merge_parent_bundle(parent, child)
+
+
+def _merge_parent_bundle(parent: dict, child: dict) -> dict:
+    """Merge parent bundle into child: parent rules first, child defaults win."""
+    merged = dict(parent)
+    # Child defaults override parent defaults
+    if "defaults" in child:
+        merged["defaults"] = child["defaults"]
+    # Child metadata overrides parent
+    if "metadata" in child:
+        merged["metadata"] = child["metadata"]
+    # Rules: parent first, then child
+    parent_rules = list(parent.get("rules", []))
+    child_rules = list(child.get("rules", []))
+    merged["rules"] = parent_rules + child_rules
+    # All other top-level fields: child wins
+    for key, value in child.items():
+        if key not in ("defaults", "metadata", "rules"):
+            merged[key] = value
+    return merged
+
+
 def load_bundle(source: str | Path) -> tuple[dict, BundleHash]:
     """Load and validate a YAML rules bundle.
 

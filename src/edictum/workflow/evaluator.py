@@ -15,6 +15,7 @@ MAX_WORKFLOW_REGEX_LENGTH = 10_000
 _SINGLE_STRING_ARG_RE = re.compile(r'^([a-z_]+)\("((?:[^"\\]|\\.)*)"\)$')
 _OPTIONAL_ARG_RE = re.compile(r'^approval\((?:"((?:[^"\\]|\\.)*)")?\)$')
 _EXEC_CONDITION_RE = re.compile(r'^exec\("((?:[^"\\]|\\.)*)"(?:,\s*exit_code=(\d+))?\)$')
+_MCP_RESULT_MATCHES_RE = re.compile(r'^mcp_result_matches\("([^"\\]+)",\s*"([^"\\]+)",\s*"([^"\\]+)"\)$')
 
 
 class FactEvaluator(Protocol):
@@ -32,6 +33,7 @@ class ParsedCondition:
     condition: str
     exit_code: int = 0
     regex: re.Pattern[str] | None = None
+    extra: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -104,6 +106,23 @@ class ApprovalEvaluator:
         )
 
 
+class McpResultMatchesEvaluator:
+    async def evaluate(self, req: EvaluateRequest) -> FactResult:
+        tool, field_name, value = req.parsed.extra
+        mcp_results = req.state.evidence.mcp_results
+        results_for_tool = mcp_results.get(tool, [])
+        passed = any(field_name in result and str(result[field_name]) == value for result in results_for_tool)
+        return FactResult(
+            passed=passed,
+            evidence=tool,
+            kind="mcp_result_matches",
+            condition=req.parsed.condition,
+            message=req.gate.message,
+            stage_id=req.stage.id,
+            workflow=req.definition.metadata.name,
+        )
+
+
 class CommandEvaluator:
     async def evaluate(self, req: EvaluateRequest) -> FactResult:
         parsed = req.parsed
@@ -169,6 +188,17 @@ def parse_condition(raw: str) -> ParsedCondition:
         arg = _unquote(match.group(1))
         exit_code = int(match.group(2) or "0")
         return ParsedCondition(kind="exec", arg=arg, exit_code=exit_code, condition=raw)
+    if raw.startswith("mcp_result_matches("):
+        match = _MCP_RESULT_MATCHES_RE.fullmatch(raw)
+        if match is None:
+            raise ValueError(f'workflow: unsupported mcp_result_matches condition "{raw}"')
+        tool, field_name, value = match.group(1), match.group(2), match.group(3)
+        return ParsedCondition(
+            kind="mcp_result_matches",
+            arg=tool,
+            extra=(tool, field_name, value),
+            condition=raw,
+        )
     raise ValueError(f'workflow: unsupported condition "{raw}"')
 
 

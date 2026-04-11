@@ -40,6 +40,17 @@ async def evaluate_runtime_state(
         if stage is None:
             raise ValueError(f'workflow: active stage "{state.active_stage}" not found')
 
+        if stage.terminal:
+            if not stage.exit:
+                complete_block = _terminal_complete_block(runtime, stage)
+                complete_block.events.extend(events)
+                return complete_block, changed
+            _, exit_blocked = await evaluate_gates(runtime, stage, state, envelope, stage.exit)
+            if not exit_blocked:
+                complete_block = _terminal_complete_block(runtime, stage)
+                complete_block.events.extend(events)
+                return complete_block, changed
+
         allowed, allowed_eval, invalid_eval = runtime.evaluate_current_stage(stage, envelope)
         if allowed:
             allowed_eval.events.extend(events)
@@ -144,6 +155,10 @@ async def evaluate_completion(
         return failure, False
     if stage.exit or stage.approval is not None:
         return WorkflowEvaluation(), True
+    if next_stage.terminal:
+        return WorkflowEvaluation(), True
+    if _stage_has_wildcard_tools(stage):
+        return WorkflowEvaluation(), False
     next_stage_eval, _ = await evaluate_runtime_state(runtime, next_state, envelope)
     if next_stage_eval.action == "block":
         return WorkflowEvaluation(), False
@@ -254,6 +269,45 @@ def workflow_metadata(
     if extra:
         metadata.update(extra)
     return metadata
+
+
+def _stage_has_wildcard_tools(stage: WorkflowStage) -> bool:
+    """Return True if any tool pattern in the stage uses fnmatch wildcards."""
+    return any("*" in pat or "?" in pat or "[" in pat for pat in stage.tools)
+
+
+def _terminal_complete_block(runtime: WorkflowRuntime, stage: WorkflowStage) -> WorkflowEvaluation:
+    reason = "workflow complete — no further tool calls are accepted"
+    audit = workflow_metadata(
+        runtime.definition.metadata.name,
+        stage.id,
+        "terminal",
+        "terminal",
+        False,
+        "",
+        None,
+    )
+    record = {
+        "name": f"{runtime.definition.metadata.name}:{stage.id}:terminal",
+        "type": "workflow_gate",
+        "passed": False,
+        "message": reason,
+        "metadata": {
+            "workflow_name": runtime.definition.metadata.name,
+            "stage_id": stage.id,
+            "gate_kind": "terminal",
+            "gate_condition": "terminal",
+            "gate_passed": False,
+            "gate_evidence": "",
+        },
+    }
+    return WorkflowEvaluation(
+        action="block",
+        reason=reason,
+        stage_id=stage.id,
+        records=[record],
+        audit=audit,
+    )
 
 
 def clone_state(state: WorkflowState) -> WorkflowState:

@@ -43,6 +43,7 @@ async def load_state(session: Session, definition) -> WorkflowState:
         raise ValueError(f"workflow: decode persisted state: {exc}") from exc
 
     evidence_data = data.get("evidence") or {}
+    mcp_raw = evidence_data.get("mcp_results") or {}
     state = WorkflowState(
         session_id=session.session_id,
         active_stage=data.get("active_stage", ""),
@@ -51,6 +52,7 @@ async def load_state(session: Session, definition) -> WorkflowState:
         evidence=WorkflowEvidence(
             reads=list(evidence_data.get("reads") or []),
             stage_calls={key: list(value) for key, value in (evidence_data.get("stage_calls") or {}).items()},
+            mcp_results={k: [_coerce_mcp_result(r) for r in v] for k, v in mcp_raw.items() if isinstance(v, list)},
         ),
         blocked_reason=data.get("blocked_reason"),
         pending_approval=_coerce_pending_approval(data.get("pending_approval")),
@@ -76,6 +78,7 @@ async def save_state(session: Session, definition, state: WorkflowState) -> None
                 "evidence": {
                     "reads": state.evidence.reads,
                     "stage_calls": state.evidence.stage_calls,
+                    "mcp_results": state.evidence.mcp_results,
                 },
                 "blocked_reason": state.blocked_reason,
                 "pending_approval": state.pending_approval,
@@ -94,7 +97,7 @@ def record_approval(state: WorkflowState, stage_id: str) -> None:
     clear_runtime_status(state)
 
 
-def record_result(state: WorkflowState, stage_id: str, envelope: ToolCall) -> None:
+def record_result(state: WorkflowState, stage_id: str, envelope: ToolCall, mcp_result: dict | None = None) -> None:
     state.ensure_defaults()
     recorded_evidence_fields = build_last_recorded_evidence_fields(envelope)
     if _recorded_evidence_changed(state.last_recorded_evidence, recorded_evidence_fields):
@@ -112,6 +115,11 @@ def record_result(state: WorkflowState, stage_id: str, envelope: ToolCall) -> No
             calls,
             _validate_evidence_string(envelope.bash_command),
             MAX_WORKFLOW_EVIDENCE_ITEMS,
+        )
+    if mcp_result is not None:
+        existing = state.evidence.mcp_results.get(envelope.tool_name, [])
+        state.evidence.mcp_results[envelope.tool_name] = _append_dict_capped(
+            existing, _coerce_mcp_result(mcp_result), MAX_WORKFLOW_EVIDENCE_ITEMS
         )
 
 
@@ -270,6 +278,12 @@ def _append_capped(items: list[str], item: str, limit: int) -> list[str]:
     return [*items, item]
 
 
+def _append_dict_capped(items: list[dict], item: dict, limit: int) -> list[dict]:
+    if len(items) >= limit:
+        return items
+    return [*items, item]
+
+
 def _validate_evidence_string(value: str) -> str:
     if len(value) > MAX_WORKFLOW_EVIDENCE_LENGTH:
         raise ValueError(f"workflow: evidence string too long ({len(value)} chars)")
@@ -331,3 +345,25 @@ def _coerce_recorded_evidence(value: Any) -> dict[str, str] | None:
         "summary": safe_summary,
         "timestamp": safe_timestamp,
     }
+
+
+def _coerce_mcp_result(value: Any) -> dict[str, Any]:
+    """Sanitize one MCP result dict — applied both on ingest and on load.
+
+    String values are passed through _safe_status_text to strip control
+    characters and enforce the length limit.  None is converted to the empty
+    string so that str(None) == "None" cannot produce a false positive in gate
+    evaluation.  All other non-string values are kept as-is.
+    """
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for k, v in value.items():
+        key = k if isinstance(k, str) else str(k)
+        if isinstance(v, str):
+            result[key] = _safe_status_text(v, "")
+        elif v is None:
+            result[key] = ""
+        else:
+            result[key] = v
+    return result

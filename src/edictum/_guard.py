@@ -402,6 +402,44 @@ class Edictum:
         )
 
     @classmethod
+    def from_bundle_dict(
+        cls,
+        bundle: dict,
+        policy_version: str,
+        *,
+        mode: str | None = None,
+        audit_sink: AuditSink | list[AuditSink] | None = None,
+        redaction: RedactionPolicy | None = None,
+        backend: StorageBackend | None = None,
+        environment: str = "production",
+        principal: Principal | None = None,
+        approval_backend: ApprovalBackend | None = None,
+        on_block: Callable[[ToolCall, str, str | None], None] | None = None,
+        on_allow: Callable[[ToolCall], None] | None = None,
+        workflow_content: str | bytes | None = None,
+        workflow_exec_evaluator_enabled: bool = False,
+    ) -> Edictum:
+        """Create an Edictum instance from an already-parsed bundle dict."""
+        from edictum._factory import _from_bundle_dict
+
+        return _from_bundle_dict(
+            cls,
+            bundle,
+            policy_version,
+            mode=mode,
+            audit_sink=audit_sink,
+            redaction=redaction,
+            backend=backend,
+            environment=environment,
+            principal=principal,
+            approval_backend=approval_backend,
+            on_block=on_block,
+            on_allow=on_allow,
+            workflow_content=workflow_content,
+            workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
+        )
+
+    @classmethod
     def from_yaml_string(
         cls,
         content: str | bytes,

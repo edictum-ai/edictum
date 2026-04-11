@@ -314,6 +314,69 @@ def _from_yaml_string(
     )
 
 
+def _from_bundle_dict(
+    cls: type[Edictum],
+    bundle: dict,
+    policy_version: str,
+    *,
+    mode: str | None = None,
+    audit_sink: AuditSink | list[AuditSink] | None = None,
+    redaction: RedactionPolicy | None = None,
+    backend: StorageBackend | None = None,
+    environment: str = "production",
+    principal: Principal | None = None,
+    approval_backend: ApprovalBackend | None = None,
+    on_block: Callable[[ToolCall, str, str | None], None] | None = None,
+    on_allow: Callable[[ToolCall], None] | None = None,
+    workflow_content: str | bytes | None = None,
+    workflow_exec_evaluator_enabled: bool = False,
+) -> Edictum:
+    """Create an Edictum instance from an already-parsed bundle dict.
+
+    Note: This factory does not support ``success_check``, ``principal_resolver``,
+    ``custom_operators``, ``custom_selectors``, or ``tools`` — use ``from_yaml()``
+    or ``from_yaml_string()`` if you need those features.
+    """
+    from edictum.yaml_engine.compiler import compile_contracts
+    from edictum.yaml_engine.loader import (
+        _validate_pre_selectors,
+        _validate_regexes,
+        _validate_sandbox_contracts,
+        _validate_schema,
+        _validate_unique_ids,
+    )
+
+    _validate_schema(bundle)
+    _validate_unique_ids(bundle)
+    _validate_regexes(bundle)
+    _validate_pre_selectors(bundle)
+    _validate_sandbox_contracts(bundle)
+    compiled = compile_contracts(bundle)
+    workflow_runtime = _load_workflow_runtime(
+        workflow_content=workflow_content,
+        workflow_exec_evaluator_enabled=workflow_exec_evaluator_enabled,
+    )
+    return _build_guard_from_compiled(
+        cls,
+        compiled,
+        bundle,
+        policy_version,
+        mode=mode,
+        tools=None,
+        audit_sink=audit_sink,
+        redaction=redaction,
+        backend=backend,
+        environment=environment,
+        on_block=on_block,
+        on_allow=on_allow,
+        success_check=None,
+        principal=principal,
+        principal_resolver=None,
+        approval_backend=approval_backend,
+        workflow_runtime=workflow_runtime,
+    )
+
+
 def _from_template(
     cls: type[Edictum],
     name: str,

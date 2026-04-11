@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch as _fnmatch
 import logging
 from typing import Any, cast
 
@@ -13,6 +14,7 @@ from edictum.workflow.evaluator import (
     ApprovalEvaluator,
     CommandEvaluator,
     FileReadEvaluator,
+    McpResultMatchesEvaluator,
     StageCompleteEvaluator,
     uses_exec_condition,
 )
@@ -56,6 +58,7 @@ class WorkflowRuntime:
             "approval": ApprovalEvaluator(),
             "command_matches": CommandEvaluator(),
             "command_not_matches": CommandEvaluator(),
+            "mcp_result_matches": McpResultMatchesEvaluator(),
         }
         if exec_evaluator_enabled:
             evaluators["exec"] = ExecEvaluator()
@@ -102,6 +105,13 @@ class WorkflowRuntime:
                 state.evidence.stage_calls.pop(stage.id, None)
             if idx == 0:
                 state.evidence.reads = []
+                state.evidence.mcp_results = {}
+            else:
+                for stage in self.definition.stages[idx:]:
+                    for tool_pattern in stage.tools:
+                        for key in list(state.evidence.mcp_results.keys()):
+                            if _fnmatch.fnmatch(key, tool_pattern):
+                                del state.evidence.mcp_results[key]
             clear_runtime_status(state)
             await self.save_state(session, state)
             return [
@@ -145,13 +155,15 @@ class WorkflowRuntime:
             record_approval(state, stage_id)
             await self.save_state(session, state)
 
-    async def record_result(self, session: Session, stage_id: str, envelope: ToolCall) -> list[dict[str, Any]]:
+    async def record_result(
+        self, session: Session, stage_id: str, envelope: ToolCall, *, mcp_result: dict | None = None
+    ) -> list[dict[str, Any]]:
         if not stage_id:
             return []
         async with self._session_lock(session):
             state = await self.load_state(session)
             try:
-                record_result(state, stage_id, envelope)
+                record_result(state, stage_id, envelope, mcp_result=mcp_result)
             except ValueError:
                 logger.warning(
                     'workflow: skipped evidence recording for stage "%s" due to invalid evidence',
@@ -304,6 +316,8 @@ class WorkflowRuntime:
         stage = self.definition.stage_by_id(stage_id)
         if stage is None:
             raise ValueError(f'workflow: active stage "{stage_id}" not found')
+        if stage.terminal:
+            return []
         _, has_next = self.next_index(stage.id)
         if has_next:
             return []
@@ -333,8 +347,8 @@ class WorkflowRuntime:
 
 def tool_allowed(stage, envelope: ToolCall) -> bool:
     if not stage.tools:
-        return True
-    return envelope.tool_name in stage.tools
+        return not stage.terminal
+    return any(_fnmatch.fnmatch(envelope.tool_name, pat) for pat in stage.tools)
 
 
 def stage_is_boundary_only(stage: WorkflowStage) -> bool:

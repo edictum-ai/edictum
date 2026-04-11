@@ -28,6 +28,7 @@ class WorkflowEvidence:
 
     reads: list[str] = field(default_factory=list)
     stage_calls: dict[str, list[str]] = field(default_factory=dict)
+    mcp_results: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -58,5 +59,7 @@ class WorkflowState:
             self.evidence.reads = []
         if self.evidence.stage_calls is None:
             self.evidence.stage_calls = {}
+        if self.evidence.mcp_results is None:
+            self.evidence.mcp_results = {}
         if not isinstance(self.pending_approval, dict) or "required" not in self.pending_approval:
             self.pending_approval = default_pending_approval()

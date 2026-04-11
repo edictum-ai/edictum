@@ -72,6 +72,7 @@ class WorkflowStage:
     checks: tuple[WorkflowCheck, ...] = ()
     exit: tuple[WorkflowGate, ...] = ()
     approval: WorkflowApproval | None = None
+    terminal: bool = False
 
 
 @dataclass(frozen=True)

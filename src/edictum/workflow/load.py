@@ -84,7 +84,7 @@ def _parse_stage(data: dict[str, Any]) -> WorkflowStage:
     stage_id = str(data.get("id", ""))
     _reject_unknown_fields(
         data,
-        {"id", "description", "entry", "tools", "checks", "exit", "approval"},
+        {"id", "description", "entry", "tools", "checks", "exit", "approval", "terminal"},
         f'stage "{stage_id or "?"}"',
     )
     approval = None
@@ -129,6 +129,7 @@ def _parse_stage(data: dict[str, Any]) -> WorkflowStage:
         checks=tuple(checks),
         exit=tuple(_parse_gate_list(data.get("exit") or [], stage_id, "exit")),
         approval=approval,
+        terminal=bool(data.get("terminal", False)),
     )
 
 

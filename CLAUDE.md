@@ -4,7 +4,7 @@
 
 Runtime rule enforcement for AI agent tool calls. Deterministic pipeline: checks, output checks, session rules, principal-aware enforcement. Eight framework adapters (LangChain, CrewAI, Agno, Semantic Kernel, OpenAI Agents SDK, Claude Agent SDK, Nanobot, Google ADK). Zero runtime deps in core.
 
-Current version: 0.17.0 (PyPI: `edictum`)
+Current version: 0.18.0 (PyPI: `edictum`)
 
 ## Architecture: Core + Server
 
@@ -89,6 +89,7 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - v0.15.0: Edictum Gate (coding assistant governance), `CollectingAuditSink`, `Edictum.from_server()`, `Edictum.reload()`, `Edictum.close()`, SSE watcher, server rule source revision tracking, `ServerAuditSink` multi-bundle support. Default audit sink changed from `StdoutAuditSink` to `CollectingAuditSink` only.
 - v0.16.0: Skill security analysis module (CLI removed — use Go binary). Ed25519 bundle signature verification (`edictum[verified]`). Server HTTPS enforcement. Batch session counter reads. Cross-SDK conformance runner. Terminology rename `shadow_*` → `observe_*` completed. Removed `ShadowContract` deprecation alias and `"shadows"` backward-compat JSON key. 14 security fixes including session injection, shell separator bypass, and redaction gaps.
 - v0.17.0: Workflow runtime enforcement — `WorkflowRuntime`, `WorkflowRuntime.set_stage()` non-destructive stage moves preserving approvals and evidence, `WorkflowDefinition`, `WorkflowStage`, `WorkflowGate`, `WorkflowApproval`, `WorkflowCheck`, `WorkflowMetadata`, `WorkflowEvaluation`, `WorkflowEvidence`, `WorkflowState`, `load_workflow()`, `load_workflow_string()`, explicit workflow loading for M1, runtime workflow stage gating, workflow approvals, and opt-in `exec(...)` workflow conditions. Added workflow adapter evidence coverage for CrewAI, Google ADK, LangChain, and OpenAI Agents SDK. Removed the Python CLI from the package; the Go binary is canonical. Completed the M1 terminology rename across code and docs.
+- v0.18.0: Workflow v0.18 shared-semantics features — fnmatch wildcard matching in workflow stage `tools` (e.g. `mcp__*`), `terminal: true` stage primitive (deny-all or seal-after-exit), `mcp_result_matches("tool","field","value")` exit gate condition with MCP result evidence recording via `record_result(mcp_result=…)`, `extends:` ruleset inheritance (`resolve_ruleset_extends`, `_merge_parent_bundle`, `_MAX_EXTENDS_DEPTH=50` depth cap), `Edictum.from_bundle_dict()` factory method (supports `mode`, `audit_sink`, `redaction`, `backend`, `environment`, `principal`, `approval_backend`, `on_block`, `on_allow`, `workflow_content`; does not support `tools`, `success_check`, `principal_resolver`, `custom_operators`, `custom_selectors`). Security: `_coerce_mcp_result` applied on both ingest and load; `None` field values map to `""` to prevent `str(None)=="None"` false positives; non-list mcp_results entries skipped at load time.
 
 ## Session Model
 
