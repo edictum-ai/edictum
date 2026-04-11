@@ -614,3 +614,20 @@ def test_extends_parent_rules_come_before_child_rules():
     merged = _merge_parent_bundle(parent, child)
     rule_ids = [r["id"] for r in merged["rules"]]
     assert rule_ids == ["p1", "p2", "c1"]
+
+
+def test_extends_depth_limit_raises():
+    """A deeply nested (non-circular) extends chain raises ValueError at the depth cap."""
+    from edictum.yaml_engine.loader import _MAX_EXTENDS_DEPTH, resolve_ruleset_extends
+
+    # Build a linear chain: r0 extends r1 extends r2 ... extends r_N (root, no extends)
+    depth = _MAX_EXTENDS_DEPTH + 2
+    rulesets = {}
+    for i in range(depth):
+        entry: dict = {"kind": "Ruleset", "metadata": {"name": f"r{i}"}, "rules": []}
+        if i > 0:
+            entry["extends"] = f"r{i - 1}"
+        rulesets[f"r{i}"] = entry
+
+    with pytest.raises(ValueError, match="maximum depth"):
+        resolve_ruleset_extends(rulesets, f"r{depth - 1}")

@@ -324,6 +324,10 @@ def _from_bundle_dict(
     redaction: RedactionPolicy | None = None,
     backend: StorageBackend | None = None,
     environment: str = "production",
+    principal: Principal | None = None,
+    approval_backend: ApprovalBackend | None = None,
+    on_block: Callable[[ToolCall, str, str | None], None] | None = None,
+    on_allow: Callable[[ToolCall], None] | None = None,
 ) -> Edictum:
     """Create an Edictum instance from an already-parsed bundle dict."""
     from edictum.yaml_engine.compiler import compile_contracts
@@ -352,12 +356,12 @@ def _from_bundle_dict(
         redaction=redaction,
         backend=backend,
         environment=environment,
-        on_block=None,
-        on_allow=None,
+        on_block=on_block,
+        on_allow=on_allow,
         success_check=None,
-        principal=None,
+        principal=principal,
         principal_resolver=None,
-        approval_backend=None,
+        approval_backend=approval_backend,
         workflow_runtime=None,
     )
 

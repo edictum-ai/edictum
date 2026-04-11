@@ -197,6 +197,9 @@ def _load_data(raw_bytes: bytes) -> tuple[dict, BundleHash]:
     return normalized, bundle_hash
 
 
+_MAX_EXTENDS_DEPTH = 50
+
+
 def resolve_ruleset_extends(rulesets: dict[str, dict], name: str, *, _seen: frozenset[str] | None = None) -> dict:
     """Resolve extends: inheritance for a named ruleset within a registry.
 
@@ -211,11 +214,14 @@ def resolve_ruleset_extends(rulesets: dict[str, dict], name: str, *, _seen: froz
 
     Raises:
         KeyError: If a referenced ruleset is not in the registry.
-        ValueError: If a circular extends reference is detected.
+        ValueError: If a circular extends reference is detected or the chain
+            exceeds the maximum depth (_MAX_EXTENDS_DEPTH).
     """
     seen = _seen or frozenset()
     if name in seen:
         raise ValueError(f"extends: circular reference detected for ruleset '{name}'")
+    if len(seen) >= _MAX_EXTENDS_DEPTH:
+        raise ValueError(f"extends: inheritance chain exceeds maximum depth ({_MAX_EXTENDS_DEPTH})")
     child = dict(rulesets[name])
     parent_name = child.pop("extends", None)
     if parent_name is None:
