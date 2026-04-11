@@ -331,9 +331,11 @@ def _from_bundle_dict(
         _validate_pre_selectors,
         _validate_regexes,
         _validate_sandbox_contracts,
+        _validate_schema,
         _validate_unique_ids,
     )
 
+    _validate_schema(bundle)
     _validate_unique_ids(bundle)
     _validate_regexes(bundle)
     _validate_pre_selectors(bundle)

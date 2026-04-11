@@ -145,8 +145,8 @@ stages:
 
 
 @pytest.mark.asyncio
-async def test_terminal_no_tools_denies_all():
-    """Terminal stage with no tools denies all tool calls."""
+async def test_terminal_no_tools_blocks_all():
+    """Terminal stage with no tools blocks all tool calls."""
     rt = _runtime("""
 apiVersion: edictum/v1
 kind: Workflow

@@ -52,7 +52,7 @@ async def load_state(session: Session, definition) -> WorkflowState:
         evidence=WorkflowEvidence(
             reads=list(evidence_data.get("reads") or []),
             stage_calls={key: list(value) for key, value in (evidence_data.get("stage_calls") or {}).items()},
-            mcp_results={k: [dict(r) for r in v] for k, v in mcp_raw.items()},
+            mcp_results={k: [_coerce_mcp_result(r) for r in v] for k, v in mcp_raw.items()},
         ),
         blocked_reason=data.get("blocked_reason"),
         pending_approval=_coerce_pending_approval(data.get("pending_approval")),
@@ -344,4 +344,18 @@ def _coerce_recorded_evidence(value: Any) -> dict[str, str] | None:
         "tool": safe_tool,
         "summary": safe_summary,
         "timestamp": safe_timestamp,
+    }
+
+
+def _coerce_mcp_result(value: Any) -> dict[str, Any]:
+    """Sanitize one MCP result dict loaded from persisted state.
+
+    String values are passed through _safe_status_text to strip control
+    characters and enforce the length limit. Non-string values are kept as-is.
+    """
+    if not isinstance(value, dict):
+        return {}
+    return {
+        (k if isinstance(k, str) else str(k)): (_safe_status_text(v, "") if isinstance(v, str) else v)
+        for k, v in value.items()
     }

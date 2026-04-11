@@ -263,20 +263,20 @@ def test_workflow_v018_extends_inheritance(suite: dict, fixture: dict) -> None:
 
     rulesets: dict[str, dict] = suite.get("rulesets", {})
 
-    contract_ref = fixture["contract"]
+    ruleset_ref = fixture["contract"]  # "contract" is the shared fixture schema key name
     envelope_data = fixture["envelope"]
     expected = fixture["expected"]
 
     # Resolve extends: chain to get the merged raw dict
-    merged = resolve_ruleset_extends(rulesets, contract_ref)
+    merged = resolve_ruleset_extends(rulesets, ruleset_ref)
 
     # Create a guard from the merged bundle (no reload needed)
-    guard = Edictum.from_bundle_dict(merged, f"conformance-{contract_ref}")
+    guard = Edictum.from_bundle_dict(merged, f"conformance-{ruleset_ref}")
 
     result = guard.evaluate(envelope_data["tool_name"], envelope_data.get("arguments", {}))
 
     expected_verdict = expected["verdict"]
-    if expected_verdict == "denied":
+    if expected_verdict in ("denied", "block"):  # "denied" is the shared fixture schema's legacy term
         assert result.decision == "block", (
             f"fixture {fixture['id']}: expected verdict=blocked, got decision={result.decision!r}"
         )
