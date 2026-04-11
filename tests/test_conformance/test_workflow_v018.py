@@ -6,7 +6,7 @@ Reads fixture files from edictum-schemas/fixtures/workflow-v0.18/:
   - mcp-result-evidence.workflow-v0.18.yaml
   - extends-inheritance.workflow-v0.18.yaml
 
-Each fixture drives the Python workflow runtime or rule engine and asserts
+Each fixture drives the Python workflow runtime or pipeline and asserts
 the expected decision and final evidence state.
 
 Fixture discovery (first match wins):
@@ -278,7 +278,7 @@ def test_workflow_v018_extends_inheritance(suite: dict, fixture: dict) -> None:
     expected_verdict = expected["verdict"]
     if expected_verdict == "denied":
         assert result.decision == "block", (
-            f"fixture {fixture['id']}: expected verdict=denied, got decision={result.decision!r}"
+            f"fixture {fixture['id']}: expected verdict=blocked, got decision={result.decision!r}"
         )
         if expected.get("message_contains"):
             assert any(expected["message_contains"] in r for r in result.block_reasons), (

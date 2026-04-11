@@ -229,7 +229,7 @@ stages:
 
 @pytest.mark.asyncio
 async def test_terminal_auto_advance_on_blocked_prior_stage():
-    """A non-exit prior stage auto-advances into terminal; triggering call is denied there."""
+    """A non-exit prior stage auto-advances into terminal; triggering call is blocked there."""
     rt = _runtime("""
 apiVersion: edictum/v1
 kind: Workflow

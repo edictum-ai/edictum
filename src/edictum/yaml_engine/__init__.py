@@ -30,11 +30,16 @@ def load_bundle_string(content: str | bytes) -> tuple[dict, BundleHash]:
     return _load_string(content)
 
 
-def compile_contracts(bundle: dict, *, custom_operators: dict | None = None) -> CompiledBundle:
+def compile_contracts(
+    bundle: dict,
+    *,
+    custom_operators: dict | None = None,
+    custom_selectors: dict | None = None,
+) -> CompiledBundle:
     """Compile a parsed bundle into rule objects. See :func:`compiler.compile_contracts`."""
     from edictum.yaml_engine.compiler import compile_contracts as _compile
 
-    return _compile(bundle, custom_operators=custom_operators)
+    return _compile(bundle, custom_operators=custom_operators, custom_selectors=custom_selectors)
 
 
 def resolve_ruleset_extends(rulesets: dict, name: str) -> dict:

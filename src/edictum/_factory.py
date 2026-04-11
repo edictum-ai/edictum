@@ -327,7 +327,17 @@ def _from_bundle_dict(
 ) -> Edictum:
     """Create an Edictum instance from an already-parsed bundle dict."""
     from edictum.yaml_engine.compiler import compile_contracts
+    from edictum.yaml_engine.loader import (
+        _validate_pre_selectors,
+        _validate_regexes,
+        _validate_sandbox_contracts,
+        _validate_unique_ids,
+    )
 
+    _validate_unique_ids(bundle)
+    _validate_regexes(bundle)
+    _validate_pre_selectors(bundle)
+    _validate_sandbox_contracts(bundle)
     compiled = compile_contracts(bundle)
     return _build_guard_from_compiled(
         cls,
