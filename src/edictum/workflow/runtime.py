@@ -105,6 +105,13 @@ class WorkflowRuntime:
                 state.evidence.stage_calls.pop(stage.id, None)
             if idx == 0:
                 state.evidence.reads = []
+                state.evidence.mcp_results = {}
+            else:
+                for stage in self.definition.stages[idx:]:
+                    for tool_pattern in stage.tools:
+                        for key in list(state.evidence.mcp_results.keys()):
+                            if _fnmatch.fnmatch(key, tool_pattern):
+                                del state.evidence.mcp_results[key]
             clear_runtime_status(state)
             await self.save_state(session, state)
             return [
