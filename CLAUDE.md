@@ -12,13 +12,13 @@ Two deployment units. One library, one server.
 
 - `src/edictum/` -- MIT core. All rule types (pre, post, session, sandbox), pipeline, 8 adapters, audit to stdout/file/OTel, local approval backend, single-process session tracking.
 - `src/edictum/server/` -- Server SDK client (`pip install edictum[server]`). Implements core protocols (`ApprovalBackend`, `AuditSink`, `StorageBackend`) over HTTP to connect agents to the server.
-- `edictum-server` -- A separate deployment (coming soon, open source). Centralized approval workflows, audit dashboards, distributed sessions, hot-reload rules, RBAC.
+- Hosted control plane (`edictum-api` + `edictum-app`) -- Separate deployment for centralized approval workflows, audit dashboards, distributed sessions, and hot-reload rules.
 
 ## THE ONE RULE
 
-**Core code (src/edictum/) runs fully standalone. The server SDK (src/edictum/server/) imports from core. The server itself is a separate deployment.**
+**Core code (src/edictum/) runs fully standalone. The server SDK (src/edictum/server/) imports from core. The control plane itself is a separate deployment.**
 
-Core provides protocols and interfaces. The server SDK provides HTTP-backed implementations. The server provides the coordination infrastructure.
+Core provides protocols and interfaces. The server SDK provides HTTP-backed implementations. The control plane provides the coordination infrastructure.
 
 ## Core (MIT)
 
@@ -33,11 +33,11 @@ Core provides protocols and interfaces. The server SDK provides HTTP-backed impl
 - OTel span instrumentation + GovernanceTelemetry
 - Violation classification (`findings.py`, `Finding`) with pii_detected, secret_detected, policy_violation types
 
-## Server (edictum-server)
+## Server
 
-The server is a separate deployment, coming soon as open source. It provides:
+The control plane is a separate deployment. It provides:
 
-- Production approval workflows (ServerApprovalBackend connects to webhooks, Slack/Teams, review dashboard)
+- Production approval workflows (ServerApprovalBackend connects to Telegram, Slack, Discord, webhook, and review UI)
 - Centralized audit ingestion and governance dashboard (block rates, rule drift, sandbox violations)
 - Distributed session state for multi-agent tracking across processes
 - Hot-reload rules via SSE push (ServerContractSource) without restarting agents
@@ -53,8 +53,8 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 - Persistence beyond local files, networking, coordination across processes -- server
 - Stdout + File (.jsonl) sinks for dev/local audit -- core. Centralized audit dashboards and alerting -- server
 - OTel instrumentation (emitting spans) -- core. Governance dashboards -- server
-- Session (MemoryBackend) for single-process -- core. Multi-process session state via edictum-server -- server
-- LocalApprovalBackend for development approval -- core. Production approval workflows (webhooks, Slack, review UI) -- server
+- Session (MemoryBackend) for single-process -- core. Multi-process session state via the hosted control plane -- server
+- LocalApprovalBackend for development approval -- core. Production approval workflows (Telegram, Slack, Discord, review UI) -- server
 
 ## Dropped Features (do NOT implement)
 - **Python CLI** — removed entirely. Go binary is the canonical CLI.
@@ -93,7 +93,7 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 
 ## Session Model
 
-MemoryBackend stores counters in a Python dict -- one process, one agent. This covers the vast majority of use cases. For multi-agent coordination across processes, edictum-server handles centralized session tracking. There is no DIY Redis/DynamoDB path.
+MemoryBackend stores counters in a Python dict -- one process, one agent. This covers the vast majority of use cases. For multi-agent coordination across processes, the hosted control plane handles centralized session tracking. There is no DIY Redis/DynamoDB path.
 
 ## Build & Test
 

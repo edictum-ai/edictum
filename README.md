@@ -12,7 +12,7 @@ Runtime rule enforcement for AI agent tool calls.
 
 **Prompts are suggestions. Rules are enforcement.** The LLM cannot talk its way past a rule.
 
-**55us overhead** · **18 adapters across Python, TypeScript, Go** · **Zero runtime deps** · **Fail-closed by default**
+**55us overhead** · **Python, TypeScript, and Go SDKs** · **Zero runtime deps** · **Fail-closed by default**
 
 ```bash
 pip install edictum[yaml]
@@ -169,7 +169,7 @@ pip install edictum[gate]
 
 The Python package ships the Gate library and integrations. For command-line workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go) -- that is the canonical Edictum CLI.
 
-Supports Claude Code, Cursor, Copilot CLI, Gemini CLI, and OpenCode. Self-protection rules prevent the assistant from disabling governance. Optional sync to [Edictum Console](https://github.com/edictum-ai/edictum-console) for centralized audit.
+Supports Claude Code, Cursor, Copilot CLI, Gemini CLI, and OpenCode. Self-protection rules prevent the assistant from disabling governance. Optional sync to the hosted control plane for centralized audit.
 
 See the [Gate guide](https://docs.edictum.ai/docs/guides/gate) for setup.
 
@@ -185,7 +185,7 @@ guard = await Edictum.from_server(
 )
 ```
 
-See [edictum-console](https://github.com/edictum-ai/edictum-console) for deployment.
+See the [console docs](https://docs.edictum.ai/docs/console) for the current control-plane surface.
 
 ## Research & Real-World Impact
 
@@ -239,9 +239,10 @@ For CLI workflows, use the Go binary in [edictum-go](https://github.com/edictum-
 | Repo | Language | What it does |
 |------|----------|-------------|
 | [edictum](https://github.com/edictum-ai/edictum) | Python | Core library -- this repo |
-| [edictum-ts](https://github.com/edictum-ai/edictum-ts) | TypeScript | Core + adapters (Claude SDK, LangChain, OpenAI Agents, OpenClaw, Vercel AI) |
+| [edictum-ts](https://github.com/edictum-ai/edictum-ts) | TypeScript | Core + adapters (Claude SDK, LangChain, OpenAI Agents, Vercel AI) |
 | [edictum-go](https://github.com/edictum-ai/edictum-go) | Go | Core + adapters (ADK Go, Anthropic, Eino, Genkit, LangChain Go) |
-| [edictum-console](https://github.com/edictum-ai/edictum-console) | Python + React | Self-hostable ops console: HITL, audit, fleet monitoring |
+| [edictum-api](https://github.com/edictum-ai/edictum-api) | Go | Hosted control-plane API: runs, approvals, notifications, audit |
+| [edictum-app](https://github.com/edictum-ai/edictum-app) | React | Hosted control-plane UI: runs, approvals, policies, settings |
 | [edictum-schemas](https://github.com/edictum-ai/edictum-schemas) | JSON Schema | Rule bundle schema + cross-SDK conformance fixtures |
 | [edictum-demo](https://github.com/edictum-ai/edictum-demo) | Python | Scenario demos, adversarial tests, benchmarks, Grafana observability |
 | [Documentation](https://docs.edictum.ai) | MDX | Full docs site |
