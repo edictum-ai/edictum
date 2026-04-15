@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.18.0
+
+### Added
+- **v0.18 workflow shared semantics** — workflow definitions now support wildcard stage tools, terminal stages, MCP evidence checks, and ruleset inheritance via `extends` (#199)
+- **Python server client parity** — the Python SDK now exposes the hosted/server capabilities needed to stay aligned with the control-plane surface (#189)
+- **Non-destructive stage moves and lineage state** — workflow state now carries session lineage and supports explicit non-destructive stage transitions (#187, #188)
+
+### Fixed
+- **Workflow stage enforcement correctness** — adapter conformance, stage transitions, and current-stage check failures now block and advance consistently (#190, #193, #195)
+
+### Changed
+- Refreshed docs and repository wording to use the current control-plane naming consistently (#202, #203)
+
 ## 0.17.0
 
 ### Added
