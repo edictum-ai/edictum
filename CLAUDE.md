@@ -4,7 +4,7 @@
 
 Runtime rule enforcement for AI agent tool calls. Deterministic pipeline: checks, output checks, session rules, principal-aware enforcement. Eight framework adapters (LangChain, CrewAI, Agno, Semantic Kernel, OpenAI Agents SDK, Claude Agent SDK, Nanobot, Google ADK). Zero runtime deps in core.
 
-Current version: 0.18.0 (PyPI: `edictum`)
+Current version: 0.19.0 (PyPI: `edictum`)
 
 ## Architecture: Core + Server
 
@@ -59,6 +59,7 @@ The split follows one rule: **evaluation = core library, coordination = server.*
 ## Dropped Features (do NOT implement)
 - **Python CLI** — removed entirely. Go binary is the canonical CLI.
 - **Gate install/uninstall** — removed from Python. Gate install is Go-only (`edictum gate install`).
+- **Python gate module (`src/edictum/gate/`)** — removed in v0.19.0. Its Claude Code format emitted an invalid decision value (`permissionDecision: "block"`) that Claude Code rejects, so the gate did not enforce — every code path, error or a normal rule block, resolved to allow. The `edictum[gate]` extra is gone. The Gate is Go-only (`edictum-go`). Do not re-add a Python gate.
 
 - `reset_session()` — new run_id handles this naturally
 - Redis StorageBackend — not our problem, application layer concern
