@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.19.0
+
+### Security
+- **The Python gate's Claude Code format did not enforce — it is removed.** The Claude Code format wrote Edictum's internal word `block` straight into `permissionDecision`. Claude Code's `PreToolUse` hook only accepts `allow`, `deny`, or `ask`, so it threw the message away and ran the tool. (The Copilot CLI format used the same wire value; its host was not separately verified.) Every code path hit this: error paths (no rules found, unreadable rules, invalid stdin, internal errors) and normal policy blocks. The Python gate blocked nothing on Claude Code.
+
+### Removed
+- **Python gate (`src/edictum/gate/`) and the `edictum[gate]` extra.** Breaking removal. If you wired `edictum[gate]` or `python -m edictum.gate.check` into a Claude Code `PreToolUse` hook, you were running a gate that did not block — switch to the Go CLI in [edictum-go](https://github.com/edictum-ai/edictum-go), which emits the correct `deny` value and exits non-zero.
+- **Gate-only rules in the `coding-assistant-base` template.** Removed the scope-enforcement note and the four Gate Self-Protection rules from `src/edictum/yaml_engine/templates/coding-assistant-base.yaml` — they referenced the deleted gate. The template's secret, destructive-command, git, system, and package rules remain.
+
 ## 0.18.0
 
 ### Added

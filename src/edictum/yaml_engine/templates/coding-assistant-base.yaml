@@ -9,7 +9,7 @@ metadata:
     system modifications, and package installations.
     Customize to fit your workflow — this file is yours.
 
-# Observe mode logs what WOULD be denied without blocking anything.
+# Observe mode logs what WOULD be blocked without blocking anything.
 # Switch to 'enforce' when you're confident in your rule set.
 defaults:
   mode: observe
@@ -63,7 +63,7 @@ rules:
           - '\.pypirc$'
     then:
       action: block
-      message: "Denied: this file may contain secrets"
+      message: "Blocked: this file may contain secrets"
       tags: [security, secrets]
 
   - id: block-secret-file-writes
@@ -86,7 +86,7 @@ rules:
           - '\.pypirc$'
     then:
       action: block
-      message: "Denied: this file may contain secrets"
+      message: "Blocked: this file may contain secrets"
       tags: [security, secrets]
 
   - id: block-secret-file-edits
@@ -109,7 +109,7 @@ rules:
           - '\.pypirc$'
     then:
       action: block
-      message: "Denied: this file may contain secrets"
+      message: "Blocked: this file may contain secrets"
       tags: [security, secrets]
 
   - id: block-env-dump-commands
@@ -124,7 +124,7 @@ rules:
           - 'export\s+-p'
     then:
       action: block
-      message: "Denied: environment variable access is restricted"
+      message: "Blocked: environment variable access is restricted"
       tags: [security, secrets]
 
   # -- Destructive Command Protection ------------------------------------------
@@ -143,7 +143,7 @@ rules:
           - ':(){.*};:'
     then:
       action: block
-      message: "Denied: destructive command"
+      message: "Blocked: destructive command"
       tags: [security, destructive]
 
   # -- Git Safety ---------------------------------------------------------------
@@ -161,16 +161,8 @@ rules:
           - 'git\s+branch\s+-D'
     then:
       action: block
-      message: "Denied: destructive git operation"
+      message: "Blocked: destructive git operation"
       tags: [git, destructive]
-
-  # -- Scope Enforcement --------------------------------------------------------
-  # NOTE: Scope enforcement is handled programmatically in gate/check.py,
-  # NOT via YAML rules. The _check_scope() function compares
-  # os.path.realpath(file_path) against the working directory from stdin.
-  # This runs AFTER standard rule evaluation as an additional gate-level
-  # check. It cannot be expressed in YAML because cwd is a runtime value
-  # from the assistant's stdin, not a rule field.
 
   - id: block-system-commands
     type: pre
@@ -185,7 +177,7 @@ rules:
           - '/usr/local/bin/'
     then:
       action: block
-      message: "Denied: system modification"
+      message: "Blocked: system modification"
       tags: [security, system]
 
   # -- Package Install Protection -----------------------------------------------
@@ -204,86 +196,5 @@ rules:
           - 'go\s+install\b'
     then:
       action: block
-      message: "Denied: package installation"
+      message: "Blocked: package installation"
       tags: [audit, packages]
-
-  # -- Gate Self-Protection ----------------------------------------------------
-  # Prevent the governed assistant from disabling or modifying Gate.
-  # Gate configuration is managed by humans in a terminal — if you need
-  # changes, tell the human what to modify and where.
-
-  - id: block-gate-config-reads
-    mode: enforce
-    type: pre
-    tool: Read
-    when:
-      args.file_path:
-        matches_any:
-          - '\.edictum/'
-          - '\.claude/settings\.json$'
-          - '\.cursor/hooks\.json$'
-          - '\.gemini/settings\.json$'
-    then:
-      action: block
-      message: >-
-        Denied: this is a Gate infrastructure file. Gate configuration is
-        managed by humans, not by the governed assistant. Tell the human
-        what needs to change and they will update it in their terminal.
-      tags: [security, gate-protection]
-
-  - id: block-gate-config-writes
-    mode: enforce
-    type: pre
-    tool: Write
-    when:
-      args.file_path:
-        matches_any:
-          - '\.edictum/'
-          - '\.claude/settings\.json$'
-          - '\.cursor/hooks\.json$'
-          - '\.gemini/settings\.json$'
-    then:
-      action: block
-      message: >-
-        Denied: this is a Gate infrastructure file. Gate configuration is
-        managed by humans, not by the governed assistant. Tell the human
-        what needs to change and they will update it in their terminal.
-      tags: [security, gate-protection]
-
-  - id: block-gate-config-edits
-    mode: enforce
-    type: pre
-    tool: Edit
-    when:
-      args.file_path:
-        matches_any:
-          - '\.edictum/'
-          - '\.claude/settings\.json$'
-          - '\.cursor/hooks\.json$'
-          - '\.gemini/settings\.json$'
-    then:
-      action: block
-      message: >-
-        Denied: this is a Gate infrastructure file. Gate configuration is
-        managed by humans, not by the governed assistant. Tell the human
-        what needs to change and they will update it in their terminal.
-      tags: [security, gate-protection]
-
-  - id: block-gate-config-bash-tampering
-    mode: enforce
-    type: pre
-    tool: Bash
-    when:
-      args.command:
-        matches_any:
-          - '\.edictum/'
-          - 'settings\.json'
-          - 'hooks\.json'
-          - 'edictum\s+gate\s+uninstall'
-    then:
-      action: block
-      message: >-
-        Denied: Gate infrastructure cannot be modified by the assistant.
-        Gate configuration is managed by humans in a terminal. Tell the
-        human what command to run and they will execute it themselves.
-      tags: [security, gate-protection]

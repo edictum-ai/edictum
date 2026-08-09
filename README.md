@@ -225,17 +225,11 @@ guard = Edictum.from_template("nanobot-agent")
 
 ## Edictum Gate
 
-Pre-execution control for coding assistants. Sits between the assistant and the OS, evaluating every tool call against rules.
+The Edictum Gate watches every tool call a coding assistant makes and blocks the ones your rules forbid. It sits between the assistant and the operating system.
 
-```bash
-pip install edictum[gate]
-```
+Use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go) -- that is the canonical Edictum CLI. It supports Claude Code, Cursor, Copilot CLI, Gemini CLI, and OpenCode, with optional sync to the [Edictum Control Plane](https://docs.edictum.ai/docs/control-plane) for centralized audit. See the [Gate guide](https://docs.edictum.ai/docs/guides/gate) for setup.
 
-The Python package ships the Gate library and integrations. For command-line workflows, use the Go binary in [edictum-go](https://github.com/edictum-ai/edictum-go) -- that is the canonical Edictum CLI.
-
-Supports Claude Code, Cursor, Copilot CLI, Gemini CLI, and OpenCode. Self-protection rules prevent the assistant from disabling runtime checks. Optional sync to the [Edictum Control Plane](https://docs.edictum.ai/docs/control-plane) for centralized audit.
-
-See the [Gate guide](https://docs.edictum.ai/docs/guides/gate) for setup.
+> **The Python `gate` extra was removed in v0.19.0.** Its Claude Code output used a decision value the host rejects, so it did not actually block tools. If you wired `edictum[gate]` into a Claude Code `PreToolUse` hook, switch to the Go CLI. Details in the [v0.19.0 release notes](https://github.com/edictum-ai/edictum/releases).
 
 ## Edictum Control Plane
 
@@ -269,7 +263,6 @@ Requires Python 3.11+.
 pip install edictum              # core (zero deps)
 pip install edictum[yaml]        # + YAML rule parsing
 pip install edictum[otel]        # + OpenTelemetry span emission
-pip install edictum[gate]        # + coding assistant runtime control library
 pip install edictum[verified]    # + Ed25519 bundle signature verification
 pip install edictum[server]      # + server SDK (connect to the Edictum Control Plane)
 pip install edictum[all]         # everything in this Python package

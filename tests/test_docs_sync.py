@@ -53,8 +53,6 @@ class TestClaudeMdReferences:
                     SRC_ROOT / "cli",
                     SRC_ROOT / "yaml_engine",
                     SRC_ROOT / "core",
-                    SRC_ROOT / "gate",
-                    SRC_ROOT / "gate" / "formats",
                 ]
             )
             if not found:
