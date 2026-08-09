@@ -54,6 +54,11 @@ jobs:
           python-version: "3.11"
           cache: "pip"
       - run: pip install -e ".[dev,yaml,sinks,cli]" bandit pip-audit
+      - name: Upgrade setuptools (PYSEC-2026-3447)
+        # setuptools 79.x ships with the Python 3.11 toolchain and is flagged by
+        # pip-audit (PYSEC-2026-3447, fixed in 83.0.0). A patched version exists,
+        # so upgrade rather than ignore (unlike the no-fix ignores below).
+        run: pip install --upgrade "setuptools>=83"
       - name: Security lint (bandit)
         run: bandit -r src/ -ll -ii
       - name: Audit Python dependencies
