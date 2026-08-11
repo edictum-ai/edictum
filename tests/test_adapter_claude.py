@@ -13,6 +13,8 @@ from edictum.findings import Finding
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
 
+CLAUDE_PRE_TOOL_USE_DECISIONS = frozenset({"allow", "deny", "ask", "defer"})
+
 
 def make_guard(**kwargs):
     defaults = {
@@ -35,10 +37,11 @@ class TestClaudeAgentSDKAdapter:
         )
         assert result == {}
 
-    async def test_deny_returns_sdk_format(self):
+    @pytest.mark.security
+    async def test_block_emits_supported_sdk_wire_value(self):
         @precondition("*")
         def always_deny(tool_call):
-            return Decision.fail("denied")
+            return Decision.fail("blocked")
 
         guard = make_guard(rules=[always_deny])
         adapter = ClaudeAgentSDKAdapter(guard)
@@ -47,9 +50,11 @@ class TestClaudeAgentSDKAdapter:
             tool_input={},
             tool_use_id="tu-1",
         )
-        assert result["hookSpecificOutput"]["permissionDecision"] == "block"
-        assert result["hookSpecificOutput"]["permissionDecisionReason"] == "denied"
-        assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+        emitted = result["hookSpecificOutput"]
+        assert emitted["permissionDecision"] in CLAUDE_PRE_TOOL_USE_DECISIONS
+        assert emitted["permissionDecision"] == "deny"
+        assert emitted["permissionDecisionReason"] == "blocked"
+        assert emitted["hookEventName"] == "PreToolUse"
 
     async def test_pending_state_management(self):
         guard = make_guard()
@@ -99,7 +104,7 @@ class TestClaudeAgentSDKAdapter:
     async def test_observe_mode_would_deny(self):
         @precondition("*")
         def always_deny(tool_call):
-            return Decision.fail("would be denied")
+            return Decision.fail("would be blocked")
 
         sink = NullAuditSink()
         guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
@@ -194,7 +199,7 @@ class TestEdictumRun:
     async def test_run_deny_raises(self):
         @precondition("*")
         def always_deny(tool_call):
-            return Decision.fail("denied by precondition")
+            return Decision.fail("blocked by precondition")
 
         guard = make_guard(rules=[always_deny])
 
@@ -205,12 +210,12 @@ class TestEdictumRun:
 
         with pytest.raises(EdictumDenied) as exc_info:
             await guard.run("TestTool", {}, my_tool)
-        assert exc_info.value.reason == "denied by precondition"
+        assert exc_info.value.reason == "blocked by precondition"
 
     async def test_run_deny_emits_audit_no_execute(self):
         @precondition("*")
         def always_deny(tool_call):
-            return Decision.fail("denied")
+            return Decision.fail("blocked")
 
         sink = NullAuditSink()
         guard = make_guard(rules=[always_deny], audit_sink=sink)
@@ -224,7 +229,7 @@ class TestEdictumRun:
             await guard.run("TestTool", {}, my_tool)
         actions = [e.action for e in sink.events]
         assert AuditAction.CALL_DENIED in actions
-        # Denied means no execution audit
+        # Blocked means no execution audit
         assert AuditAction.CALL_EXECUTED not in actions
         assert AuditAction.CALL_ALLOWED not in actions
 

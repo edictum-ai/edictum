@@ -483,7 +483,7 @@ class ClaudeAgentSDKAdapter:
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
-                "permissionDecision": "block",
+                "permissionDecision": "deny",
                 "permissionDecisionReason": reason,
             }
         }

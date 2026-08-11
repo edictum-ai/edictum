@@ -89,7 +89,7 @@ async def run_with_guard(client: OpenAI) -> None:
 
     The Claude SDK uses pre/post tool hooks that return dicts:
     - {} means allow
-    - {"hookSpecificOutput": {"permissionDecision": "block", ...}} means block
+    - {"hookSpecificOutput": {"permissionDecision": "deny", ...}} means block
     """
     from rules import ALL_CONTRACTS
 
@@ -123,7 +123,7 @@ async def run_with_guard(client: OpenAI) -> None:
     print()
 
     call_count = 0
-    denied_count = 0
+    blocked_count = 0
 
     for _ in range(30):
         llm_start = now_s()
@@ -151,12 +151,12 @@ async def run_with_guard(client: OpenAI) -> None:
             # Route through Claude Agent SDK adapter
             pre_result = await hooks["pre_tool_use"](fn_name, args, tool_use_id)
 
-            # Check if denied: non-empty dict with permissionDecision == "block"
+            # Check if blocked: non-empty dict with permissionDecision == "deny"
             hook_output = pre_result.get("hookSpecificOutput", {})
-            if hook_output.get("permissionDecision") == "block":
-                denied_count += 1
-                reason = hook_output.get("permissionDecisionReason", "denied")
-                result = f"DENIED: {reason}"
+            if hook_output.get("permissionDecision") == "deny":
+                blocked_count += 1
+                reason = hook_output.get("permissionDecisionReason", "blocked")
+                result = f"BLOCKED: {reason}"
                 print(f"  ** EDICTUM: {result}\n")
             else:
                 tool_start = now_s()
@@ -169,11 +169,11 @@ async def run_with_guard(client: OpenAI) -> None:
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     print(f"\n{'─' * 60}")
-    print(f"Total calls: {call_count}  |  Denied: {denied_count}  |  Audit: {audit_path}")
+    print(f"Total calls: {call_count}  |  Blocked: {blocked_count}  |  Audit: {audit_path}")
     write_metrics_summary(
         metrics,
         metrics_path,
-        {"mode": "with_guard", "denied": denied_count, "audit": audit_path},
+        {"mode": "with_guard", "blocked": blocked_count, "audit": audit_path},
     )
     _print_audit(audit_path)
 

@@ -79,10 +79,10 @@ def _adapter_configs():
     from edictum.adapters.openai_agents import OpenAIAgentsAdapter
 
     def _crewai_deny(r):
-        return isinstance(r, str) and "DENIED" in r
+        return isinstance(r, str) and r.startswith("DENIED:")
 
     def _adk_deny(r):
-        return isinstance(r, dict) and "DENIED" in str(r.get("error", ""))
+        return isinstance(r, dict) and str(r.get("error", "")).startswith("DENIED:")
 
     return [
         ("CrewAI", CrewAIAdapter, _crewai_pre, _crewai_post, lambda r: r is None, _crewai_deny),
@@ -155,7 +155,7 @@ class TestParityObserve:
         guard = _make_guard(rules=[block_all], mode="observe")
         adapter = cls(guard)
         result = await pre_fn(adapter)
-        assert allow_check(result), f"{name} denied in observe mode (should allow)"
+        assert allow_check(result), f"{name} blocked in observe mode (should allow)"
 
 
 # Callback parity: CrewAI and OpenAI accept on_postcondition_warn in constructor.
@@ -352,22 +352,22 @@ class TestParitySuccessCheck:
 # --- Mutable principal helpers ---
 
 
-def _is_denied(result) -> bool:
-    """Adapter-agnostic check for a denial result."""
+def _is_blocked(result) -> bool:
+    """Adapter-agnostic check for a blocked result."""
     if result is None:
         return False
     if isinstance(result, str):
-        return "DENIED" in result
+        return result.startswith("DENIED:")
     if isinstance(result, dict):
-        # ADK adapter returns {"error": "DENIED: ..."}
-        if "DENIED" in str(result.get("error", "")):
+        # ADK adapter returns an error prefixed with the legacy block marker.
+        if str(result.get("error", "")).startswith("DENIED:"):
             return True
         # Claude SDK format
         hook = result.get("hookSpecificOutput", {})
-        return hook.get("permissionDecision") == "block"
+        return hook.get("permissionDecision") == "deny"
     # LangChain ToolMessage
     content = getattr(result, "content", "")
-    return "DENIED" in content
+    return content.startswith("DENIED:")
 
 
 # Second-call pre helpers with fresh call IDs
@@ -446,16 +446,16 @@ class TestParitySetPrincipal:
         guard = _make_guard(rules=[require_admin])
         adapter = cls(guard, principal=Principal(role="viewer"))
 
-        # First call: viewer -> denied
+        # First call: viewer -> blocked
         result1 = await pre_fn(adapter)
-        assert _is_denied(result1), f"{name} did not block viewer principal"
+        assert _is_blocked(result1), f"{name} did not block viewer principal"
 
         # Mutate principal
         adapter.set_principal(Principal(role="admin"))
 
         # Second call: admin -> allowed
         result2 = await pre_fn_2(adapter)
-        assert not _is_denied(result2), f"{name} denied after set_principal(admin)"
+        assert not _is_blocked(result2), f"{name} blocked after set_principal(admin)"
 
 
 class TestParityPrincipalResolver:
@@ -476,7 +476,7 @@ class TestParityPrincipalResolver:
         adapter = cls(guard, principal_resolver=resolver)
 
         result = await pre_fn(adapter)
-        assert not _is_denied(result), f"{name} denied when resolver returns admin"
+        assert not _is_blocked(result), f"{name} blocked when resolver returns admin"
 
     @pytest.mark.parametrize("name,cls,pre_fn", ALL_CONFIGS, ids=ALL_ADAPTER_IDS)
     async def test_resolver_overrides_static_principal(self, name, cls, pre_fn):
@@ -494,4 +494,4 @@ class TestParityPrincipalResolver:
         adapter = cls(guard, principal=Principal(role="viewer"), principal_resolver=resolver)
 
         result = await pre_fn(adapter)
-        assert not _is_denied(result), f"{name} denied when resolver returns admin (should override static viewer)"
+        assert not _is_blocked(result), f"{name} blocked when resolver returns admin (should override static viewer)"
