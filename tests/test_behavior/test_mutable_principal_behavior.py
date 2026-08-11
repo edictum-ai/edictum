@@ -54,35 +54,35 @@ def _make_adapter(*, principal=None, principal_resolver=None):
     )
 
 
-def _is_denied(result: dict) -> bool:
+def _is_blocked(result: dict) -> bool:
     hook = result.get("hookSpecificOutput", {})
-    return hook.get("permissionDecision") == "block"
+    return hook.get("permissionDecision") == "deny"
 
 
 class TestSetPrincipalChangesEnforcement:
     """set_principal() must change enforcement for subsequent calls."""
 
     async def test_set_principal_changes_enforcement(self):
-        """Viewer is denied, then set_principal(admin) allows the next call."""
+        """Viewer is blocked, then set_principal(admin) allows the next call."""
         adapter = _make_adapter(principal=Principal(role="viewer"))
 
-        # Viewer -> denied
+        # Viewer -> blocked
         result = await adapter._pre_tool_use("TestTool", {}, "tc-1")
-        assert _is_denied(result), "Viewer should be denied"
+        assert _is_blocked(result), "Viewer should be blocked"
 
         # Switch to admin
         adapter.set_principal(Principal(role="admin"))
 
         # Admin -> allowed
         result = await adapter._pre_tool_use("TestTool", {}, "tc-2")
-        assert not _is_denied(result), "Admin should be allowed after set_principal"
+        assert not _is_blocked(result), "Admin should be allowed after set_principal"
 
 
 class TestPrincipalResolverOverridesStatic:
     """principal_resolver takes precedence over the static principal."""
 
     async def test_principal_resolver_overrides_static(self):
-        """Static principal is viewer (denied), but resolver returns admin (allowed)."""
+        """Static principal is viewer (blocked), but resolver returns admin (allowed)."""
 
         def resolver(tool_name, tool_input):
             return Principal(role="admin")
@@ -93,7 +93,7 @@ class TestPrincipalResolverOverridesStatic:
         )
 
         result = await adapter._pre_tool_use("TestTool", {}, "tc-1")
-        assert not _is_denied(result), "Resolver returning admin should override static viewer principal"
+        assert not _is_blocked(result), "Resolver returning admin should override static viewer principal"
 
 
 class TestPrincipalResolverReceivesToolContext:
@@ -140,14 +140,14 @@ class TestEdictumSetPrincipal:
     """Edictum.run() must use the updated principal after set_principal()."""
 
     async def test_edictum_set_principal(self):
-        """run() denies viewer, then allows admin after set_principal."""
+        """run() blocks viewer, then allows admin after set_principal."""
         guard = _make_guard()
         guard._principal = Principal(role="viewer")
 
         async def noop(**kwargs):
             return "ok"
 
-        # Viewer -> denied
+        # Viewer -> blocked
         with pytest.raises(EdictumDenied):
             await guard.run("TestTool", {}, noop)
 
