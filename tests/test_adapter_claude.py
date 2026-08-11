@@ -13,6 +13,7 @@ from edictum.findings import Finding
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
 
+# claude-agent-sdk 0.2.135 adds "defer" to stop a run with a resumable tool call.
 CLAUDE_PRE_TOOL_USE_DECISIONS = frozenset({"allow", "deny", "ask", "defer"})
 
 
