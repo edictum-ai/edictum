@@ -18,6 +18,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _ask_approved(session: Session, rule_name: str, call_id: str) -> bool:
+    """True when this exact call already received a grant for the ask rule.
+
+    A granted ask approval binds to the call (rule id + call id) so that the
+    post-approval re-evaluation does not re-ask the same rule.
+    """
+    from edictum.session import _validate_key_component
+
+    name = f"ask:{rule_name}:{call_id}"
+    try:
+        _validate_key_component(name)
+    except ValueError:
+        return False
+    return await session.get_value(name) == "approved"
+
+
 @dataclass
 class PreDecision:
     """Result of pre-execution governance evaluation."""
@@ -160,6 +176,8 @@ class CheckPipeline:
 
                 action = getattr(rule, "_edictum_effect", "block")
                 if action == "ask":
+                    if await _ask_approved(session, rule_record["name"], tool_call.call_id):
+                        continue  # already granted for this exact call
                     return PreDecision(
                         action="pending_approval",
                         reason=decision.message,
@@ -215,6 +233,8 @@ class CheckPipeline:
 
                 action = getattr(rule, "_edictum_effect", "block")
                 if action == "ask":
+                    if await _ask_approved(session, rule_record["name"], tool_call.call_id):
+                        continue  # already granted for this exact call
                     return PreDecision(
                         action="pending_approval",
                         reason=decision.message,

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from edictum.approval import ApprovalStatus
@@ -454,7 +454,17 @@ class CrewAIAdapter:
                 or not current.workflow_stage_id
                 or self._guard._workflow_runtime is None
             ):
-                return None, replace(current, action="allow")
+                # Non-workflow ask rule approved. The pending return skipped
+                # the checks ordered after it (sandbox, session rules,
+                # workflow gates, limits) — record the grant bound to this
+                # call, then re-run them and honor a block.
+                await self._session.set_value(f"ask:{current.decision_name}:{envelope.call_id}", "approved")
+                re_eval = await self._pipeline.pre_execute(envelope, self._session)
+                await self._emit_workflow_events(envelope, re_eval.workflow_events)
+                if re_eval.action == "pending_approval":
+                    current = re_eval
+                    continue
+                return None, re_eval
             await self._guard._workflow_runtime.record_approval(self._session, current.workflow_stage_id)
             current = await self._pipeline.pre_execute(envelope, self._session)
             await self._emit_workflow_events(envelope, current.workflow_events)

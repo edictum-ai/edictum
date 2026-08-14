@@ -114,7 +114,7 @@ async def _run(
                     decision_source=pre.decision_source,
                     decision_name=pre.decision_name,
                 )
-            if pre.action == "pending_approval":
+            if pre.action == "pending_approval" or (approval_audit_handled and pre.action == "allow"):
                 self.telemetry.record_allowed(envelope)
                 if self._on_allow:
                     try:
@@ -352,7 +352,24 @@ async def _resolve_pending_approval(
             return False, decision, current, False
 
         if current.decision_source != "workflow" or not current.workflow_stage_id or self._workflow_runtime is None:
-            return True, decision, current, True
+            # Non-workflow ask rule approved. The pending return skipped the
+            # checks ordered after it (sandbox, session rules, workflow
+            # gates, limits) — record the grant bound to this call, then
+            # re-run them and honor a block from the re-run.
+            await session.set_value(f"ask:{current.decision_name}:{envelope.call_id}", "approved")
+            re_eval = await pipeline.pre_execute(envelope, session)
+            await _emit_workflow_events(self, envelope, session, re_eval.workflow_events)
+            if re_eval.action == "pending_approval":
+                current = re_eval
+                continue
+            if re_eval.action != "block":
+                # Carry the original approval metadata so span/timeout
+                # handling reflects the grant that actually happened.
+                re_eval.approval_timeout = current.approval_timeout
+                re_eval.approval_timeout_action = current.approval_timeout_action
+            # approval_audit_handled stays True for allow (the approval events
+            # already fired); a block must emit its own CALL_DENIED audit.
+            return True, decision, re_eval, re_eval.action != "block"
 
         await self._workflow_runtime.record_approval(session, current.workflow_stage_id)
         current = await pipeline.pre_execute(envelope, session)
