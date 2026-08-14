@@ -19,12 +19,12 @@ _REDIRECT_PREFIX_RE = re.compile(r"^(?:\d*>>|>>|\d*>|>|<<|<)")
 # returns a sentinel value that never matches any allowlist — failing closed.
 # The sandbox unconditionally denies sentinel results, even for path-only
 # sandboxes without allows.commands.
-# Covers: ;  |  &  &&  ||  \n  \r  `  $()  ${}  $'  <()  >()  <<<  <<
+# Covers: ;  |  &  &&  ||  \n  \r  `  $VAR  $()  ${}  $'  <()  >()  <<<  <<
+# Any `$` counts: the shell expands $(, ${, $' AND bare $VAR at runtime, so
+# the sandbox can never see the resulting command or paths — fail closed.
 _SHELL_SEPARATOR_RE = re.compile(
     r"[;|&\n\r`]"  # bare separators
-    r"|\$\("  # $( command substitution
-    r"|\$\{"  # ${ variable expansion
-    r"|\$'"  # $'...' ANSI-C quoting (can encode any separator)
+    r"|\$"  # any variable expansion (subsumes $(, ${ and $')
     r"|\<\("  # <( read process substitution
     r"|>\("  # >( write process substitution
     r"|<<<|<<(?!<)"  # herestring / heredoc
@@ -73,50 +73,89 @@ _PATH_ARG_KEYS = frozenset(
 )
 
 
+# Extraction bounds: tool args are attacker-controlled at runtime, so the
+# walker must be bounded in depth and output size.
+_MAX_PATH_DEPTH = 4
+_MAX_PATHS = 256
+_MAX_PATH_LEN = 4096
+
+# Arg keys commonly carrying a shell command string, checked when the
+# standard ``command`` key and ``bash_command`` are absent.
+_COMMAND_ARG_KEYS = ("command", "cmd", "script", "shell", "exec", "bash")
+
+
+def _command_string(tool_call: ToolCall) -> str | None:
+    """Resolve the shell command string: bash_command, then command-ish arg keys."""
+    cmd = tool_call.bash_command
+    if cmd:
+        return cmd
+    for key in _COMMAND_ARG_KEYS:
+        candidate = tool_call.args.get(key)
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return None
+
+
 def _extract_paths(tool_call: ToolCall) -> list[str]:
     """Extract file paths from an tool_call for sandbox evaluation.
 
     Strategy (priority order):
     1. tool_call.file_path (bonus for Claude Code tools)
-    2. Args values with path-like keys
-    3. Args string values starting with /
-    4. Parse command string for /-prefixed tokens
+    2. Args values with path-like keys, at any nesting depth (dicts, lists)
+    3. Args string values starting with / (absolute), at any nesting depth
+    4. Command-string tokens that reference a path: absolute tokens, tokens
+       containing ``/`` (relative traversals like ``../../etc``), and ``~``
+       — all expanded and resolved via realpath.
 
     Note: paths are resolved via ``os.path.realpath()`` which handles both
     ``..`` traversals AND symlinks.  TOCTOU caveat: a symlink created after
     evaluation but before tool execution is not caught; full mitigation
-    requires OS-level enforcement.
+    requires OS-level enforcement.  Single-component relative names in
+    commands (``cat secret.env``) are indistinguishable from plain words and
+    are not extracted.
     """
     paths: list[str] = []
     seen: set[str] = set()
 
     def _add(p: str) -> None:
-        if p:
-            p = os.path.realpath(p)
-            if p not in seen:
-                seen.add(p)
-                paths.append(p)
+        if not p or len(p) > _MAX_PATH_LEN or len(paths) >= _MAX_PATHS:
+            return
+        resolved = os.path.realpath(os.path.expanduser(p))
+        if resolved not in seen:
+            seen.add(resolved)
+            paths.append(resolved)
+
+    def _walk(value: Any, depth: int, path_key: bool) -> None:
+        if depth > _MAX_PATH_DEPTH or len(paths) >= _MAX_PATHS:
+            return
+        if isinstance(value, str):
+            if value and (path_key or value.startswith("/")):
+                _add(value)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                _walk(item, depth + 1, path_key or (isinstance(key, str) and key in _PATH_ARG_KEYS))
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                _walk(item, depth + 1, path_key)
 
     # 1. Envelope convenience field
     if tool_call.file_path:
         _add(tool_call.file_path)
 
-    # 2. Path-like arg keys
-    for key, value in tool_call.args.items():
-        if isinstance(value, str) and key in _PATH_ARG_KEYS:
-            _add(value)
+    # 2+3. Args at any nesting depth: path-like keys and absolute strings
+    _walk(tool_call.args, 0, False)
 
-    # 3. Any arg value starting with /
-    for key, value in tool_call.args.items():
-        if isinstance(value, str) and value.startswith("/") and key not in _PATH_ARG_KEYS:
-            _add(value)
-
-    # 4. Parse command string for path tokens (shell-aware)
-    cmd = tool_call.bash_command or tool_call.args.get("command", "")
+    # 4. Command-string tokens that reference paths (shell-aware).
+    #    URL tokens (curl https://host/...) carry slashes but are handled by
+    #    the domain checks, not path checks.
+    cmd = _command_string(tool_call)
     if cmd:
         for token in _tokenize_command(cmd):
-            if token.startswith("/"):
-                _add(token)
+            if "://" in token:
+                continue
+            expanded = os.path.expanduser(token)
+            if expanded.startswith("/") or "/" in expanded:
+                _add(expanded)
 
     return paths
 
@@ -132,8 +171,8 @@ def _extract_command(tool_call: ToolCall) -> str | None:
     This ensures command allowlists fail closed on any form of command
     chaining, even if the first token is allowlisted.
     """
-    cmd = tool_call.bash_command or tool_call.args.get("command")
-    if not cmd or not isinstance(cmd, str):
+    cmd = _command_string(tool_call)
+    if not cmd:
         return None
     stripped = cmd.strip()
     if not stripped:
