@@ -54,17 +54,19 @@ class TestCrewAIAdapter:
     async def test_deny_returns_correct_format(self):
         @precondition("*")
         def always_deny(tool_call):
-            return Decision.fail("denied")
+            return Decision.fail("blocked")
 
         sink = NullAuditSink()
         guard = make_guard(rules=[always_deny], audit_sink=sink)
         adapter = CrewAIAdapter(guard)
         result = await adapter._before_hook(_make_before_context())
-        assert isinstance(result, str) and "DENIED" in result
+        # CrewAI's executor blocks only on exactly False; any other value
+        # (including a reason string) lets the tool run.
+        assert result is False
         # Verify audit contains the reason
         deny_events = [e for e in sink.events if e.action == AuditAction.CALL_DENIED]
         assert len(deny_events) == 1
-        assert deny_events[0].reason == "denied"
+        assert deny_events[0].reason == "blocked"
 
     async def test_pending_state_management(self):
         guard = make_guard()
@@ -112,7 +114,7 @@ class TestCrewAIAdapter:
     async def test_observe_mode_would_deny(self):
         @precondition("*")
         def always_deny(tool_call):
-            return Decision.fail("would be denied")
+            return Decision.fail("would be blocked")
 
         sink = NullAuditSink()
         guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)

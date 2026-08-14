@@ -150,15 +150,38 @@ class CrewAIAdapter:
         def before_hook(context):
             original_name = context.tool_name
             context.tool_name = adapter._normalize_tool_name(original_name)
-            result = _run_async(adapter._before_hook(context))
-            context.tool_name = original_name
+            try:
+                result = _run_async(adapter._before_hook(context))
+            except Exception:
+                # CrewAI's executor treats a raising before-hook as a no-op
+                # and executes the tool; converting to False is the only way
+                # to fail closed across that boundary.
+                logger.exception("CrewAI before-hook raised; blocking the tool call")
+                return False
+            finally:
+                context.tool_name = original_name
             return result
 
         def after_hook(context):
             original_name = context.tool_name
             context.tool_name = adapter._normalize_tool_name(original_name)
-            _run_async(adapter._after_hook(context))
-            context.tool_name = original_name
+            try:
+                post_result = _run_async(adapter._after_hook(context))
+            except Exception:
+                # A failed post-hook must not corrupt the tool result; the
+                # original result stays and the audit trail already recorded
+                # the call.
+                logger.exception("CrewAI after-hook raised; keeping original result")
+                return None
+            finally:
+                context.tool_name = original_name
+            if post_result is None:
+                return None
+            # CrewAI's executor replaces the tool result with a non-None
+            # after-hook return. Only substitute when governance actually
+            # transformed the output (redaction / suppression).
+            if post_result.result is not getattr(context, "tool_result", None):
+                return post_result.result
             return None  # keep original result
 
         register_before_tool_call_hook(before_hook)
@@ -167,7 +190,11 @@ class CrewAIAdapter:
     async def _before_hook(self, context: Any) -> str | None:
         """Handle a before-tool-call event from CrewAI.
 
-        Returns `None` to allow or a string marker to block execution.
+        Returns `None` to allow or `False` to block execution.
+
+        CrewAI's executor blocks a tool only when a before-hook returns
+        exactly ``False``; any other value (including a reason string)
+        lets the tool run.
         """
         tool_name: str = context.tool_name
         tool_input: dict = context.tool_input
@@ -537,6 +564,10 @@ class CrewAIAdapter:
         return True
 
     @staticmethod
-    def _deny(reason: str) -> str:
-        """Return denial reason string."""
-        return f"DENIED: {reason}"
+    def _deny(reason: str) -> bool:
+        """Return the value CrewAI's executor treats as a block.
+
+        The executor blocks only on exactly ``False``; the reason reaches the
+        audit trail and on_deny callbacks before this is returned.
+        """
+        return False
