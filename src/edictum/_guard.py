@@ -32,6 +32,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_VALID_MODES = frozenset({"enforce", "observe"})
+
+
+def _validate_mode(mode: str) -> None:
+    """Reject unknown mode strings.
+
+    Enforcement paths branch on exact mode equality (e.g. ``mode == "enforce"``),
+    so an unrecognized value (a typo like ``"Enforce"``) must never reach them:
+    it would silently skip the deny raise while auditing ``call_denied``.
+    """
+    from edictum._exceptions import EdictumConfigError
+
+    if mode not in _VALID_MODES:
+        raise EdictumConfigError(f"Invalid mode: {mode!r}. Must be 'enforce' or 'observe'.")
+
 
 @dataclass(frozen=True)
 class _CompiledState:
@@ -85,6 +100,7 @@ class Edictum:
         workflow_runtime: WorkflowRuntime | None = None,
     ):
         self.environment = environment
+        _validate_mode(mode)
         self.mode = mode
         self.backend = backend or MemoryBackend()
         self.redaction = redaction or RedactionPolicy()
