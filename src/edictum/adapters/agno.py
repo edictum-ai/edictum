@@ -453,7 +453,7 @@ class AgnoAdapter:
         principal_dict = asdict(envelope.principal) if envelope.principal else None
         approval_request = await self._guard._approval_backend.request_approval(
             tool_name=envelope.tool_name,
-            tool_args=envelope.args,
+            tool_args=self._guard.redaction.redact_args(envelope.args),
             message=decision.approval_message or decision.reason or "",
             timeout=decision.approval_timeout,
             timeout_action=decision.approval_timeout_action,

@@ -218,15 +218,15 @@ class RedactionPolicy:
     )
 
     def _is_sensitive_key(self, key: str) -> bool:
-        k = key.lower()
-        # Normalize hyphens to underscores so both "api-key" and "api_key"
-        # match consistently across sensitive keys, safe keys, and word parts.
-        normalized = k.replace("-", "_")
+        # Normalize hyphens AND camelCase to underscores so "api-key",
+        # "api_key" and "apiKey" match consistently across sensitive keys,
+        # safe keys, and word parts (clientSecret -> client_secret).
+        normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key).lower().replace("-", "_")
         if normalized in self._keys:
             return True
         if normalized in self._safe_compound_keys:
             return False
-        parts = re.split(r"[_\-]", k)
+        parts = re.split(r"[_\-]", normalized)
         return any(p in self._SENSITIVE_PARTS for p in parts)
 
     def _looks_like_secret(self, value: str) -> bool:

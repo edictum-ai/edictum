@@ -325,7 +325,7 @@ async def _resolve_pending_approval(
         approval_request = await _request_approval_with_session_compat(
             self._approval_backend,
             tool_name=envelope.tool_name,
-            tool_args=envelope.args,
+            tool_args=self.redaction.redact_args(envelope.args),
             message=current.approval_message or current.reason or "",
             timeout=current.approval_timeout,
             timeout_action=current.approval_timeout_action,

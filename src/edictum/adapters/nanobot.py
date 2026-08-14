@@ -285,7 +285,7 @@ class GovernedToolRegistry:
         approval_request = await _request_approval_with_session_compat(
             self._guard._approval_backend,
             tool_name=envelope.tool_name,
-            tool_args=envelope.args,
+            tool_args=self._guard.redaction.redact_args(envelope.args),
             message=decision.approval_message or decision.reason or "",
             timeout=decision.approval_timeout,
             timeout_action=decision.approval_timeout_action,
