@@ -73,7 +73,15 @@ class ServerBackend:
                 "/v1/sessions/batch",
                 {"keys": keys},
             )
-            values = response.get("values", {})
+            values = response.get("values")
+            if not isinstance(values, dict):
+                # A 200 without a values mapping is a malformed response, not
+                # "all keys missing" — treating it as empty would read every
+                # counter as zero and silently disable operation limits.
+                raise EdictumServerError(
+                    200,
+                    f"Malformed batch response: expected 'values' mapping, got {type(values).__name__}",
+                )
             return {key: values.get(key) for key in keys}
         except EdictumServerError as exc:
             if exc.status_code in (404, 405):

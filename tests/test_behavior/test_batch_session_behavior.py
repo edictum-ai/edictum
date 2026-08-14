@@ -290,3 +290,25 @@ class TestPipelineBatchIntegration:
             await pipeline.pre_execute(tool_call, session)
 
             mock_batch.assert_called_once_with(include_tool=None)
+
+
+class TestServerFailureModes:
+    """Malformed success responses must fail closed; raised flushes must not
+    drop the audit batch. Uses httpx.MockTransport (controlled dependency)."""
+
+    @pytest.mark.security
+    @pytest.mark.asyncio
+    async def test_batch_get_malformed_200_raises(self, monkeypatch):
+        import httpx
+
+        from edictum.server.backend import ServerBackend
+        from edictum.server.client import EdictumServerClient
+
+        client = EdictumServerClient("http://localhost:9", "k", agent_id="poc", env="prod")
+        client._ensure_client()
+        client._local.client._transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"unrelated": True})
+        )
+        backend = ServerBackend(client)
+        with pytest.raises(EdictumServerError, match="Malformed batch response"):
+            await backend.batch_get(["s:poc:attempts", "s:poc:execs"])
