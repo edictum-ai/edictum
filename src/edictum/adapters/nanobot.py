@@ -136,6 +136,20 @@ class GovernedToolRegistry:
                 result, decision = await self._resolve_pending_approval(envelope, decision, span)
                 if result is not None:
                     return result
+                # The post-approval re-run can return block (e.g. the tool is
+                # not allowed in the stage the approval advanced to) — deny
+                # instead of falling through to execute.
+                if decision.action == "block":
+                    await self._emit_audit_pre(envelope, decision)
+                    self._guard.telemetry.record_denial(envelope, decision.reason)
+                    if self._guard._on_deny:
+                        try:
+                            self._guard._on_deny(envelope, decision.reason or "", decision.decision_name)
+                        except Exception:
+                            logger.exception("on_deny callback raised")
+                    span.set_attribute("governance.action", "denied")
+                    self._guard.telemetry.set_span_error(span, decision.reason or "denied")
+                    return f"[DENIED] {decision.reason}"
                 # Approved — fall through to execute
             else:
                 # Handle per-rule observed blocks

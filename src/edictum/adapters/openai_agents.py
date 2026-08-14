@@ -205,7 +205,15 @@ class OpenAIAgentsAdapter:
                 self._pending_decisions[call_id] = decision
                 return None  # allow through
 
-            # Handle block
+            if decision.action == "pending_approval":
+                blocked_result, decision = await self._resolve_pending_approval(envelope, decision, span)
+                if blocked_result is not None:
+                    span.end()
+                    self._pending.pop(call_id, None)
+                    self._pending_decisions.pop(call_id, None)
+                    return blocked_result
+
+            # Handle block (also covers a block produced by the post-approval re-run)
             if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
                 self._guard.telemetry.record_denial(envelope, decision.reason)
@@ -220,14 +228,6 @@ class OpenAIAgentsAdapter:
                 self._pending.pop(call_id, None)
                 self._pending_decisions.pop(call_id, None)
                 return self._deny(decision.reason or "")
-
-            if decision.action == "pending_approval":
-                blocked_result, decision = await self._resolve_pending_approval(envelope, decision, span)
-                if blocked_result is not None:
-                    span.end()
-                    self._pending.pop(call_id, None)
-                    self._pending_decisions.pop(call_id, None)
-                    return blocked_result
 
             # Handle per-rule observed blocks
             if decision.observed:

@@ -182,6 +182,21 @@ class GoogleADKAdapter:
                 result, decision = await self._resolve_pending_approval(envelope, decision, span)
                 if result is not None:
                     return result  # span ended inside _handle_approval
+                # The post-approval re-run can return block (e.g. the tool is
+                # not allowed in the stage the approval advanced to) — it must
+                # not fall through to the allow path.
+                if decision.action == "block":
+                    await self._emit_audit_pre(envelope, decision)
+                    self._guard.telemetry.record_denial(envelope, decision.reason)
+                    if self._guard._on_deny:
+                        try:
+                            self._guard._on_deny(envelope, decision.reason or "", decision.decision_name)
+                        except Exception:
+                            logger.exception("on_deny callback raised")
+                    span.set_attribute("governance.action", "denied")
+                    self._guard.telemetry.set_span_error(span, decision.reason or "denied")
+                    span.end()
+                    return self._deny(decision.reason or "")
                 await self._emit_audit_pre(envelope, decision)
                 if self._guard._on_allow:
                     try:

@@ -207,7 +207,16 @@ class CrewAIAdapter:
                 self._pending_decision = decision
                 return None  # allow through
 
-            # Handle block
+            if decision.action == "pending_approval":
+                blocked_result, decision = await self._resolve_pending_approval(envelope, decision, span)
+                if blocked_result is not None:
+                    span.end()
+                    self._pending_envelope = None
+                    self._pending_span = None
+                    self._pending_decision = None
+                    return blocked_result
+
+            # Handle block (also covers a block produced by the post-approval re-run)
             if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
                 self._guard.telemetry.record_denial(envelope, decision.reason)
@@ -223,15 +232,6 @@ class CrewAIAdapter:
                 self._pending_span = None
                 self._pending_decision = None
                 return self._deny(decision.reason or "")
-
-            if decision.action == "pending_approval":
-                blocked_result, decision = await self._resolve_pending_approval(envelope, decision, span)
-                if blocked_result is not None:
-                    span.end()
-                    self._pending_envelope = None
-                    self._pending_span = None
-                    self._pending_decision = None
-                    return blocked_result
 
             # Handle per-rule observed blocks
             if decision.observed:

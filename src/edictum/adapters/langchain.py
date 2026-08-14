@@ -247,7 +247,14 @@ class LangChainAdapter:
                 self._pending_decisions[tool_call_id] = decision
                 return None  # allow through
 
-            # Block
+            if decision.action == "pending_approval":
+                blocked_result, decision = await self._resolve_pending_approval(envelope, decision, span, tool_call_id)
+                if blocked_result is not None:
+                    self._pending.pop(tool_call_id, None)
+                    self._pending_decisions.pop(tool_call_id, None)
+                    return blocked_result
+
+            # Block (also covers a block produced by the post-approval re-run)
             if decision.action == "block":
                 await self._emit_audit_pre(envelope, decision)
                 self._guard.telemetry.record_denial(envelope, decision.reason)
@@ -262,13 +269,6 @@ class LangChainAdapter:
                 self._pending.pop(tool_call_id, None)
                 self._pending_decisions.pop(tool_call_id, None)
                 return self._deny(decision.reason or "", tool_call_id)
-
-            if decision.action == "pending_approval":
-                blocked_result, decision = await self._resolve_pending_approval(envelope, decision, span, tool_call_id)
-                if blocked_result is not None:
-                    self._pending.pop(tool_call_id, None)
-                    self._pending_decisions.pop(tool_call_id, None)
-                    return blocked_result
 
             # Handle per-rule observed blocks
             if decision.observed:
