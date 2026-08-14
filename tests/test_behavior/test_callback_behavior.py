@@ -132,19 +132,17 @@ class TestCallbackInvocationCount:
 
 
 class TestCrewAIDenyReturnValue:
-    """CrewAI _deny() must return the reason string, not a boolean."""
+    """CrewAI _deny() must return False — the executor's only block value."""
 
-    async def test_deny_returns_reason_string(self):
-        """_deny() must return 'DENIED: {reason}' so the agent sees why."""
+    async def test_deny_returns_false(self):
+        """_deny() must return False (the value crewai's executor blocks on)."""
         from edictum.adapters.crewai import CrewAIAdapter
 
         result = CrewAIAdapter._deny("budget exceeded")
-        assert isinstance(result, str), f"_deny() returned {type(result).__name__}, expected str"
-        assert "DENIED" in result, f"_deny() returned {result!r}, expected 'DENIED: ...'"
-        assert "budget exceeded" in result, f"_deny() lost the reason. Got: {result!r}"
+        assert result is False, f"_deny() returned {result!r}, expected False"
 
     async def test_deny_propagates_through_before_hook(self):
-        """_before_hook() must return the denial reason string on block."""
+        """_before_hook() must return False on block."""
         from edictum import precondition
         from edictum.adapters.crewai import CrewAIAdapter
 
@@ -162,8 +160,7 @@ class TestCrewAIDenyReturnValue:
         ctx = SimpleNamespace(tool_name="TestTool", tool_input={}, agent=None, task=None)
         result = await adapter._before_hook(ctx)
 
-        assert isinstance(result, str), f"_before_hook returned {type(result).__name__} on block, expected str"
-        assert "budget exceeded" in result, f"Denial reason lost. Got: {result!r}"
+        assert result is False, f"_before_hook returned {result!r} on block, expected False"
 
 
 class TestCallbackArguments:
@@ -323,8 +320,7 @@ class TestOnDenyCallbackError:
         # Must not raise -- the denial still propagates, callback error is swallowed
         result = await adapter._before_hook(ctx)
 
-        assert isinstance(result, str), "Denial must still propagate despite callback error"
-        assert "budget exceeded" in result
+        assert result is False, "Denial must still propagate despite callback error"
 
     async def test_on_allow_error_does_not_crash(self):
         """A failing on_allow callback must not prevent the allow from proceeding."""
