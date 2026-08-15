@@ -53,17 +53,6 @@ def _find_v018_dir() -> Path | None:
 
 _V018_DIR = _find_v018_dir()
 
-if _CONFORMANCE_REQUIRED and _V018_DIR is None:
-    raise FileNotFoundError(
-        "EDICTUM_CONFORMANCE_REQUIRED=1 but workflow-v0.18 fixtures were not found. "
-        "Set EDICTUM_SCHEMAS_DIR or ensure edictum-schemas is checked out."
-    )
-
-pytestmark = pytest.mark.skipif(
-    _V018_DIR is None,
-    reason="edictum-schemas/fixtures/workflow-v0.18 not found (set EDICTUM_SCHEMAS_DIR)",
-)
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -255,6 +244,31 @@ def _extends_params() -> list[Any]:
     if suite is None:
         return []
     return [pytest.param(suite, f, id=f"{suite.get('suite', 'extends')}/{f['id']}") for f in suite.get("fixtures", [])]
+
+
+# ---------------------------------------------------------------------------
+# CI gate: fail collection when required but no fixtures loaded
+# ---------------------------------------------------------------------------
+# Mirrors test_rejection.py: the gate checks the loaded fixture list, not the
+# directory. A missing directory, an empty one (truncated or wrong-ref
+# checkout), or suite files that carry no fixtures all fail collection under
+# EDICTUM_CONFORMANCE_REQUIRED=1 instead of silently skipping green.
+
+_ALL_V018_PARAMS = _wildcard_params() + _terminal_params() + _mcp_params() + _extends_params()
+
+_LOCATION = f" from {_V018_DIR}" if _V018_DIR is not None else " — the fixtures directory was not found"
+
+if _CONFORMANCE_REQUIRED and not _ALL_V018_PARAMS:
+    raise FileNotFoundError(
+        "EDICTUM_CONFORMANCE_REQUIRED=1 but no workflow-v0.18 fixtures were loaded"
+        + _LOCATION
+        + ". Set EDICTUM_SCHEMAS_DIR or ensure edictum-schemas is checked out."
+    )
+
+pytestmark = pytest.mark.skipif(
+    not _ALL_V018_PARAMS,
+    reason="edictum-schemas/fixtures/workflow-v0.18 not found or empty (set EDICTUM_SCHEMAS_DIR)",
+)
 
 
 @pytest.mark.parametrize("suite,fixture", _extends_params())
