@@ -429,3 +429,17 @@ class TestCrewAIInternalExceptionTelemetry:
         assert any("audit sink down" in str(exc) for exc in leaves)
         assert recorded == [("search_documents", guard.mode)]
         assert adapter._internal_exception_count == 1
+
+    async def test_internal_exception_audit_includes_policy_version(self):
+        """Exception audits must carry policy_version like other adapter audit paths."""
+        sink = NullAuditSink()
+        guard = make_guard(audit_sink=sink, policy_version="pv-test-1")
+        adapter = CrewAIAdapter(guard, session_id="crewai-exc-pv")
+
+        await adapter._on_internal_exception("Search Documents")
+
+        assert sink.events, "expected an exception audit event"
+        event = sink.events[-1]
+        assert event.reason == "adapter_internal_exception"
+        assert event.policy_version == "pv-test-1"
+        assert event.policy_version is not None

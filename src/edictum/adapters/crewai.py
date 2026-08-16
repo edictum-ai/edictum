@@ -504,6 +504,7 @@ class CrewAIAdapter:
                 decision_source="adapter",
                 decision_name=reason,
                 mode=mode,
+                policy_version=self._guard.policy_version,
                 policy_error=True,
             )
         )
