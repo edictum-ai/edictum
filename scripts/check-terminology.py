@@ -51,9 +51,6 @@ DENIED_ALLOWLIST = {
     'assert "[DENIED]" not in result',
     'governance.action", "denied"',
     'or "denied"',
-    # v0.18 extends fixtures carry the legacy wire verdict "denied"; the
-    # runner compares against the fixture vocabulary, not prose
-    '"denied", "block"',
 }
 
 # "shadow" needs special handling — prose should say "observe mode" / "observe-mode".

@@ -65,8 +65,7 @@ _SUITE_CACHE: dict[str, dict | None] = {}
 def _load_suite(filename: str) -> dict | None:
     if _V018_DIR is None:
         return None
-    # Memoized: each parametrize decorator and the loaded-fixture gate below
-    # both call the _*_params() builders, which must not re-read suite files.
+    # Memoized per suite file so repeated builder calls do not re-read YAML.
     if filename not in _SUITE_CACHE:
         path = _V018_DIR / filename
         _SUITE_CACHE[filename] = yaml.safe_load(path.read_text()) if path.is_file() else None
@@ -197,33 +196,11 @@ def _wildcard_params() -> list[Any]:
     return [pytest.param(suite, f, id=f"{suite.get('suite', 'wildcard')}/{f['id']}") for f in suite.get("fixtures", [])]
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("suite,fixture", _wildcard_params())
-async def test_workflow_v018_wildcard_tools(suite: dict, fixture: dict) -> None:
-    await _run_workflow_fixture(suite, fixture)
-
-
-# ---------------------------------------------------------------------------
-# Terminal-stage fixtures
-# ---------------------------------------------------------------------------
-
-
 def _terminal_params() -> list[Any]:
     suite = _load_suite("terminal-stage.workflow-v0.18.yaml")
     if suite is None:
         return []
     return [pytest.param(suite, f, id=f"{suite.get('suite', 'terminal')}/{f['id']}") for f in suite.get("fixtures", [])]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("suite,fixture", _terminal_params())
-async def test_workflow_v018_terminal_stage(suite: dict, fixture: dict) -> None:
-    await _run_workflow_fixture(suite, fixture)
-
-
-# ---------------------------------------------------------------------------
-# MCP result evidence fixtures
-# ---------------------------------------------------------------------------
 
 
 def _mcp_params() -> list[Any]:
@@ -233,17 +210,6 @@ def _mcp_params() -> list[Any]:
     return [pytest.param(suite, f, id=f"{suite.get('suite', 'mcp')}/{f['id']}") for f in suite.get("fixtures", [])]
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("suite,fixture", _mcp_params())
-async def test_workflow_v018_mcp_result_evidence(suite: dict, fixture: dict) -> None:
-    await _run_workflow_fixture(suite, fixture)
-
-
-# ---------------------------------------------------------------------------
-# Extends-inheritance fixtures
-# ---------------------------------------------------------------------------
-
-
 def _extends_params() -> list[Any]:
     suite = _load_suite("extends-inheritance.workflow-v0.18.yaml")
     if suite is None:
@@ -251,21 +217,35 @@ def _extends_params() -> list[Any]:
     return [pytest.param(suite, f, id=f"{suite.get('suite', 'extends')}/{f['id']}") for f in suite.get("fixtures", [])]
 
 
-# ---------------------------------------------------------------------------
-# CI gate: fail collection when required but no fixtures loaded
-# ---------------------------------------------------------------------------
-# Mirrors test_rejection.py: the gate checks the loaded fixture list, not the
-# directory. A missing directory, an empty one (truncated or wrong-ref
-# checkout), or suite files that carry no fixtures all fail collection under
-# EDICTUM_CONFORMANCE_REQUIRED=1 instead of silently skipping green.
+# Cached once at import so parametrize and the gate share the same lists
+# and each suite YAML is read at most once.
+_WILDCARD_PARAMS = _wildcard_params()
+_TERMINAL_PARAMS = _terminal_params()
+_MCP_PARAMS = _mcp_params()
+_EXTENDS_PARAMS = _extends_params()
+_ALL_V018_PARAMS = _WILDCARD_PARAMS + _TERMINAL_PARAMS + _MCP_PARAMS + _EXTENDS_PARAMS
 
-_ALL_V018_PARAMS = _wildcard_params() + _terminal_params() + _mcp_params() + _extends_params()
+# ---------------------------------------------------------------------------
+# CI gate: fail collection when required but any named suite is empty
+# ---------------------------------------------------------------------------
+# The gate checks loaded fixtures, not directory presence. Required mode
+# demands every named v0.18 suite — a partial checkout with one nonempty
+# file must not pass on the union of the four lists.
+
+_V018_SUITE_PARAMS = (
+    ("wildcard-tools", _WILDCARD_PARAMS),
+    ("terminal-stage", _TERMINAL_PARAMS),
+    ("mcp-result-evidence", _MCP_PARAMS),
+    ("extends-inheritance", _EXTENDS_PARAMS),
+)
+_EMPTY_V018_SUITES = [name for name, params in _V018_SUITE_PARAMS if not params]
 
 _LOCATION = f" from {_V018_DIR}" if _V018_DIR is not None else " — the fixtures directory was not found"
 
-if _CONFORMANCE_REQUIRED and not _ALL_V018_PARAMS:
+if _CONFORMANCE_REQUIRED and _EMPTY_V018_SUITES:
     raise FileNotFoundError(
         "EDICTUM_CONFORMANCE_REQUIRED=1 but no workflow-v0.18 fixtures were loaded"
+        f" (empty suites: {', '.join(_EMPTY_V018_SUITES)})"
         + _LOCATION
         + ". Set EDICTUM_SCHEMAS_DIR or ensure edictum-schemas is checked out."
     )
@@ -276,7 +256,25 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("suite,fixture", _extends_params())
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suite,fixture", _WILDCARD_PARAMS)
+async def test_workflow_v018_wildcard_tools(suite: dict, fixture: dict) -> None:
+    await _run_workflow_fixture(suite, fixture)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suite,fixture", _TERMINAL_PARAMS)
+async def test_workflow_v018_terminal_stage(suite: dict, fixture: dict) -> None:
+    await _run_workflow_fixture(suite, fixture)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suite,fixture", _MCP_PARAMS)
+async def test_workflow_v018_mcp_result_evidence(suite: dict, fixture: dict) -> None:
+    await _run_workflow_fixture(suite, fixture)
+
+
+@pytest.mark.parametrize("suite,fixture", _EXTENDS_PARAMS)
 def test_workflow_v018_extends_inheritance(suite: dict, fixture: dict) -> None:
     from edictum import Edictum
 
@@ -295,18 +293,18 @@ def test_workflow_v018_extends_inheritance(suite: dict, fixture: dict) -> None:
     result = guard.evaluate(envelope_data["tool_name"], envelope_data.get("arguments", {}))
 
     expected_verdict = expected["verdict"]
-    if expected_verdict in ("denied", "block"):  # "denied" is the shared fixture schema's legacy term
+    # Allowed is the only explicit pass spelling. Every other fixture
+    # verdict is the blocked case (glossary and shared-fixture spellings).
+    if expected_verdict == "allowed":
+        assert result.decision == "allow", (
+            f"fixture {fixture['id']}: expected allowed, got decision={result.decision!r}"
+        )
+    else:
         assert result.decision == "block", (
-            f"fixture {fixture['id']}: expected verdict=blocked, got decision={result.decision!r}"
+            f"fixture {fixture['id']}: expected blocked, got decision={result.decision!r}"
         )
         if expected.get("message_contains"):
             assert any(expected["message_contains"] in r for r in result.block_reasons), (
                 f"fixture {fixture['id']}: message_contains={expected['message_contains']!r} "
                 f"not in block_reasons={result.block_reasons!r}"
             )
-    elif expected_verdict == "allowed":
-        assert result.decision == "allow", (
-            f"fixture {fixture['id']}: expected verdict=allowed, got decision={result.decision!r}"
-        )
-    else:
-        pytest.fail(f"fixture {fixture['id']}: unknown expected verdict {expected_verdict!r}")
