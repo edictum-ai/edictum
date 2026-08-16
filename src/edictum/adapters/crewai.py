@@ -247,9 +247,10 @@ class CrewAIAdapter:
         self._call_index += 1
         self._hook_call_index_advanced = True
 
-        # Increment attempts BEFORE governance
-        await self._session.increment_attempts()
+        # Increment attempts BEFORE governance. Mark first: this write is not
+        # idempotent, so a timeout/unknown outcome must not be retried later.
         self._hook_attempts_advanced = True
+        await self._session.increment_attempts()
 
         # Start OTel span
         span = self._guard.telemetry.start_tool_span(envelope)
@@ -564,12 +565,16 @@ class CrewAIAdapter:
             decision_name=ADAPTER_INTERNAL_EXCEPTION_REASON,
             policy_error=True,
         )
+        # Local call_index is safe to advance. Do not retry increment_attempts
+        # or similar backend counter writes when the original hook already
+        # attempted them: the mutation may have applied even if the response
+        # failed. Seed pending correlation without re-running those writes.
         if not self._hook_call_index_advanced:
             self._call_index += 1
             self._hook_call_index_advanced = True
         if not self._hook_attempts_advanced:
-            await self._session.increment_attempts()
             self._hook_attempts_advanced = True
+            await self._session.increment_attempts()
 
     async def _resolve_pending_approval(
         self,

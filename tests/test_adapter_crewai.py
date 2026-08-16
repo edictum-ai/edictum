@@ -609,3 +609,35 @@ class TestCrewAIObserveExceptionPending:
         assert adapter._call_index == 1
         assert await adapter._session.attempt_count() == 1
         assert await adapter._session.execution_count() == 1
+
+    async def test_observe_exception_does_not_retry_failed_attempt_increment(self):
+        """Revert-red: fallback retries increment_attempts after it raised."""
+        sink = NullAuditSink()
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-obs-exc-incr")
+        increment_calls: list[int] = []
+        real_increment = adapter._session.increment_attempts
+
+        async def timeout_after_apply() -> int:
+            increment_calls.append(1)
+            await real_increment()
+            raise TimeoutError("backend increment timed out")
+
+        adapter._session.increment_attempts = timeout_after_apply
+
+        with _capture_registered_hooks(adapter) as (before, after):
+            result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+            assert result is None
+            assert adapter._pending_envelope is not None
+            assert adapter._pending_span is not None
+            assert adapter._pending_decision is not None
+            assert increment_calls == [1]
+            assert await adapter._session.attempt_count() == 1
+            after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert increment_calls == [1]
+        assert executed[0].session_attempt_count == 1
+        assert await adapter._session.attempt_count() == 1
+        assert await adapter._session.execution_count() == 1
