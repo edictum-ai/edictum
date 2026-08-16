@@ -59,13 +59,18 @@ _V018_DIR = _find_v018_dir()
 # ---------------------------------------------------------------------------
 
 
+_SUITE_CACHE: dict[str, dict | None] = {}
+
+
 def _load_suite(filename: str) -> dict | None:
     if _V018_DIR is None:
         return None
-    path = _V018_DIR / filename
-    if not path.is_file():
-        return None
-    return yaml.safe_load(path.read_text())
+    # Memoized: each parametrize decorator and the loaded-fixture gate below
+    # both call the _*_params() builders, which must not re-read suite files.
+    if filename not in _SUITE_CACHE:
+        path = _V018_DIR / filename
+        _SUITE_CACHE[filename] = yaml.safe_load(path.read_text()) if path.is_file() else None
+    return _SUITE_CACHE[filename]
 
 
 def _make_workflow_yaml(wf: dict) -> str:

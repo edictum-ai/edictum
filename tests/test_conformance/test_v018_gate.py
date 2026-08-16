@@ -35,7 +35,9 @@ def _run_runner(env_overrides: dict[str, str]) -> subprocess.CompletedProcess[st
         env=env,
         capture_output=True,
         text=True,
-        timeout=300,
+        # Collection only — a healthy child finishes in seconds; a tight
+        # deadline makes a hang diagnosable instead of a five-minute wait.
+        timeout=60,
     )
 
 
