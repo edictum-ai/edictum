@@ -62,6 +62,9 @@ class CrewAIAdapter:
         self._internal_exception_count = 0
         self._hook_call_index_advanced = False
         self._hook_attempts_advanced = False
+        self._hook_envelope: Any | None = None
+        self._hook_resolved_principal: Principal | None = None
+        self._hook_principal_resolved = False
 
     @property
     def session_id(self) -> str:
@@ -169,6 +172,9 @@ class CrewAIAdapter:
         def before_hook(context):
             adapter._hook_call_index_advanced = False
             adapter._hook_attempts_advanced = False
+            adapter._hook_envelope = None
+            adapter._hook_resolved_principal = None
+            adapter._hook_principal_resolved = False
             original_name = context.tool_name
             context.tool_name = adapter._normalize_tool_name(original_name)
             try:
@@ -229,9 +235,19 @@ class CrewAIAdapter:
         """
         self._hook_call_index_advanced = False
         self._hook_attempts_advanced = False
+        self._hook_envelope = None
+        self._hook_resolved_principal = None
+        self._hook_principal_resolved = False
         tool_name: str = context.tool_name
         tool_input: dict = context.tool_input
         call_id = str(uuid.uuid4())
+
+        # Resolve and stash before later hook steps. A later raise must not
+        # drop a principal/envelope already produced, and must not retry
+        # the resolver (it may be non-idempotent or the failure itself).
+        principal = self._resolve_principal(tool_name, tool_input)
+        self._hook_resolved_principal = principal
+        self._hook_principal_resolved = True
 
         # Create envelope
         envelope = create_envelope(
@@ -242,8 +258,9 @@ class CrewAIAdapter:
             tool_use_id=call_id,
             environment=self._guard.environment,
             registry=self._guard.tool_registry,
-            principal=self._resolve_principal(tool_name, tool_input),
+            principal=principal,
         )
+        self._hook_envelope = envelope
         self._call_index += 1
         self._hook_call_index_advanced = True
 
@@ -540,31 +557,39 @@ class CrewAIAdapter:
         """Keep enough pending state so after-hook can record the allowed execution."""
         if self._pending_envelope is not None and self._pending_span is not None and self._pending_decision is not None:
             return
-        tool_name = self._safe_tool_name(getattr(context, "tool_name", "") or "")
-        raw_input = getattr(context, "tool_input", None)
-        tool_input = raw_input if isinstance(raw_input, dict) else {}
-        # Do not re-invoke principal_resolver: it may be the exception that got us here.
-        call_index = self._call_index - 1 if self._hook_call_index_advanced else self._call_index
-        envelope = create_envelope(
-            tool_name=tool_name,
-            tool_input=tool_input,
-            run_id=self._session_id,
-            call_index=call_index,
-            tool_use_id=str(uuid.uuid4()),
-            environment=self._guard.environment,
-            registry=self._guard.tool_registry,
-            principal=self._principal,
-        )
-        span = self._guard.telemetry.start_tool_span(envelope)
+        # Reuse values already produced in _before_hook. Never recompute the
+        # envelope or re-invoke principal_resolver: both may already have
+        # succeeded, and the resolver is not safe to retry.
+        envelope = self._hook_envelope if self._hook_envelope is not None else self._pending_envelope
+        if envelope is None:
+            tool_name = self._safe_tool_name(getattr(context, "tool_name", "") or "")
+            raw_input = getattr(context, "tool_input", None)
+            tool_input = raw_input if isinstance(raw_input, dict) else {}
+            call_index = self._call_index - 1 if self._hook_call_index_advanced else self._call_index
+            principal = (
+                self._hook_resolved_principal if self._hook_principal_resolved else self._principal
+            )
+            envelope = create_envelope(
+                tool_name=tool_name,
+                tool_input=tool_input,
+                run_id=self._session_id,
+                call_index=call_index,
+                tool_use_id=str(uuid.uuid4()),
+                environment=self._guard.environment,
+                registry=self._guard.tool_registry,
+                principal=principal,
+            )
+        if self._pending_span is None:
+            self._pending_span = self._guard.telemetry.start_tool_span(envelope)
         self._pending_envelope = envelope
-        self._pending_span = span
-        self._pending_decision = PreDecision(
-            action="allow",
-            reason=ADAPTER_INTERNAL_EXCEPTION_REASON,
-            decision_source="adapter",
-            decision_name=ADAPTER_INTERNAL_EXCEPTION_REASON,
-            policy_error=True,
-        )
+        if self._pending_decision is None:
+            self._pending_decision = PreDecision(
+                action="allow",
+                reason=ADAPTER_INTERNAL_EXCEPTION_REASON,
+                decision_source="adapter",
+                decision_name=ADAPTER_INTERNAL_EXCEPTION_REASON,
+                policy_error=True,
+            )
         # Local call_index is safe to advance. Do not retry increment_attempts
         # or similar backend counter writes when the original hook already
         # attempted them: the mutation may have applied even if the response

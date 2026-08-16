@@ -582,6 +582,46 @@ class TestCrewAIObserveExceptionPending:
         assert await adapter._session.execution_count() == 1
         assert len(resolver_calls) == 1
 
+    async def test_observe_exception_preserves_resolved_principal(self):
+        """Revert-red: fallback rebuilds envelope with static principal."""
+        sink = NullAuditSink()
+        static = Principal(user_id="static-user")
+        resolved = Principal(user_id="resolved-user", role="admin")
+        resolver_calls: list[tuple[str, dict]] = []
+
+        def resolver(tool_name: str, tool_input: dict) -> Principal:
+            resolver_calls.append((tool_name, dict(tool_input)))
+            return resolved
+
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(
+            guard,
+            session_id="crewai-obs-exc-resolved-principal",
+            principal=static,
+            principal_resolver=resolver,
+        )
+
+        async def boom_pre(*args, **kwargs):
+            raise RuntimeError("pipeline outage")
+
+        adapter._pipeline.pre_execute = boom_pre
+
+        with _capture_registered_hooks(adapter) as (before, after):
+            result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+            assert result is None
+            assert adapter._pending_envelope is not None
+            assert adapter._pending_envelope.principal == resolved
+            assert adapter._pending_envelope.principal != static
+            assert len(resolver_calls) == 1
+            after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert executed[0].principal is not None
+        assert executed[0].principal["user_id"] == "resolved-user"
+        assert executed[0].principal["role"] == "admin"
+        assert len(resolver_calls) == 1
+
     async def test_observe_exception_preserves_counters_advanced_by_failed_hook(self):
         """Revert-red: fallback increments again after pre_execute already did."""
         sink = NullAuditSink()
