@@ -17,7 +17,12 @@ concurrency:
 
 jobs:
   gate:
-    uses: edictum-ai/.github/.github/workflows/sdk-gate.yml@a8b075f4d60354e79bd26e06353c5367b75296b2
+    # Pin points at the sdk-gate commit that exports absolute
+    # EDICTUM_SCHEMAS_DIR and no longer exports EDICTUM_FIXTURES_DIR
+    # (edictum-ai/.github#8dcbbf3, landed on main).
+    # The inline relative EDICTUM_SCHEMAS_DIR assignment is gone on
+    # purpose: it overrode the workflow's export with a relative path.
+    uses: edictum-ai/.github/.github/workflows/sdk-gate.yml@8dcbbf351385ad493929531f4181aa0616a8dfe6
     with:
       runner: blacksmith-2vcpu-ubuntu-2404-arm
       runtime: python
@@ -25,7 +30,6 @@ jobs:
       setup-command: pip install -e ".[dev,yaml,sinks,cli]"
       test-command: pytest tests/ -v
       conformance-command: >-
-        EDICTUM_SCHEMAS_DIR=edictum-schemas
         EDICTUM_CONFORMANCE_REQUIRED=1
         pytest tests/test_conformance/ -v
-      fixture-ref: 81505da9e45fac7a54978959c2f64b794554f0dd
+      fixture-ref: c0cfa040c80b7ec22a10a6960108e82196025693
