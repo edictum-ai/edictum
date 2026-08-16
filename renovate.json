@@ -1,27 +1,73 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "enabledManagers": ["github-actions"],
+  "extends": [
+    "config:recommended"
+  ],
+  "enabledManagers": [
+    "github-actions",
+    "pep621",
+    "uv"
+  ],
   "minimumReleaseAge": "15 days",
   "internalChecksFilter": "strict",
   "prCreation": "not-pending",
   "timezone": "Europe/Berlin",
-  "schedule": ["after 9am on monday"],
-  "labels": ["dependencies"],
+  "schedule": [
+    "after 9am on monday"
+  ],
+  "labels": [
+    "dependencies"
+  ],
   "dependencyDashboard": true,
   "packageRules": [
     {
-      "description": "GitHub Actions: pin to commit SHA (the repo already SHA-pins; Renovate updates the SHA + the version comment), batch into one PR, 15-day release-age floor (matches the dependency-ledger 15-day rule).",
-      "matchManagers": ["github-actions"],
+      "description": "GitHub Actions: pin to commit SHA, batch into one PR, 15-day floor.",
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "github-actions",
       "pinDigests": true,
       "commitMessagePrefix": "chore(deps):"
     },
     {
-      "description": "First-party acartag7 packages: exempt from the 15-day release-age floor so hardening fixes propagate immediately. Scoped exclusion per the dependency-ledger 'my own packages are exempt' rule — never a blanket disable.",
-      "matchManagers": ["github-actions"],
-      "matchPackageNames": ["/^acartag7\\//"],
+      "description": "First-party acartag7 actions: skip the 15-day floor. Scoped, never a blanket disable.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "/^acartag7\\//"
+      ],
       "minimumReleaseAge": "0"
+    },
+    {
+      "description": "Python minor/patch group. Adapter-hosts and majors stay out.",
+      "matchManagers": [
+        "pep621",
+        "uv"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "excludePackageNames": [
+        "crewai",
+        "langchain-core",
+        "starlette",
+        "cryptography"
+      ],
+      "groupName": "python-minor-patch"
+    },
+    {
+      "description": "Majors and adapter-hosts. Visible, not mixed with ordinary bumps. Do not merge without Alice/Arnold.",
+      "matchPackageNames": [
+        "crewai",
+        "langchain-core",
+        "starlette",
+        "cryptography",
+        "/^opentelemetry-/"
+      ],
+      "groupName": "python-majors-and-adapters",
+      "dependencyDashboardApproval": true
     }
   ]
 }
