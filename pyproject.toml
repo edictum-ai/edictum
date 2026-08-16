@@ -51,6 +51,14 @@ dev = [
 ]
 
 
+[tool.uv]
+# crewai 1.10.1 pins uv~=0.9.13 and python-dotenv~=1.1.1, which block the
+# CVE-complete / 15-day-floor versions. Override those two pins only.
+override-dependencies = [
+    "uv==0.12.1",
+    "python-dotenv==1.2.2",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/edictum"]
 
