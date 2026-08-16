@@ -60,6 +60,8 @@ class CrewAIAdapter:
         self._principal_resolver = principal_resolver
         self._parent_session_id: str | None = None
         self._internal_exception_count = 0
+        self._hook_call_index_advanced = False
+        self._hook_attempts_advanced = False
 
     @property
     def session_id(self) -> str:
@@ -165,6 +167,8 @@ class CrewAIAdapter:
             return asyncio.run(coro)
 
         def before_hook(context):
+            adapter._hook_call_index_advanced = False
+            adapter._hook_attempts_advanced = False
             original_name = context.tool_name
             context.tool_name = adapter._normalize_tool_name(original_name)
             try:
@@ -223,6 +227,8 @@ class CrewAIAdapter:
         exactly ``False``; any other value (including a reason string)
         lets the tool run.
         """
+        self._hook_call_index_advanced = False
+        self._hook_attempts_advanced = False
         tool_name: str = context.tool_name
         tool_input: dict = context.tool_input
         call_id = str(uuid.uuid4())
@@ -239,9 +245,11 @@ class CrewAIAdapter:
             principal=self._resolve_principal(tool_name, tool_input),
         )
         self._call_index += 1
+        self._hook_call_index_advanced = True
 
         # Increment attempts BEFORE governance
         await self._session.increment_attempts()
+        self._hook_attempts_advanced = True
 
         # Start OTel span
         span = self._guard.telemetry.start_tool_span(envelope)
@@ -529,24 +537,22 @@ class CrewAIAdapter:
 
     async def _ensure_observe_exception_pending(self, context: Any) -> None:
         """Keep enough pending state so after-hook can record the allowed execution."""
-        if (
-            self._pending_envelope is not None
-            and self._pending_span is not None
-            and self._pending_decision is not None
-        ):
+        if self._pending_envelope is not None and self._pending_span is not None and self._pending_decision is not None:
             return
         tool_name = self._safe_tool_name(getattr(context, "tool_name", "") or "")
         raw_input = getattr(context, "tool_input", None)
         tool_input = raw_input if isinstance(raw_input, dict) else {}
+        # Do not re-invoke principal_resolver: it may be the exception that got us here.
+        call_index = self._call_index - 1 if self._hook_call_index_advanced else self._call_index
         envelope = create_envelope(
             tool_name=tool_name,
             tool_input=tool_input,
             run_id=self._session_id,
-            call_index=self._call_index,
+            call_index=call_index,
             tool_use_id=str(uuid.uuid4()),
             environment=self._guard.environment,
             registry=self._guard.tool_registry,
-            principal=self._resolve_principal(tool_name, tool_input),
+            principal=self._principal,
         )
         span = self._guard.telemetry.start_tool_span(envelope)
         self._pending_envelope = envelope
@@ -558,8 +564,12 @@ class CrewAIAdapter:
             decision_name=ADAPTER_INTERNAL_EXCEPTION_REASON,
             policy_error=True,
         )
-        self._call_index += 1
-        await self._session.increment_attempts()
+        if not self._hook_call_index_advanced:
+            self._call_index += 1
+            self._hook_call_index_advanced = True
+        if not self._hook_attempts_advanced:
+            await self._session.increment_attempts()
+            self._hook_attempts_advanced = True
 
     async def _resolve_pending_approval(
         self,
