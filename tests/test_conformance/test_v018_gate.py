@@ -70,9 +70,9 @@ def test_required_mode_empty_dir_fails_collection() -> None:
         combined = result.stdout + result.stderr
         assert result.returncode != 0, f"runner output:\n{combined}"
         assert _REQUIRED_MESSAGE in combined, f"runner output:\n{combined}"
-        assert "empty suites: " + ", ".join(
-            name.removesuffix(".workflow-v0.18.yaml") for name in _SUITE_FILES
-        ) in combined, f"runner output:\n{combined}"
+        assert (
+            "empty suites: " + ", ".join(name.removesuffix(".workflow-v0.18.yaml") for name in _SUITE_FILES) in combined
+        ), f"runner output:\n{combined}"
 
 
 def test_required_mode_one_nonempty_suite_fails_collection() -> None:
@@ -89,10 +89,9 @@ def test_required_mode_one_nonempty_suite_fails_collection() -> None:
         combined = result.stdout + result.stderr
         assert result.returncode != 0, f"runner output:\n{combined}"
         assert _REQUIRED_MESSAGE in combined, f"runner output:\n{combined}"
-        assert (
-            "empty suites: terminal-stage, mcp-result-evidence, extends-inheritance"
-            in combined
-        ), f"runner output:\n{combined}"
+        assert "empty suites: terminal-stage, mcp-result-evidence, extends-inheritance" in combined, (
+            f"runner output:\n{combined}"
+        )
         assert "empty suites: wildcard-tools" not in combined, f"runner output:\n{combined}"
 
 
