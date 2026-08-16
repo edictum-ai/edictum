@@ -143,9 +143,9 @@ def test_blocked_call_does_not_flip_canary():
     assert flag["flipped"] is False, f"canary ran under a block rule (crewai {_crewai_version()})"
     text = _result_text(result).lower()
     assert "blocked by hook" in text, f"framework did not surface a block: {text!r}"
-    denied = [e for e in sink.events if e.action == AuditAction.CALL_DENIED]
-    assert denied, f"audit missing CALL_DENIED; got {[e.action for e in sink.events]}"
-    assert any("canary blocked" in (e.reason or "") for e in denied)
+    blocked = [e for e in sink.events if e.action == AuditAction.CALL_DENIED]
+    assert blocked, f"audit missing CALL_DENIED; got {[e.action for e in sink.events]}"
+    assert any("canary blocked" in (e.reason or "") for e in blocked)
 
 
 def test_allowed_call_does_flip_canary():
@@ -215,6 +215,8 @@ def test_observe_exception_allows_loudly():
     assert events[0].decision_source == "adapter"
     assert events[0].policy_error is True
     assert adapter._internal_exception_count == 1
+    executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+    assert executed, f"observe exception must record CALL_EXECUTED; got {[e.action for e in sink.events]}"
 
 
 def test_observe_ask_does_not_ping_approval_backend():

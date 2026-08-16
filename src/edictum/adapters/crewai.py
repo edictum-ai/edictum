@@ -11,16 +11,19 @@ from typing import TYPE_CHECKING, Any
 
 from edictum.approval import ApprovalStatus
 from edictum.audit import AuditAction, AuditEvent
-from edictum.envelope import Principal, create_envelope
+from edictum.envelope import Principal, ToolCall, _validate_tool_name, create_envelope
 from edictum.findings import Finding, PostCallResult, build_findings
-from edictum.pipeline import CheckPipeline
+from edictum.pipeline import CheckPipeline, PreDecision
 from edictum.session import Session, validate_session_id
+from edictum.telemetry import _NoOpSpan
 from edictum.workflow.state import build_workflow_snapshot
 
 logger = logging.getLogger(__name__)
 _MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 # Fixed reason code for D7 / O7: a silently-broken observe trial must be visible.
 ADAPTER_INTERNAL_EXCEPTION_REASON = "adapter_internal_exception"
+# Fail-closed stand-in when a tool name is still invalid after normalize.
+ADAPTER_UNKNOWN_TOOL_NAME = "unknown_tool"
 
 if TYPE_CHECKING:
     from edictum import Edictum
@@ -58,6 +61,15 @@ class CrewAIAdapter:
         self._principal_resolver = principal_resolver
         self._parent_session_id: str | None = None
         self._internal_exception_count = 0
+        self._hook_call_index_advanced = False
+        self._hook_attempts_advanced = False
+        self._hook_envelope: Any | None = None
+        self._hook_envelope_attempted = False
+        self._hook_resolved_principal: Principal | None = None
+        self._hook_principal_resolved = False
+        self._hook_decision: PreDecision | None = None
+        self._hook_span: Any | None = None
+        self._hook_span_attempted = False
 
     @property
     def session_id(self) -> str:
@@ -98,6 +110,18 @@ class CrewAIAdapter:
         import re
 
         return re.sub(r"_+", "_", re.sub(r"[\s\-]+", "_", name.lower())).strip("_")
+
+    @staticmethod
+    def _safe_tool_name(name: str) -> str:
+        """Normalize then validate; replace still-invalid names before emit."""
+        if not isinstance(name, str):
+            return ADAPTER_UNKNOWN_TOOL_NAME
+        normalized = CrewAIAdapter._normalize_tool_name(name)
+        try:
+            _validate_tool_name(normalized)
+        except ValueError:
+            return ADAPTER_UNKNOWN_TOOL_NAME
+        return normalized
 
     def register(
         self,
@@ -151,6 +175,15 @@ class CrewAIAdapter:
             return asyncio.run(coro)
 
         def before_hook(context):
+            adapter._hook_call_index_advanced = False
+            adapter._hook_attempts_advanced = False
+            adapter._hook_envelope = None
+            adapter._hook_envelope_attempted = False
+            adapter._hook_resolved_principal = None
+            adapter._hook_principal_resolved = False
+            adapter._hook_decision = None
+            adapter._hook_span = None
+            adapter._hook_span_attempted = False
             original_name = context.tool_name
             context.tool_name = adapter._normalize_tool_name(original_name)
             try:
@@ -165,6 +198,10 @@ class CrewAIAdapter:
                 except Exception:
                     logger.exception("CrewAI internal-exception audit failed")
                 if adapter._guard.mode == "observe":
+                    try:
+                        _run_async(adapter._ensure_observe_exception_pending(context))
+                    except Exception:
+                        logger.exception("CrewAI observe-exception pending seed failed")
                     return None
                 return False
             finally:
@@ -205,11 +242,29 @@ class CrewAIAdapter:
         exactly ``False``; any other value (including a reason string)
         lets the tool run.
         """
+        self._hook_call_index_advanced = False
+        self._hook_attempts_advanced = False
+        self._hook_envelope = None
+        self._hook_envelope_attempted = False
+        self._hook_resolved_principal = None
+        self._hook_principal_resolved = False
+        self._hook_decision = None
+        self._hook_span = None
+        self._hook_span_attempted = False
         tool_name: str = context.tool_name
         tool_input: dict = context.tool_input
         call_id = str(uuid.uuid4())
 
-        # Create envelope
+        # Resolve and stash before later hook steps. A later raise must not
+        # drop a principal/envelope already produced, and must not retry
+        # the resolver (it may be non-idempotent or the failure itself).
+        principal = self._resolve_principal(tool_name, tool_input)
+        self._hook_resolved_principal = principal
+        self._hook_principal_resolved = True
+
+        # Create envelope. Mark first: a failed deep-copy must not be retried
+        # in the observe fallback.
+        self._hook_envelope_attempted = True
         envelope = create_envelope(
             tool_name=tool_name,
             tool_input=tool_input,
@@ -218,19 +273,29 @@ class CrewAIAdapter:
             tool_use_id=call_id,
             environment=self._guard.environment,
             registry=self._guard.tool_registry,
-            principal=self._resolve_principal(tool_name, tool_input),
+            principal=principal,
         )
+        self._hook_envelope = envelope
         self._call_index += 1
+        self._hook_call_index_advanced = True
 
-        # Increment attempts BEFORE governance
+        # Increment attempts BEFORE governance. Mark first: this write is not
+        # idempotent, so a timeout/unknown outcome must not be retried later.
+        self._hook_attempts_advanced = True
         await self._session.increment_attempts()
 
-        # Start OTel span
+        # Start OTel span. Mark first: a failed start must not be retried
+        # in the observe fallback.
+        self._hook_span_attempted = True
         span = self._guard.telemetry.start_tool_span(envelope)
+        self._hook_span = span
 
         # Run pipeline
         try:
             decision = await self._pipeline.pre_execute(envelope, self._session)
+            # Stash immediately: a later emit/audit raise must not drop
+            # workflow_involved / stage / snapshot the pipeline already produced.
+            self._hook_decision = decision
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
             # Handle observe mode: convert block to allow with warning
@@ -490,16 +555,16 @@ class CrewAIAdapter:
         reason = ADAPTER_INTERNAL_EXCEPTION_REASON
         mode = self._guard.mode
         action = AuditAction.CALL_WOULD_DENY if mode == "observe" else AuditAction.CALL_DENIED
-        normalized = self._normalize_tool_name(tool_name)
+        safe_name = self._safe_tool_name(tool_name)
         # Telemetry first: a dead audit sink must not drop the counter/span.
         # The register() wrapper swallows a second sink failure, so recording
         # after emit would lose both the audit event and the exception signal.
-        self._guard.telemetry.record_adapter_exception(normalized, mode)
+        self._guard.telemetry.record_adapter_exception(safe_name, mode)
         await self._guard.audit_sink.emit(
             AuditEvent(
                 action=action,
                 session_id=self._session_id,
-                tool_name=normalized,
+                tool_name=safe_name,
                 reason=reason,
                 decision_source="adapter",
                 decision_name=reason,
@@ -508,6 +573,77 @@ class CrewAIAdapter:
                 policy_error=True,
             )
         )
+
+    async def _ensure_observe_exception_pending(self, context: Any) -> None:
+        """Keep enough pending state so after-hook can record the allowed execution."""
+        if self._pending_envelope is not None and self._pending_span is not None and self._pending_decision is not None:
+            return
+        # Reuse values already produced in _before_hook. Never recompute the
+        # envelope or re-invoke principal_resolver: both may already have
+        # succeeded, and the resolver is not safe to retry.
+        envelope = self._hook_envelope if self._hook_envelope is not None else self._pending_envelope
+        if envelope is None:
+            tool_name = self._safe_tool_name(getattr(context, "tool_name", "") or "")
+            raw_input = getattr(context, "tool_input", None)
+            tool_input = raw_input if isinstance(raw_input, dict) else {}
+            call_index = self._call_index - 1 if self._hook_call_index_advanced else self._call_index
+            principal = self._hook_resolved_principal if self._hook_principal_resolved else self._principal
+            if self._hook_envelope_attempted:
+                # create_envelope already failed. Do not retry the deep-copy.
+                # Seed a minimal correlation envelope without copying inputs.
+                envelope = ToolCall(
+                    tool_name=tool_name,
+                    args=tool_input,
+                    run_id=self._session_id,
+                    call_index=call_index,
+                    tool_use_id=str(uuid.uuid4()),
+                    environment=self._guard.environment,
+                    principal=principal,
+                )
+            else:
+                envelope = create_envelope(
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    run_id=self._session_id,
+                    call_index=call_index,
+                    tool_use_id=str(uuid.uuid4()),
+                    environment=self._guard.environment,
+                    registry=self._guard.tool_registry,
+                    principal=principal,
+                )
+        if self._pending_span is None:
+            if self._hook_span is not None:
+                self._pending_span = self._hook_span
+            elif self._hook_span_attempted:
+                # start_tool_span already failed. Do not retry the tracer.
+                self._pending_span = _NoOpSpan()
+            else:
+                self._pending_span = self._guard.telemetry.start_tool_span(envelope)
+        self._pending_envelope = envelope
+        if self._pending_decision is None:
+            # Reuse the evaluated decision when pre_execute already succeeded.
+            # A blank allow would drop workflow_involved / stage / snapshot and
+            # after-hook would skip record_result for a tool that actually ran.
+            if self._hook_decision is not None:
+                self._pending_decision = self._hook_decision
+            else:
+                self._pending_decision = PreDecision(
+                    action="allow",
+                    reason=ADAPTER_INTERNAL_EXCEPTION_REASON,
+                    decision_source="adapter",
+                    decision_name=ADAPTER_INTERNAL_EXCEPTION_REASON,
+                    policy_error=True,
+                )
+        # Local call_index is safe to advance. Do not retry increment_attempts
+        # or similar backend counter writes when the original hook already
+        # attempted them: the mutation may have applied even if the response
+        # failed. Seed pending correlation without re-running those writes.
+        if not self._hook_call_index_advanced:
+            self._call_index += 1
+            self._hook_call_index_advanced = True
+        if not self._hook_attempts_advanced:
+            self._hook_attempts_advanced = True
+            await self._session.increment_attempts()
 
     async def _resolve_pending_approval(
         self,
@@ -528,6 +664,7 @@ class CrewAIAdapter:
                 return None, replace(current, action="allow")
             await self._guard._workflow_runtime.record_approval(self._session, current.workflow_stage_id)
             current = await self._pipeline.pre_execute(envelope, self._session)
+            self._hook_decision = current
             await self._emit_workflow_events(envelope, current.workflow_events)
             if current.action != "pending_approval":
                 return None, current

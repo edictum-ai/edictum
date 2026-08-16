@@ -5,8 +5,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from edictum import Decision, Edictum, precondition
-from edictum.adapters.crewai import CrewAIAdapter
+from edictum.adapters.crewai import ADAPTER_UNKNOWN_TOOL_NAME, CrewAIAdapter
 from edictum.audit import AuditAction
+from edictum.envelope import Principal
+from edictum.pipeline import PreDecision
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
 
@@ -42,6 +44,54 @@ def _make_after_context(
         agent=None,
         task=None,
     )
+
+
+def _capture_registered_hooks(adapter: CrewAIAdapter):
+    """Register adapter hooks against a mocked CrewAI hook module."""
+    import sys
+    from contextlib import contextmanager
+    from types import ModuleType
+
+    @contextmanager
+    def _ctx():
+        mock_hooks = ModuleType("crewai.hooks.tool_hooks")
+        captured: dict = {}
+
+        def capture_before(fn):
+            captured["before"] = fn
+
+        def capture_after(fn):
+            captured["after"] = fn
+
+        mock_hooks.register_before_tool_call_hook = capture_before
+        mock_hooks.register_after_tool_call_hook = capture_after
+
+        mock_crewai = sys.modules.get("crewai") or ModuleType("crewai")
+        mock_crewai_hooks = sys.modules.get("crewai.hooks") or ModuleType("crewai.hooks")
+        orig_crewai = sys.modules.get("crewai")
+        orig_hooks_parent = sys.modules.get("crewai.hooks")
+        orig_hooks = sys.modules.get("crewai.hooks.tool_hooks")
+        sys.modules["crewai"] = mock_crewai
+        sys.modules["crewai.hooks"] = mock_crewai_hooks
+        sys.modules["crewai.hooks.tool_hooks"] = mock_hooks
+        try:
+            adapter.register()
+            yield captured["before"], captured["after"]
+        finally:
+            if orig_crewai is not None:
+                sys.modules["crewai"] = orig_crewai
+            else:
+                sys.modules.pop("crewai", None)
+            if orig_hooks_parent is not None:
+                sys.modules["crewai.hooks"] = orig_hooks_parent
+            else:
+                sys.modules.pop("crewai.hooks", None)
+            if orig_hooks is not None:
+                sys.modules["crewai.hooks.tool_hooks"] = orig_hooks
+            else:
+                sys.modules.pop("crewai.hooks.tool_hooks", None)
+
+    return _ctx()
 
 
 class TestCrewAIAdapter:
@@ -443,3 +493,316 @@ class TestCrewAIInternalExceptionTelemetry:
         assert event.reason == "adapter_internal_exception"
         assert event.policy_version == "pv-test-1"
         assert event.policy_version is not None
+
+    async def test_internal_exception_replaces_invalid_tool_name(self):
+        """Revert-red: exception path must not republish control chars or path separators."""
+        sink = NullAuditSink()
+        guard = make_guard(audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-exc-name")
+        recorded: list[str] = []
+
+        def capture(tool_name: str, mode: str) -> None:
+            recorded.append(tool_name)
+
+        guard.telemetry.record_adapter_exception = capture
+
+        await adapter._on_internal_exception("foo/bar")
+        await adapter._on_internal_exception("tool\\name")
+        await adapter._on_internal_exception("bad\x00name")
+        await adapter._on_internal_exception("Search Documents")
+
+        assert recorded == [
+            ADAPTER_UNKNOWN_TOOL_NAME,
+            ADAPTER_UNKNOWN_TOOL_NAME,
+            ADAPTER_UNKNOWN_TOOL_NAME,
+            "search_documents",
+        ]
+        assert [e.tool_name for e in sink.events] == recorded
+        for name in recorded[:3]:
+            assert "/" not in name
+            assert "\\" not in name
+            assert "\x00" not in name
+
+
+class TestCrewAIObserveExceptionPending:
+    """Observe-mode hook exceptions must still record the allowed execution."""
+
+    async def test_observe_exception_records_execution_on_after_hook(self):
+        """Revert-red: missing pending after observe exception drops CALL_EXECUTED."""
+        sink = NullAuditSink()
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-obs-exc-exec")
+
+        async def explode(context):
+            raise RuntimeError("backend outage")
+
+        with _capture_registered_hooks(adapter) as (before, after):
+            adapter._before_hook = explode
+            result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+            assert result is None
+            assert adapter._pending_envelope is not None
+            assert adapter._pending_span is not None
+            assert adapter._pending_decision is not None
+            after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert await adapter._session.execution_count() == 1
+        assert executed[0].tool_name == "canary"
+
+    async def test_observe_exception_does_not_retry_failing_principal_resolver(self):
+        """Revert-red: fallback re-invokes principal_resolver and drops pending."""
+        sink = NullAuditSink()
+        resolver_calls: list[tuple[str, dict]] = []
+        static = Principal(user_id="static-user")
+
+        def boom_resolver(tool_name: str, tool_input: dict) -> Principal:
+            resolver_calls.append((tool_name, dict(tool_input)))
+            raise RuntimeError("resolver down")
+
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(
+            guard,
+            session_id="crewai-obs-exc-resolver",
+            principal=static,
+            principal_resolver=boom_resolver,
+        )
+
+        with _capture_registered_hooks(adapter) as (before, after):
+            result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+            assert result is None
+            assert adapter._pending_envelope is not None
+            assert adapter._pending_span is not None
+            assert adapter._pending_decision is not None
+            assert adapter._pending_envelope.principal == static
+            assert len(resolver_calls) == 1
+            after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert await adapter._session.execution_count() == 1
+        assert len(resolver_calls) == 1
+
+    async def test_observe_exception_preserves_resolved_principal(self):
+        """Revert-red: fallback rebuilds envelope with static principal."""
+        sink = NullAuditSink()
+        static = Principal(user_id="static-user")
+        resolved = Principal(user_id="resolved-user", role="admin")
+        resolver_calls: list[tuple[str, dict]] = []
+
+        def resolver(tool_name: str, tool_input: dict) -> Principal:
+            resolver_calls.append((tool_name, dict(tool_input)))
+            return resolved
+
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(
+            guard,
+            session_id="crewai-obs-exc-resolved-principal",
+            principal=static,
+            principal_resolver=resolver,
+        )
+
+        async def boom_pre(*args, **kwargs):
+            raise RuntimeError("pipeline outage")
+
+        adapter._pipeline.pre_execute = boom_pre
+
+        with _capture_registered_hooks(adapter) as (before, after):
+            result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+            assert result is None
+            assert adapter._pending_envelope is not None
+            assert adapter._pending_envelope.principal == resolved
+            assert adapter._pending_envelope.principal != static
+            assert len(resolver_calls) == 1
+            after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert executed[0].principal is not None
+        assert executed[0].principal["user_id"] == "resolved-user"
+        assert executed[0].principal["role"] == "admin"
+        assert len(resolver_calls) == 1
+
+    async def test_observe_exception_preserves_counters_advanced_by_failed_hook(self):
+        """Revert-red: fallback increments again after pre_execute already did."""
+        sink = NullAuditSink()
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-obs-exc-counters")
+
+        async def boom_pre(*args, **kwargs):
+            raise RuntimeError("pipeline outage")
+
+        adapter._pipeline.pre_execute = boom_pre
+
+        with _capture_registered_hooks(adapter) as (before, after):
+            result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+            assert result is None
+            assert adapter._pending_envelope is not None
+            assert adapter._call_index == 1
+            assert await adapter._session.attempt_count() == 1
+            assert adapter._pending_envelope.call_index == 0
+            after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert executed[0].call_index == 0
+        assert executed[0].session_attempt_count == 1
+        assert adapter._call_index == 1
+        assert await adapter._session.attempt_count() == 1
+        assert await adapter._session.execution_count() == 1
+
+    async def test_observe_exception_does_not_retry_failed_attempt_increment(self):
+        """Revert-red: fallback retries increment_attempts after it raised."""
+        sink = NullAuditSink()
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-obs-exc-incr")
+        increment_calls: list[int] = []
+        real_increment = adapter._session.increment_attempts
+
+        async def timeout_after_apply() -> int:
+            increment_calls.append(1)
+            await real_increment()
+            raise TimeoutError("backend increment timed out")
+
+        adapter._session.increment_attempts = timeout_after_apply
+
+        with _capture_registered_hooks(adapter) as (before, after):
+            result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+            assert result is None
+            assert adapter._pending_envelope is not None
+            assert adapter._pending_span is not None
+            assert adapter._pending_decision is not None
+            assert increment_calls == [1]
+            assert await adapter._session.attempt_count() == 1
+            after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert increment_calls == [1]
+        assert executed[0].session_attempt_count == 1
+        assert await adapter._session.attempt_count() == 1
+        assert await adapter._session.execution_count() == 1
+
+    async def test_observe_exception_preserves_evaluated_workflow_state(self):
+        """Revert-red: fallback discards workflow fields after pre_execute succeeded."""
+        sink = NullAuditSink()
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-obs-exc-workflow")
+        snapshot = {"name": "obs-exc", "current_stage": "read-context"}
+        evaluated = PreDecision(
+            action="allow",
+            reason="ok",
+            decision_source="workflow",
+            decision_name="read-context",
+            workflow_involved=True,
+            workflow_stage_id="read-context",
+            workflow=snapshot,
+        )
+
+        async def pre(*args, **kwargs):
+            return evaluated
+
+        async def boom_emit(*args, **kwargs):
+            raise RuntimeError("workflow event emit failed")
+
+        record_calls: list[str] = []
+
+        class _Runtime:
+            definition = object()
+
+            async def record_result(self, session, stage_id, envelope, mcp_result=None):
+                record_calls.append(stage_id)
+                return []
+
+            async def state(self, session):
+                return SimpleNamespace()
+
+        adapter._pipeline.pre_execute = pre
+        adapter._emit_workflow_events = boom_emit
+        guard._workflow_runtime = _Runtime()
+
+        from edictum.adapters import crewai as crewai_mod
+
+        orig_snapshot = crewai_mod.build_workflow_snapshot
+        crewai_mod.build_workflow_snapshot = lambda definition, state: {
+            "current_stage": "read-context",
+            "status": "recorded",
+        }
+        try:
+            with _capture_registered_hooks(adapter) as (before, after):
+                result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+                assert result is None
+                assert adapter._pending_decision is evaluated
+                assert adapter._pending_decision.workflow_involved is True
+                assert adapter._pending_decision.workflow_stage_id == "read-context"
+                assert adapter._pending_decision.workflow == snapshot
+                after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+        finally:
+            crewai_mod.build_workflow_snapshot = orig_snapshot
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert record_calls == ["read-context"]
+        assert executed[0].workflow == {"current_stage": "read-context", "status": "recorded"}
+        assert await adapter._session.execution_count() == 1
+
+    async def test_observe_exception_does_not_retry_failed_span_start(self):
+        """Revert-red: fallback retries start_tool_span after it raised."""
+        sink = NullAuditSink()
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-obs-exc-span")
+        span_calls: list[int] = []
+
+        def boom_span(envelope):
+            span_calls.append(1)
+            raise RuntimeError("tracer down")
+
+        guard.telemetry.start_tool_span = boom_span
+
+        with _capture_registered_hooks(adapter) as (before, after):
+            result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+            assert result is None
+            assert adapter._pending_envelope is not None
+            assert adapter._pending_span is not None
+            assert adapter._pending_decision is not None
+            assert span_calls == [1]
+            after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert span_calls == [1]
+        assert await adapter._session.execution_count() == 1
+
+    async def test_observe_exception_does_not_retry_failed_envelope_create(self):
+        """Revert-red: fallback retries create_envelope after it raised."""
+        sink = NullAuditSink()
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-obs-exc-envelope")
+        create_calls: list[int] = []
+
+        from edictum.adapters import crewai as crewai_mod
+
+        orig_create = crewai_mod.create_envelope
+
+        def boom_create(*args, **kwargs):
+            create_calls.append(1)
+            raise RuntimeError("envelope deep-copy failed")
+
+        crewai_mod.create_envelope = boom_create
+        try:
+            with _capture_registered_hooks(adapter) as (before, after):
+                result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+                assert result is None
+                assert adapter._pending_envelope is not None
+                assert adapter._pending_span is not None
+                assert adapter._pending_decision is not None
+                assert create_calls == [1]
+                after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+        finally:
+            crewai_mod.create_envelope = orig_create
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert create_calls == [1]
+        assert executed[0].tool_name == "canary"
+        assert await adapter._session.execution_count() == 1
