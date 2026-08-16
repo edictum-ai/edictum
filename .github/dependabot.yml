@@ -1,6 +1,13 @@
 version: 2
-updates:
-  - package-ecosystem: pip
-    directory: /
-    schedule:
-      interval: weekly
+# Dependabot SECURITY alerts (CVEs) are configured via GitHub Security &
+# Advisories toggle, not here — they arrive as alerts regardless of this file.
+#
+# Version-update PRs for pip (pyproject.toml / uv.lock) and github-actions
+# are now handled by Renovate (renovate.json) with minimumReleaseAge: 15 days
+# — the release-age floor Dependabot cannot enforce natively. One bot per
+# ecosystem: Dependabot version updates OFF, Renovate ON.
+# Install the Renovate GitHub App (https://github.com/apps/renovate)
+# to activate it.
+#
+# Do not add package-ecosystem entries here. Re-enabling Dependabot
+# version updates would open double PRs against Renovate.
