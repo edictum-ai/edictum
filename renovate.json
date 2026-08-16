@@ -24,6 +24,10 @@
     "minimumReleaseAge": "0 days",
     "schedule": ["at any time"]
   },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["after 9am on monday"]
+  },
   "packageRules": [
     {
       "description": "GitHub Actions: pin to commit SHA (the repo already SHA-pins; Renovate updates the SHA + the version comment), batch into one PR, 15-day release-age floor.",
