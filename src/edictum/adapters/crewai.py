@@ -65,6 +65,7 @@ class CrewAIAdapter:
         self._hook_envelope: Any | None = None
         self._hook_resolved_principal: Principal | None = None
         self._hook_principal_resolved = False
+        self._hook_decision: PreDecision | None = None
 
     @property
     def session_id(self) -> str:
@@ -175,6 +176,7 @@ class CrewAIAdapter:
             adapter._hook_envelope = None
             adapter._hook_resolved_principal = None
             adapter._hook_principal_resolved = False
+            adapter._hook_decision = None
             original_name = context.tool_name
             context.tool_name = adapter._normalize_tool_name(original_name)
             try:
@@ -238,6 +240,7 @@ class CrewAIAdapter:
         self._hook_envelope = None
         self._hook_resolved_principal = None
         self._hook_principal_resolved = False
+        self._hook_decision = None
         tool_name: str = context.tool_name
         tool_input: dict = context.tool_input
         call_id = str(uuid.uuid4())
@@ -275,6 +278,9 @@ class CrewAIAdapter:
         # Run pipeline
         try:
             decision = await self._pipeline.pre_execute(envelope, self._session)
+            # Stash immediately: a later emit/audit raise must not drop
+            # workflow_involved / stage / snapshot the pipeline already produced.
+            self._hook_decision = decision
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
             # Handle observe mode: convert block to allow with warning
@@ -581,13 +587,19 @@ class CrewAIAdapter:
             self._pending_span = self._guard.telemetry.start_tool_span(envelope)
         self._pending_envelope = envelope
         if self._pending_decision is None:
-            self._pending_decision = PreDecision(
-                action="allow",
-                reason=ADAPTER_INTERNAL_EXCEPTION_REASON,
-                decision_source="adapter",
-                decision_name=ADAPTER_INTERNAL_EXCEPTION_REASON,
-                policy_error=True,
-            )
+            # Reuse the evaluated decision when pre_execute already succeeded.
+            # A blank allow would drop workflow_involved / stage / snapshot and
+            # after-hook would skip record_result for a tool that actually ran.
+            if self._hook_decision is not None:
+                self._pending_decision = self._hook_decision
+            else:
+                self._pending_decision = PreDecision(
+                    action="allow",
+                    reason=ADAPTER_INTERNAL_EXCEPTION_REASON,
+                    decision_source="adapter",
+                    decision_name=ADAPTER_INTERNAL_EXCEPTION_REASON,
+                    policy_error=True,
+                )
         # Local call_index is safe to advance. Do not retry increment_attempts
         # or similar backend counter writes when the original hook already
         # attempted them: the mutation may have applied even if the response
@@ -618,6 +630,7 @@ class CrewAIAdapter:
                 return None, replace(current, action="allow")
             await self._guard._workflow_runtime.record_approval(self._session, current.workflow_stage_id)
             current = await self._pipeline.pre_execute(envelope, self._session)
+            self._hook_decision = current
             await self._emit_workflow_events(envelope, current.workflow_events)
             if current.action != "pending_approval":
                 return None, current

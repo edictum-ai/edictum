@@ -8,6 +8,7 @@ from edictum import Decision, Edictum, precondition
 from edictum.adapters.crewai import ADAPTER_UNKNOWN_TOOL_NAME, CrewAIAdapter
 from edictum.audit import AuditAction
 from edictum.envelope import Principal
+from edictum.pipeline import PreDecision
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
 
@@ -680,4 +681,67 @@ class TestCrewAIObserveExceptionPending:
         assert increment_calls == [1]
         assert executed[0].session_attempt_count == 1
         assert await adapter._session.attempt_count() == 1
+        assert await adapter._session.execution_count() == 1
+
+    async def test_observe_exception_preserves_evaluated_workflow_state(self):
+        """Revert-red: fallback discards workflow fields after pre_execute succeeded."""
+        sink = NullAuditSink()
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-obs-exc-workflow")
+        snapshot = {"name": "obs-exc", "current_stage": "read-context"}
+        evaluated = PreDecision(
+            action="allow",
+            reason="ok",
+            decision_source="workflow",
+            decision_name="read-context",
+            workflow_involved=True,
+            workflow_stage_id="read-context",
+            workflow=snapshot,
+        )
+
+        async def pre(*args, **kwargs):
+            return evaluated
+
+        async def boom_emit(*args, **kwargs):
+            raise RuntimeError("workflow event emit failed")
+
+        record_calls: list[str] = []
+
+        class _Runtime:
+            definition = object()
+
+            async def record_result(self, session, stage_id, envelope, mcp_result=None):
+                record_calls.append(stage_id)
+                return []
+
+            async def state(self, session):
+                return SimpleNamespace()
+
+        adapter._pipeline.pre_execute = pre
+        adapter._emit_workflow_events = boom_emit
+        guard._workflow_runtime = _Runtime()
+
+        from edictum.adapters import crewai as crewai_mod
+
+        orig_snapshot = crewai_mod.build_workflow_snapshot
+        crewai_mod.build_workflow_snapshot = lambda definition, state: {
+            "current_stage": "read-context",
+            "status": "recorded",
+        }
+        try:
+            with _capture_registered_hooks(adapter) as (before, after):
+                result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+                assert result is None
+                assert adapter._pending_decision is evaluated
+                assert adapter._pending_decision.workflow_involved is True
+                assert adapter._pending_decision.workflow_stage_id == "read-context"
+                assert adapter._pending_decision.workflow == snapshot
+                after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+        finally:
+            crewai_mod.build_workflow_snapshot = orig_snapshot
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert record_calls == ["read-context"]
+        assert executed[0].workflow == {"current_stage": "read-context", "status": "recorded"}
         assert await adapter._session.execution_count() == 1
