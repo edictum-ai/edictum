@@ -293,13 +293,11 @@ def test_workflow_v018_extends_inheritance(suite: dict, fixture: dict) -> None:
     result = guard.evaluate(envelope_data["tool_name"], envelope_data.get("arguments", {}))
 
     expected_verdict = expected["verdict"]
-    # Allowed is the only explicit pass spelling. Every other fixture
-    # verdict is the blocked case (glossary and shared-fixture spellings).
     if expected_verdict == "allowed":
         assert result.decision == "allow", (
             f"fixture {fixture['id']}: expected allowed, got decision={result.decision!r}"
         )
-    else:
+    elif expected_verdict in {"block", "blocked"} or "denied" == expected_verdict:
         assert result.decision == "block", (
             f"fixture {fixture['id']}: expected blocked, got decision={result.decision!r}"
         )
@@ -308,3 +306,5 @@ def test_workflow_v018_extends_inheritance(suite: dict, fixture: dict) -> None:
                 f"fixture {fixture['id']}: message_contains={expected['message_contains']!r} "
                 f"not in block_reasons={result.block_reasons!r}"
             )
+    else:
+        pytest.fail(f"fixture {fixture['id']}: unknown expected verdict {expected_verdict!r}")
