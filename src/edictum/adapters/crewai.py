@@ -19,6 +19,8 @@ from edictum.workflow.state import build_workflow_snapshot
 
 logger = logging.getLogger(__name__)
 _MAX_WORKFLOW_APPROVAL_ROUNDS = 32
+# Fixed reason code for D7 / O7: a silently-broken observe trial must be visible.
+ADAPTER_INTERNAL_EXCEPTION_REASON = "adapter_internal_exception"
 
 if TYPE_CHECKING:
     from edictum import Edictum
@@ -55,6 +57,7 @@ class CrewAIAdapter:
         self._principal = principal
         self._principal_resolver = principal_resolver
         self._parent_session_id: str | None = None
+        self._internal_exception_count = 0
 
     @property
     def session_id(self) -> str:
@@ -154,9 +157,15 @@ class CrewAIAdapter:
                 result = _run_async(adapter._before_hook(context))
             except Exception:
                 # CrewAI's executor treats a raising before-hook as a no-op
-                # and executes the tool; converting to False is the only way
-                # to fail closed across that boundary.
-                logger.exception("CrewAI before-hook raised; blocking the tool call")
+                # and executes the tool. Enforce must return False (fail closed).
+                # Observe audits a LOUD fixed-reason event and allows (O7 / D7).
+                logger.exception("CrewAI before-hook raised")
+                try:
+                    _run_async(adapter._on_internal_exception(original_name))
+                except Exception:
+                    logger.exception("CrewAI internal-exception audit failed")
+                if adapter._guard.mode == "observe":
+                    return None
                 return False
             finally:
                 context.tool_name = original_name
@@ -187,7 +196,7 @@ class CrewAIAdapter:
         register_before_tool_call_hook(before_hook)
         register_after_tool_call_hook(after_hook)
 
-    async def _before_hook(self, context: Any) -> str | None:
+    async def _before_hook(self, context: Any) -> bool | None:
         """Handle a before-tool-call event from CrewAI.
 
         Returns `None` to allow or `False` to block execution.
@@ -250,6 +259,16 @@ class CrewAIAdapter:
                 self._pending_span = None
                 self._pending_decision = None
                 return self._deny(decision.reason or "")
+
+            # Observe + action:ask must NOT ping ApprovalBackend and must NOT block.
+            if self._guard.mode == "observe" and decision.action == "pending_approval":
+                await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_WOULD_DENY)
+                span.set_attribute("governance.action", "would_ask")
+                span.set_attribute("governance.would_ask_reason", decision.reason)
+                self._pending_envelope = envelope
+                self._pending_span = span
+                self._pending_decision = decision
+                return None
 
             if decision.action == "pending_approval":
                 blocked_result, decision = await self._resolve_pending_approval(envelope, decision, span)
@@ -465,12 +484,32 @@ class CrewAIAdapter:
                 )
             )
 
+    async def _on_internal_exception(self, tool_name: str) -> None:
+        """Emit the D7 loud audit + counter/span for a hook-path exception."""
+        self._internal_exception_count += 1
+        reason = ADAPTER_INTERNAL_EXCEPTION_REASON
+        mode = self._guard.mode
+        action = AuditAction.CALL_WOULD_DENY if mode == "observe" else AuditAction.CALL_DENIED
+        await self._guard.audit_sink.emit(
+            AuditEvent(
+                action=action,
+                session_id=self._session_id,
+                tool_name=self._normalize_tool_name(tool_name),
+                reason=reason,
+                decision_source="adapter",
+                decision_name=reason,
+                mode=mode,
+                policy_error=True,
+            )
+        )
+        self._guard.telemetry.record_adapter_exception(self._normalize_tool_name(tool_name), mode)
+
     async def _resolve_pending_approval(
         self,
         envelope: Any,
         decision: Any,
         span: Any,
-    ) -> tuple[str | None, Any]:
+    ) -> tuple[bool | None, Any]:
         current = decision
         for _ in range(_MAX_WORKFLOW_APPROVAL_ROUNDS):
             blocked_result = await self._handle_approval(envelope, current, span)
@@ -489,7 +528,7 @@ class CrewAIAdapter:
                 return None, current
         raise RuntimeError(f"workflow: exceeded maximum approval rounds ({_MAX_WORKFLOW_APPROVAL_ROUNDS})")
 
-    async def _handle_approval(self, envelope: Any, decision: Any, span: Any) -> str | None:
+    async def _handle_approval(self, envelope: Any, decision: Any, span: Any) -> bool | None:
         if self._guard._approval_backend is None:
             reason = "Approval required but no approval backend configured"
             await self._emit_audit_pre(envelope, decision, audit_action=AuditAction.CALL_DENIED)

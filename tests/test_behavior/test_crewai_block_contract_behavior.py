@@ -90,6 +90,37 @@ class TestCrewAIBlockContract:
         assert result is False
 
     @pytest.mark.security
+    def test_registered_hook_allows_when_observe_hook_raises(self):
+        """O7/D7: observe mode audits loudly and allows on internal exception."""
+        from crewai.hooks.tool_hooks import (
+            clear_before_tool_call_hooks,
+            get_before_tool_call_hooks,
+        )
+
+        from edictum.adapters.crewai import ADAPTER_INTERNAL_EXCEPTION_REASON
+        from edictum.audit import AuditAction
+        from tests.conftest import NullAuditSink
+
+        sink = NullAuditSink()
+        guard = Edictum.from_yaml_string(_RULES, backend=MemoryBackend(), mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-observe-exc")
+        adapter.register()
+        before = get_before_tool_call_hooks()[-1]
+
+        async def explode(context):
+            raise RuntimeError("backend outage")
+
+        adapter._before_hook = explode
+        try:
+            result = before(SimpleNamespace(tool_name="reader", tool_input={}))
+        finally:
+            clear_before_tool_call_hooks()
+        assert result is None
+        events = [e for e in sink.events if e.reason == ADAPTER_INTERNAL_EXCEPTION_REASON]
+        assert events
+        assert events[0].action == AuditAction.CALL_WOULD_DENY
+
+    @pytest.mark.security
     def test_after_hook_applies_redacted_result(self, registered_adapter):
         """A postcondition redaction must replace the tool result the agent sees."""
         adapter, before, after = registered_adapter

@@ -60,6 +60,10 @@ class GovernanceTelemetry:
             "edictum.calls.allowed",
             description="Number of allowed tool calls",
         )
+        self._adapter_exception_counter = self._meter.create_counter(
+            "edictum.adapter.internal_exception",
+            description="Adapter internal exceptions (observe allows loudly; enforce fails closed)",
+        )
 
     def start_tool_span(self, tool_call: Any) -> Any:
         """Start span. Returns _NoOpSpan if OTel not available."""
@@ -83,6 +87,17 @@ class GovernanceTelemetry:
     def record_allowed(self, tool_call: Any) -> None:
         if _HAS_OTEL and self._meter:
             self._allowed_counter.add(1, {"tool.name": tool_call.tool_name})
+
+    def record_adapter_exception(self, tool_name: str, mode: str) -> None:
+        """Count + span-attribute a D7 internal exception (loud in observe)."""
+        if _HAS_OTEL and self._meter and hasattr(self, "_adapter_exception_counter"):
+            self._adapter_exception_counter.add(1, {"tool.name": tool_name, "governance.mode": mode})
+        if _HAS_OTEL and self._tracer:
+            span = self._tracer.start_span("edictum.adapter.internal_exception")
+            span.set_attribute("governance.adapter_exception", True)
+            span.set_attribute("governance.mode", mode)
+            span.set_attribute("tool.name", tool_name)
+            span.end()
 
     def set_span_error(self, span: Any, reason: str) -> None:
         """Set span status to ERROR. No-op if OTel not available."""

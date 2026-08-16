@@ -128,6 +128,54 @@ class TestCrewAIAdapter:
         # Pending should exist (tool will execute)
         assert adapter._pending_envelope is not None
 
+    async def test_observe_ask_does_not_ping_approval(self):
+        from edictum.approval import ApprovalDecision, ApprovalRequest, ApprovalStatus
+
+        class Spy:
+            def __init__(self):
+                self.requests = []
+
+            async def request_approval(self, **kwargs):
+                self.requests.append(kwargs)
+                return ApprovalRequest(
+                    approval_id="spy",
+                    tool_name=kwargs.get("tool_name", ""),
+                    tool_args=kwargs.get("tool_args") or {},
+                    message=kwargs.get("message") or "",
+                    timeout=30,
+                )
+
+            async def wait_for_decision(self, approval_id, timeout=None):
+                return ApprovalDecision(approved=False, reason="spy", status=ApprovalStatus.DENIED)
+
+        yaml_content = """
+apiVersion: edictum/v1
+kind: Ruleset
+metadata:
+  name: observe-ask
+defaults:
+  mode: observe
+rules:
+  - id: ask-test
+    type: pre
+    tool: TestTool
+    when:
+      args.payload: {equals: ping}
+    then:
+      action: ask
+      message: would ask
+"""
+        spy = Spy()
+        sink = NullAuditSink()
+        guard = Edictum.from_yaml_string(
+            yaml_content, backend=MemoryBackend(), audit_sink=sink, approval_backend=spy, mode="observe"
+        )
+        adapter = CrewAIAdapter(guard)
+        result = await adapter._before_hook(_make_before_context(tool_input={"payload": "ping"}))
+        assert result is None
+        assert spy.requests == []
+        assert any(e.action == AuditAction.CALL_WOULD_DENY for e in sink.events)
+
     async def test_audit_events_emitted(self):
         sink = NullAuditSink()
         guard = make_guard(audit_sink=sink)

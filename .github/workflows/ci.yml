@@ -26,7 +26,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
       - run: pip install -e ".[dev,yaml,sinks,cli]"
-      - run: pytest tests/ -v
+      - run: pytest tests/ -v --ignore=tests/test_adapter_crewai_smoke.py
 
   quality:
     runs-on: blacksmith-4vcpu-ubuntu-2404-arm
@@ -68,4 +68,21 @@ jobs:
         # Installed by the CI Python toolchain. Remove ignore when patched version ships.
         run: pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219
       - name: Security boundary tests
-        run: pytest -m security -v --tb=short
+        run: pytest -m security -v --tb=short --ignore=tests/test_adapter_crewai_smoke.py
+
+  crewai-smoke:
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        crewai-version: ["1.5.0", "1.15.16"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install edictum and pinned CrewAI
+        run: pip install -e ".[dev,yaml]" "crewai==${{ matrix.crewai-version }}"
+      - name: Real-framework CrewAI smokes
+        run: pytest tests/test_adapter_crewai_smoke.py -v --tb=short
