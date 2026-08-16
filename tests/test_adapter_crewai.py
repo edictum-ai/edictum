@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from edictum import Decision, Edictum, precondition
-from edictum.adapters.crewai import CrewAIAdapter
+from edictum.adapters.crewai import ADAPTER_UNKNOWN_TOOL_NAME, CrewAIAdapter
 from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -42,6 +42,55 @@ def _make_after_context(
         agent=None,
         task=None,
     )
+
+
+
+def _capture_registered_hooks(adapter: CrewAIAdapter):
+    """Register adapter hooks against a mocked CrewAI hook module."""
+    import sys
+    from contextlib import contextmanager
+    from types import ModuleType
+
+    @contextmanager
+    def _ctx():
+        mock_hooks = ModuleType("crewai.hooks.tool_hooks")
+        captured: dict = {}
+
+        def capture_before(fn):
+            captured["before"] = fn
+
+        def capture_after(fn):
+            captured["after"] = fn
+
+        mock_hooks.register_before_tool_call_hook = capture_before
+        mock_hooks.register_after_tool_call_hook = capture_after
+
+        mock_crewai = sys.modules.get("crewai") or ModuleType("crewai")
+        mock_crewai_hooks = sys.modules.get("crewai.hooks") or ModuleType("crewai.hooks")
+        orig_crewai = sys.modules.get("crewai")
+        orig_hooks_parent = sys.modules.get("crewai.hooks")
+        orig_hooks = sys.modules.get("crewai.hooks.tool_hooks")
+        sys.modules["crewai"] = mock_crewai
+        sys.modules["crewai.hooks"] = mock_crewai_hooks
+        sys.modules["crewai.hooks.tool_hooks"] = mock_hooks
+        try:
+            adapter.register()
+            yield captured["before"], captured["after"]
+        finally:
+            if orig_crewai is not None:
+                sys.modules["crewai"] = orig_crewai
+            else:
+                sys.modules.pop("crewai", None)
+            if orig_hooks_parent is not None:
+                sys.modules["crewai.hooks"] = orig_hooks_parent
+            else:
+                sys.modules.pop("crewai.hooks", None)
+            if orig_hooks is not None:
+                sys.modules["crewai.hooks.tool_hooks"] = orig_hooks
+            else:
+                sys.modules.pop("crewai.hooks.tool_hooks", None)
+
+    return _ctx()
 
 
 class TestCrewAIAdapter:
@@ -443,3 +492,59 @@ class TestCrewAIInternalExceptionTelemetry:
         assert event.reason == "adapter_internal_exception"
         assert event.policy_version == "pv-test-1"
         assert event.policy_version is not None
+
+    async def test_internal_exception_replaces_invalid_tool_name(self):
+        """Revert-red: exception path must not republish control chars or path separators."""
+        sink = NullAuditSink()
+        guard = make_guard(audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-exc-name")
+        recorded: list[str] = []
+
+        def capture(tool_name: str, mode: str) -> None:
+            recorded.append(tool_name)
+
+        guard.telemetry.record_adapter_exception = capture
+
+        await adapter._on_internal_exception("foo/bar")
+        await adapter._on_internal_exception("tool\\name")
+        await adapter._on_internal_exception("bad\x00name")
+        await adapter._on_internal_exception("Search Documents")
+
+        assert recorded == [
+            ADAPTER_UNKNOWN_TOOL_NAME,
+            ADAPTER_UNKNOWN_TOOL_NAME,
+            ADAPTER_UNKNOWN_TOOL_NAME,
+            "search_documents",
+        ]
+        assert [e.tool_name for e in sink.events] == recorded
+        for name in recorded[:3]:
+            assert "/" not in name
+            assert "\\" not in name
+            assert "\x00" not in name
+
+
+class TestCrewAIObserveExceptionPending:
+    """Observe-mode hook exceptions must still record the allowed execution."""
+
+    async def test_observe_exception_records_execution_on_after_hook(self):
+        """Revert-red: missing pending after observe exception drops CALL_EXECUTED."""
+        sink = NullAuditSink()
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(guard, session_id="crewai-obs-exc-exec")
+
+        async def explode(context):
+            raise RuntimeError("backend outage")
+
+        with _capture_registered_hooks(adapter) as (before, after):
+            adapter._before_hook = explode
+            result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+            assert result is None
+            assert adapter._pending_envelope is not None
+            assert adapter._pending_span is not None
+            assert adapter._pending_decision is not None
+            after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert await adapter._session.execution_count() == 1
+        assert executed[0].tool_name == "canary"

@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Any
 
 from edictum.approval import ApprovalStatus
 from edictum.audit import AuditAction, AuditEvent
-from edictum.envelope import Principal, create_envelope
+from edictum.envelope import Principal, _validate_tool_name, create_envelope
 from edictum.findings import Finding, PostCallResult, build_findings
-from edictum.pipeline import CheckPipeline
+from edictum.pipeline import CheckPipeline, PreDecision
 from edictum.session import Session, validate_session_id
 from edictum.workflow.state import build_workflow_snapshot
 
@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 _MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 # Fixed reason code for D7 / O7: a silently-broken observe trial must be visible.
 ADAPTER_INTERNAL_EXCEPTION_REASON = "adapter_internal_exception"
+# Fail-closed stand-in when a tool name is still invalid after normalize.
+ADAPTER_UNKNOWN_TOOL_NAME = "unknown_tool"
 
 if TYPE_CHECKING:
     from edictum import Edictum
@@ -99,6 +101,18 @@ class CrewAIAdapter:
 
         return re.sub(r"_+", "_", re.sub(r"[\s\-]+", "_", name.lower())).strip("_")
 
+    @staticmethod
+    def _safe_tool_name(name: str) -> str:
+        """Normalize then validate; replace still-invalid names before emit."""
+        if not isinstance(name, str):
+            return ADAPTER_UNKNOWN_TOOL_NAME
+        normalized = CrewAIAdapter._normalize_tool_name(name)
+        try:
+            _validate_tool_name(normalized)
+        except ValueError:
+            return ADAPTER_UNKNOWN_TOOL_NAME
+        return normalized
+
     def register(
         self,
         on_postcondition_warn: Callable[[Any, list[Finding]], Any] | None = None,
@@ -165,6 +179,10 @@ class CrewAIAdapter:
                 except Exception:
                     logger.exception("CrewAI internal-exception audit failed")
                 if adapter._guard.mode == "observe":
+                    try:
+                        _run_async(adapter._ensure_observe_exception_pending(context))
+                    except Exception:
+                        logger.exception("CrewAI observe-exception pending seed failed")
                     return None
                 return False
             finally:
@@ -490,16 +508,16 @@ class CrewAIAdapter:
         reason = ADAPTER_INTERNAL_EXCEPTION_REASON
         mode = self._guard.mode
         action = AuditAction.CALL_WOULD_DENY if mode == "observe" else AuditAction.CALL_DENIED
-        normalized = self._normalize_tool_name(tool_name)
+        safe_name = self._safe_tool_name(tool_name)
         # Telemetry first: a dead audit sink must not drop the counter/span.
         # The register() wrapper swallows a second sink failure, so recording
         # after emit would lose both the audit event and the exception signal.
-        self._guard.telemetry.record_adapter_exception(normalized, mode)
+        self._guard.telemetry.record_adapter_exception(safe_name, mode)
         await self._guard.audit_sink.emit(
             AuditEvent(
                 action=action,
                 session_id=self._session_id,
-                tool_name=normalized,
+                tool_name=safe_name,
                 reason=reason,
                 decision_source="adapter",
                 decision_name=reason,
@@ -508,6 +526,40 @@ class CrewAIAdapter:
                 policy_error=True,
             )
         )
+
+    async def _ensure_observe_exception_pending(self, context: Any) -> None:
+        """Keep enough pending state so after-hook can record the allowed execution."""
+        if (
+            self._pending_envelope is not None
+            and self._pending_span is not None
+            and self._pending_decision is not None
+        ):
+            return
+        tool_name = self._safe_tool_name(getattr(context, "tool_name", "") or "")
+        raw_input = getattr(context, "tool_input", None)
+        tool_input = raw_input if isinstance(raw_input, dict) else {}
+        envelope = create_envelope(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            run_id=self._session_id,
+            call_index=self._call_index,
+            tool_use_id=str(uuid.uuid4()),
+            environment=self._guard.environment,
+            registry=self._guard.tool_registry,
+            principal=self._resolve_principal(tool_name, tool_input),
+        )
+        span = self._guard.telemetry.start_tool_span(envelope)
+        self._pending_envelope = envelope
+        self._pending_span = span
+        self._pending_decision = PreDecision(
+            action="allow",
+            reason=ADAPTER_INTERNAL_EXCEPTION_REASON,
+            decision_source="adapter",
+            decision_name=ADAPTER_INTERNAL_EXCEPTION_REASON,
+            policy_error=True,
+        )
+        self._call_index += 1
+        await self._session.increment_attempts()
 
     async def _resolve_pending_approval(
         self,
