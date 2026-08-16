@@ -87,4 +87,4 @@ jobs:
       - name: Real-framework CrewAI smokes
         env:
           EDICTUM_CREWAI_SMOKE: "1"
-        run: pytest -o addopts= tests/test_adapter_crewai_smoke.py -v --tb=short
+        run: pytest -o addopts= tests/test_adapter_crewai_smoke.py tests/test_behavior/test_crewai_block_contract_behavior.py -v --tb=short

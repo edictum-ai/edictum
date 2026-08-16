@@ -121,6 +121,42 @@ class TestCrewAIBlockContract:
         assert events[0].action == AuditAction.CALL_WOULD_DENY
 
     @pytest.mark.security
+    def test_registered_hook_records_telemetry_when_audit_sink_fails(self):
+        """A dead audit sink must not drop the D7 exception counter/span.
+
+        The wrapper swallows a second sink failure; telemetry has to be
+        recorded before that awaited emit or this assertion goes red.
+        """
+        from crewai.hooks.tool_hooks import (
+            clear_before_tool_call_hooks,
+            get_before_tool_call_hooks,
+        )
+
+        class FailingSink:
+            async def emit(self, event):
+                raise RuntimeError("audit sink down")
+
+        recorded: list[tuple[str, str]] = []
+
+        guard = Edictum.from_yaml_string(_RULES, backend=MemoryBackend(), audit_sink=FailingSink())
+        guard.telemetry.record_adapter_exception = lambda tool_name, mode: recorded.append((tool_name, mode))
+        adapter = CrewAIAdapter(guard, session_id="crewai-sink-fail")
+        adapter.register()
+        before = get_before_tool_call_hooks()[-1]
+
+        async def explode(context):
+            raise RuntimeError("backend outage")
+
+        adapter._before_hook = explode
+        try:
+            result = before(SimpleNamespace(tool_name="reader", tool_input={}))
+        finally:
+            clear_before_tool_call_hooks()
+        assert result is False
+        assert recorded == [("reader", "enforce")]
+        assert adapter._internal_exception_count == 1
+
+    @pytest.mark.security
     def test_after_hook_applies_redacted_result(self, registered_adapter):
         """A postcondition redaction must replace the tool result the agent sees."""
         adapter, before, after = registered_adapter

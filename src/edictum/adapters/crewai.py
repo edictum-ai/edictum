@@ -490,11 +490,16 @@ class CrewAIAdapter:
         reason = ADAPTER_INTERNAL_EXCEPTION_REASON
         mode = self._guard.mode
         action = AuditAction.CALL_WOULD_DENY if mode == "observe" else AuditAction.CALL_DENIED
+        normalized = self._normalize_tool_name(tool_name)
+        # Telemetry first: a dead audit sink must not drop the counter/span.
+        # The register() wrapper swallows a second sink failure, so recording
+        # after emit would lose both the audit event and the exception signal.
+        self._guard.telemetry.record_adapter_exception(normalized, mode)
         await self._guard.audit_sink.emit(
             AuditEvent(
                 action=action,
                 session_id=self._session_id,
-                tool_name=self._normalize_tool_name(tool_name),
+                tool_name=normalized,
                 reason=reason,
                 decision_source="adapter",
                 decision_name=reason,
@@ -502,7 +507,6 @@ class CrewAIAdapter:
                 policy_error=True,
             )
         )
-        self._guard.telemetry.record_adapter_exception(self._normalize_tool_name(tool_name), mode)
 
     async def _resolve_pending_approval(
         self,

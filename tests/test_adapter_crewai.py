@@ -393,3 +393,39 @@ class TestCrewAIToolNameNormalization:
 
     def test_normalize_mixed_separators(self):
         assert CrewAIAdapter._normalize_tool_name("Search - Documents  Here") == "search_documents_here"
+
+
+class TestCrewAIInternalExceptionTelemetry:
+    """D7: a dead audit sink must not drop the exception counter/span."""
+
+    async def test_internal_exception_records_telemetry_when_audit_sink_fails(self):
+        """Revert-red: recording telemetry after emit loses the signal.
+
+        The register() wrapper swallows a second sink failure, so
+        ``record_adapter_exception`` must run before the awaited emit.
+        """
+
+        class FailingSink:
+            async def emit(self, event):
+                raise RuntimeError("audit sink down")
+
+        guard = make_guard(audit_sink=FailingSink())
+        adapter = CrewAIAdapter(guard, session_id="crewai-sink-fail")
+        recorded: list[tuple[str, str]] = []
+
+        def capture(tool_name: str, mode: str) -> None:
+            recorded.append((tool_name, mode))
+
+        guard.telemetry.record_adapter_exception = capture
+
+        raised: Exception | None = None
+        try:
+            await adapter._on_internal_exception("Search Documents")
+        except Exception as exc:
+            raised = exc
+
+        assert raised is not None
+        leaves = list(getattr(raised, "exceptions", (raised,)))
+        assert any("audit sink down" in str(exc) for exc in leaves)
+        assert recorded == [("search_documents", guard.mode)]
+        assert adapter._internal_exception_count == 1
