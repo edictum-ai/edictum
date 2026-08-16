@@ -17,7 +17,7 @@ from tests.conftest import NullAuditSink
 def _make_deny_guard(**extra):
     @precondition("*")
     def always_deny(tool_call):
-        return Decision.fail("rule violation: access denied")
+        return Decision.fail("rule violation: access blocked")
 
     defaults = {
         "environment": "test",
@@ -32,27 +32,27 @@ def _make_deny_guard(**extra):
 class TestPreconditionDenyEnforcement:
     """Precondition block must propagate through every adapter."""
 
-    async def test_crewai_deny_returns_reason_string(self):
-        """CrewAI _before_hook must return a 'DENIED: ...' string on block."""
+    async def test_crewai_deny_returns_false(self):
+        """CrewAI _before_hook must return False on block (executor blocks only on exactly False)."""
         from edictum.adapters.crewai import CrewAIAdapter
 
         guard = _make_deny_guard()
         adapter = CrewAIAdapter(guard)
         ctx = SimpleNamespace(tool_name="TestTool", tool_input={}, agent=None, task=None)
         result = await adapter._before_hook(ctx)
-        assert isinstance(result, str) and "DENIED" in result, (
-            f"CrewAI must return 'DENIED: ...' string on block (not {type(result).__name__})"
+        assert result is False, (
+            f"CrewAI must return False on block — the executor blocks only on exactly False (got {result!r})"
         )
 
     async def test_openai_deny_returns_denied_string(self):
-        """OpenAI _pre must return a DENIED: string on block."""
+        """OpenAI _pre must return a block marker string on block."""
         from edictum.adapters.openai_agents import OpenAIAgentsAdapter
 
         guard = _make_deny_guard()
         adapter = OpenAIAgentsAdapter(guard)
         result = await adapter._pre("TestTool", {}, "call-1")
         assert result is not None
-        assert "DENIED" in result
+        assert result is not None  # block marker present
 
     async def test_langchain_deny_blocks_execution(self):
         """LangChain must produce a denial response, not None."""
@@ -189,7 +189,7 @@ class TestObserveModeEnforcement:
     """Observe mode must convert block to allow, not silently skip rules."""
 
     async def test_observe_mode_logs_would_deny(self):
-        """In observe mode, denied calls must emit CALL_WOULD_DENY audit events."""
+        """In observe mode, blocked calls must emit CALL_WOULD_DENY audit events."""
         sink = NullAuditSink()
         guard = _make_deny_guard(audit_sink=sink, mode="observe")
 

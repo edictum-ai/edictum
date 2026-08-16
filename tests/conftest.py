@@ -2,11 +2,35 @@
 
 from __future__ import annotations
 
+import importlib
+import os
+
 import pytest
 
 from edictum import Edictum, create_envelope
 from edictum.session import Session
 from edictum.storage import MemoryBackend
+
+_CREWAI_SMOKE_ENV = "EDICTUM_CREWAI_SMOKE"
+_CREWAI_SMOKE_FILE = "test_adapter_crewai_smoke.py"
+
+# Default/parity collection must not import crewai (the host is not installed
+# there). Dedicated smoke jobs set EDICTUM_CREWAI_SMOKE=1 and collect this
+# file fail-closed: missing host is RED, never a skip.
+collect_ignore: list[str] = []
+if os.environ.get(_CREWAI_SMOKE_ENV) != "1":
+    collect_ignore.append(_CREWAI_SMOKE_FILE)
+
+
+def pytest_configure(config):
+    if os.environ.get(_CREWAI_SMOKE_ENV) != "1":
+        return
+    try:
+        importlib.import_module("crewai")
+    except ImportError as exc:
+        raise pytest.UsageError(
+            "EDICTUM_CREWAI_SMOKE=1 requires crewai; missing host for a claimed capability is RED"
+        ) from exc
 
 
 def pytest_addoption(parser):

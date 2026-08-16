@@ -54,17 +54,19 @@ class TestCrewAIAdapter:
     async def test_deny_returns_correct_format(self):
         @precondition("*")
         def always_deny(tool_call):
-            return Decision.fail("denied")
+            return Decision.fail("blocked")
 
         sink = NullAuditSink()
         guard = make_guard(rules=[always_deny], audit_sink=sink)
         adapter = CrewAIAdapter(guard)
         result = await adapter._before_hook(_make_before_context())
-        assert isinstance(result, str) and "DENIED" in result
+        # CrewAI's executor blocks only on exactly False; any other value
+        # (including a reason string) lets the tool run.
+        assert result is False
         # Verify audit contains the reason
         deny_events = [e for e in sink.events if e.action == AuditAction.CALL_DENIED]
         assert len(deny_events) == 1
-        assert deny_events[0].reason == "denied"
+        assert deny_events[0].reason == "blocked"
 
     async def test_pending_state_management(self):
         guard = make_guard()
@@ -112,7 +114,7 @@ class TestCrewAIAdapter:
     async def test_observe_mode_would_deny(self):
         @precondition("*")
         def always_deny(tool_call):
-            return Decision.fail("would be denied")
+            return Decision.fail("would be blocked")
 
         sink = NullAuditSink()
         guard = make_guard(mode="observe", rules=[always_deny], audit_sink=sink)
@@ -125,6 +127,54 @@ class TestCrewAIAdapter:
         assert any(e.action == AuditAction.CALL_WOULD_DENY for e in sink.events)
         # Pending should exist (tool will execute)
         assert adapter._pending_envelope is not None
+
+    async def test_observe_ask_does_not_ping_approval(self):
+        from edictum.approval import ApprovalDecision, ApprovalRequest, ApprovalStatus
+
+        class Spy:
+            def __init__(self):
+                self.requests = []
+
+            async def request_approval(self, **kwargs):
+                self.requests.append(kwargs)
+                return ApprovalRequest(
+                    approval_id="spy",
+                    tool_name=kwargs.get("tool_name", ""),
+                    tool_args=kwargs.get("tool_args") or {},
+                    message=kwargs.get("message") or "",
+                    timeout=30,
+                )
+
+            async def wait_for_decision(self, approval_id, timeout=None):
+                return ApprovalDecision(approved=False, reason="spy", status=ApprovalStatus.DENIED)
+
+        yaml_content = """
+apiVersion: edictum/v1
+kind: Ruleset
+metadata:
+  name: observe-ask
+defaults:
+  mode: observe
+rules:
+  - id: ask-test
+    type: pre
+    tool: TestTool
+    when:
+      args.payload: {equals: ping}
+    then:
+      action: ask
+      message: would ask
+"""
+        spy = Spy()
+        sink = NullAuditSink()
+        guard = Edictum.from_yaml_string(
+            yaml_content, backend=MemoryBackend(), audit_sink=sink, approval_backend=spy, mode="observe"
+        )
+        adapter = CrewAIAdapter(guard)
+        result = await adapter._before_hook(_make_before_context(tool_input={"payload": "ping"}))
+        assert result is None
+        assert spy.requests == []
+        assert any(e.action == AuditAction.CALL_WOULD_DENY for e in sink.events)
 
     async def test_audit_events_emitted(self):
         sink = NullAuditSink()
@@ -343,3 +393,53 @@ class TestCrewAIToolNameNormalization:
 
     def test_normalize_mixed_separators(self):
         assert CrewAIAdapter._normalize_tool_name("Search - Documents  Here") == "search_documents_here"
+
+
+class TestCrewAIInternalExceptionTelemetry:
+    """D7: a dead audit sink must not drop the exception counter/span."""
+
+    async def test_internal_exception_records_telemetry_when_audit_sink_fails(self):
+        """Revert-red: recording telemetry after emit loses the signal.
+
+        The register() wrapper swallows a second sink failure, so
+        ``record_adapter_exception`` must run before the awaited emit.
+        """
+
+        class FailingSink:
+            async def emit(self, event):
+                raise RuntimeError("audit sink down")
+
+        guard = make_guard(audit_sink=FailingSink())
+        adapter = CrewAIAdapter(guard, session_id="crewai-sink-fail")
+        recorded: list[tuple[str, str]] = []
+
+        def capture(tool_name: str, mode: str) -> None:
+            recorded.append((tool_name, mode))
+
+        guard.telemetry.record_adapter_exception = capture
+
+        raised: Exception | None = None
+        try:
+            await adapter._on_internal_exception("Search Documents")
+        except Exception as exc:
+            raised = exc
+
+        assert raised is not None
+        leaves = list(getattr(raised, "exceptions", (raised,)))
+        assert any("audit sink down" in str(exc) for exc in leaves)
+        assert recorded == [("search_documents", guard.mode)]
+        assert adapter._internal_exception_count == 1
+
+    async def test_internal_exception_audit_includes_policy_version(self):
+        """Exception audits must carry policy_version like other adapter audit paths."""
+        sink = NullAuditSink()
+        guard = make_guard(audit_sink=sink, policy_version="pv-test-1")
+        adapter = CrewAIAdapter(guard, session_id="crewai-exc-pv")
+
+        await adapter._on_internal_exception("Search Documents")
+
+        assert sink.events, "expected an exception audit event"
+        event = sink.events[-1]
+        assert event.reason == "adapter_internal_exception"
+        assert event.policy_version == "pv-test-1"
+        assert event.policy_version is not None

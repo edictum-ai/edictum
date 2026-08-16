@@ -79,6 +79,8 @@ def _adapter_configs():
     from edictum.adapters.openai_agents import OpenAIAgentsAdapter
 
     def _crewai_deny(r):
+        if r is False:
+            return True  # CrewAI executor blocks only on exactly False
         return isinstance(r, str) and r.startswith("DENIED:")
 
     def _adk_deny(r):
@@ -356,6 +358,8 @@ def _is_blocked(result) -> bool:
     """Adapter-agnostic check for a blocked result."""
     if result is None:
         return False
+    if result is False:
+        return True  # CrewAI executor blocks only on exactly False
     if isinstance(result, str):
         return result.startswith("DENIED:")
     if isinstance(result, dict):
