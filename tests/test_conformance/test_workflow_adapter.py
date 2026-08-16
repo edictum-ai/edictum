@@ -265,7 +265,7 @@ async def _post_google(
 
 def _is_blocked_string(result: Any) -> bool:
     if result is False:
-        # CrewAI adapter contract: the executor blocks only on exactly False.
+        # CrewAI executor blocks only on exactly False.
         return True
     return isinstance(result, str) and _BLOCK_MARKER in result
 

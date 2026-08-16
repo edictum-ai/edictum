@@ -1,9 +1,9 @@
-"""Behavior tests for the CrewAI adapter's hook return-value contract.
+"""Behavior tests for the CrewAI adapter's hook return-value protocol.
 
 CrewAI's executor (verified against crewai 1.10.1, tool_utils) blocks a tool
 only when a before-hook returns exactly ``False``, catches every hook
 exception and executes anyway, and replaces the tool result with a non-None
-after-hook return. These tests pin the adapter to that contract.
+after-hook return. These tests pin the adapter to that host behavior.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ _RULES = """
 apiVersion: edictum/v1
 kind: Ruleset
 metadata:
-  name: crewai-contract
+  name: crewai-block
 defaults:
   mode: enforce
 tools:
@@ -60,7 +60,7 @@ def registered_adapter():
     )
 
     guard = Edictum.from_yaml_string(_RULES, backend=MemoryBackend())
-    adapter = CrewAIAdapter(guard, session_id="crewai-contract")
+    adapter = CrewAIAdapter(guard, session_id="crewai-block")
     adapter.register()
     before = get_before_tool_call_hooks()[-1]
     after = get_after_tool_call_hooks()[-1]
@@ -68,7 +68,7 @@ def registered_adapter():
     clear_before_tool_call_hooks()
 
 
-class TestCrewAIBlockContract:
+class TestCrewAIBlockBehavior:
     @pytest.mark.security
     def test_registered_hook_returns_false_on_block(self, registered_adapter):
         """The value crewai's executor recognizes as a block is exactly False."""

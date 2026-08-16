@@ -33,7 +33,7 @@ class TestPreconditionDenyEnforcement:
     """Precondition block must propagate through every adapter."""
 
     async def test_crewai_deny_returns_false(self):
-        """CrewAI _before_hook must return False on block (executor contract)."""
+        """CrewAI _before_hook must return False on block (executor blocks only on exactly False)."""
         from edictum.adapters.crewai import CrewAIAdapter
 
         guard = _make_deny_guard()
