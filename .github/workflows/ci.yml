@@ -85,4 +85,6 @@ jobs:
       - name: Install edictum and pinned CrewAI
         run: pip install -e ".[dev,yaml]" "crewai==${{ matrix.crewai-version }}"
       - name: Real-framework CrewAI smokes
-        run: pytest tests/test_adapter_crewai_smoke.py -v --tb=short
+        env:
+          EDICTUM_CREWAI_SMOKE: "1"
+        run: pytest -o addopts= tests/test_adapter_crewai_smoke.py -v --tb=short

@@ -15,7 +15,7 @@ for pin in "${PINS[@]}"; do
     rm -rf "$venv"
     continue
   fi
-  if ! "$venv/bin/pytest" "${ROOT}/tests/test_adapter_crewai_smoke.py" -v --tb=short; then
+  if ! EDICTUM_CREWAI_SMOKE=1 "$venv/bin/pytest" -o addopts= "${ROOT}/tests/test_adapter_crewai_smoke.py" -v --tb=short; then
     echo "RED: smokes failed on crewai==${pin}"
     status=1
   fi

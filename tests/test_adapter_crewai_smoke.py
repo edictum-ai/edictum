@@ -7,6 +7,8 @@ action text is the ReAct payload the executor would parse from one.
 
 Floor = crewai 1.5.0; latest = crewai 1.15.16 (edictum-schemas#26 @ 6ddd631).
 Missing CrewAI is RED: this file claims the host.
+Default/parity collection ignores this file (addopts + collect_ignore).
+Dedicated smoke jobs set EDICTUM_CREWAI_SMOKE=1 and must stay fail-closed.
 """
 
 from __future__ import annotations
