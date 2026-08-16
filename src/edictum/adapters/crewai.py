@@ -566,9 +566,7 @@ class CrewAIAdapter:
             raw_input = getattr(context, "tool_input", None)
             tool_input = raw_input if isinstance(raw_input, dict) else {}
             call_index = self._call_index - 1 if self._hook_call_index_advanced else self._call_index
-            principal = (
-                self._hook_resolved_principal if self._hook_principal_resolved else self._principal
-            )
+            principal = self._hook_resolved_principal if self._hook_principal_resolved else self._principal
             envelope = create_envelope(
                 tool_name=tool_name,
                 tool_input=tool_input,
