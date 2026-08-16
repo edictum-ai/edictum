@@ -1,6 +1,48 @@
+# Dependabot owns pip version updates. GitHub Actions version updates
+# are owned by Renovate (renovate.json) — one bot per ecosystem.
+#
+# Security updates (GHSA/CVE) are not subject to cooldown or
+# open-pull-requests-limit and still open immediately.
 version: 2
 updates:
-  - package-ecosystem: pip
-    directory: /
+  - package-ecosystem: "pip"
+    directory: "/"
     schedule:
-      interval: weekly
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 15
+    groups:
+      python-majors-and-adapters:
+        applies-to: version-updates
+        patterns:
+          - "crewai*"
+          - "langchain-core*"
+          - "opentelemetry*"
+          - "starlette*"
+      python-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "crewai*"
+          - "langchain-core*"
+          - "opentelemetry*"
+          - "starlette*"
+        update-types:
+          - "minor"
+          - "patch"
+      python-majors:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "crewai*"
+          - "langchain-core*"
+          - "opentelemetry*"
+          - "starlette*"
+        update-types:
+          - "major"
