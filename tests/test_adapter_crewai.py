@@ -806,3 +806,60 @@ class TestCrewAIObserveExceptionPending:
         assert create_calls == [1]
         assert executed[0].tool_name == "canary"
         assert await adapter._session.execution_count() == 1
+
+    async def test_observe_exception_does_not_reuse_uncopyable_principal(self):
+        """Revert-red: fallback reuses a principal whose claims cannot be copied."""
+
+        class _Uncopyable:
+            def __deepcopy__(self, memo):
+                raise TypeError("uncopyable claim")
+
+        uncopyable = Principal(
+            user_id="resolved-user",
+            role="admin",
+            claims={"token": _Uncopyable()},
+        )
+        sink = NullAuditSink()
+        guard = make_guard(mode="observe", audit_sink=sink)
+        adapter = CrewAIAdapter(
+            guard,
+            session_id="crewai-obs-exc-uncopyable-principal",
+            principal=uncopyable,
+        )
+        create_calls: list[int] = []
+
+        from edictum.adapters import crewai as crewai_mod
+
+        orig_create = crewai_mod.create_envelope
+
+        def counting_create(*args, **kwargs):
+            create_calls.append(1)
+            return orig_create(*args, **kwargs)
+
+        crewai_mod.create_envelope = counting_create
+        try:
+            with _capture_registered_hooks(adapter) as (before, after):
+                result = before(_make_before_context(tool_name="canary", tool_input={"payload": "ping"}))
+                assert result is None
+                assert adapter._pending_envelope is not None
+                assert adapter._pending_span is not None
+                assert adapter._pending_decision is not None
+                assert create_calls == [1]
+                pending_principal = adapter._pending_envelope.principal
+                assert pending_principal is not uncopyable
+                assert pending_principal is not None
+                assert pending_principal.user_id == "resolved-user"
+                assert pending_principal.role == "admin"
+                assert pending_principal.claims == {}
+                after(_make_after_context(tool_name="canary", tool_input={"payload": "ping"}, tool_result="ok"))
+        finally:
+            crewai_mod.create_envelope = orig_create
+
+        executed = [e for e in sink.events if e.action == AuditAction.CALL_EXECUTED]
+        assert executed, f"missing CALL_EXECUTED; got {[e.action for e in sink.events]}"
+        assert executed[0].principal is not None
+        assert executed[0].principal["user_id"] == "resolved-user"
+        assert executed[0].principal["role"] == "admin"
+        assert executed[0].principal["claims"] == {}
+        assert create_calls == [1]
+        assert await adapter._session.execution_count() == 1

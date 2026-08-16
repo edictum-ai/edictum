@@ -591,6 +591,17 @@ class CrewAIAdapter:
             if self._hook_envelope_attempted:
                 # create_envelope already failed. Do not retry the deep-copy.
                 # Seed a minimal correlation envelope without copying inputs.
+                # Do not reuse a principal whose claims already failed to copy;
+                # asdict() in after-hook would retry that deepcopy and drop the audit.
+                if principal is not None:
+                    principal = Principal(
+                        user_id=principal.user_id,
+                        service_id=principal.service_id,
+                        org_id=principal.org_id,
+                        role=principal.role,
+                        ticket_ref=principal.ticket_ref,
+                        claims={},
+                    )
                 envelope = ToolCall(
                     tool_name=tool_name,
                     args=tool_input,
