@@ -12,7 +12,6 @@ Two deployment units. One library, one server.
 
 - `src/edictum/` -- MIT core. All rule types (pre, post, session, sandbox), pipeline, 8 adapters, audit to stdout/file/OTel, local approval backend, single-process session tracking.
 - `src/edictum/server/` -- Server SDK client (`pip install edictum[server]`). Implements core protocols (`ApprovalBackend`, `AuditSink`, `StorageBackend`) over HTTP to connect agents to the server.
-- Hosted control plane (`edictum-api` + `edictum-app`) -- Separate deployment for centralized approval workflows, audit dashboards, distributed sessions, and hot-reload rules.
 
 ## THE ONE RULE
 
