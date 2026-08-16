@@ -11,10 +11,11 @@ from typing import TYPE_CHECKING, Any
 
 from edictum.approval import ApprovalStatus
 from edictum.audit import AuditAction, AuditEvent
-from edictum.envelope import Principal, _validate_tool_name, create_envelope
+from edictum.envelope import Principal, ToolCall, _validate_tool_name, create_envelope
 from edictum.findings import Finding, PostCallResult, build_findings
 from edictum.pipeline import CheckPipeline, PreDecision
 from edictum.session import Session, validate_session_id
+from edictum.telemetry import _NoOpSpan
 from edictum.workflow.state import build_workflow_snapshot
 
 logger = logging.getLogger(__name__)
@@ -63,9 +64,12 @@ class CrewAIAdapter:
         self._hook_call_index_advanced = False
         self._hook_attempts_advanced = False
         self._hook_envelope: Any | None = None
+        self._hook_envelope_attempted = False
         self._hook_resolved_principal: Principal | None = None
         self._hook_principal_resolved = False
         self._hook_decision: PreDecision | None = None
+        self._hook_span: Any | None = None
+        self._hook_span_attempted = False
 
     @property
     def session_id(self) -> str:
@@ -174,9 +178,12 @@ class CrewAIAdapter:
             adapter._hook_call_index_advanced = False
             adapter._hook_attempts_advanced = False
             adapter._hook_envelope = None
+            adapter._hook_envelope_attempted = False
             adapter._hook_resolved_principal = None
             adapter._hook_principal_resolved = False
             adapter._hook_decision = None
+            adapter._hook_span = None
+            adapter._hook_span_attempted = False
             original_name = context.tool_name
             context.tool_name = adapter._normalize_tool_name(original_name)
             try:
@@ -238,9 +245,12 @@ class CrewAIAdapter:
         self._hook_call_index_advanced = False
         self._hook_attempts_advanced = False
         self._hook_envelope = None
+        self._hook_envelope_attempted = False
         self._hook_resolved_principal = None
         self._hook_principal_resolved = False
         self._hook_decision = None
+        self._hook_span = None
+        self._hook_span_attempted = False
         tool_name: str = context.tool_name
         tool_input: dict = context.tool_input
         call_id = str(uuid.uuid4())
@@ -252,7 +262,9 @@ class CrewAIAdapter:
         self._hook_resolved_principal = principal
         self._hook_principal_resolved = True
 
-        # Create envelope
+        # Create envelope. Mark first: a failed deep-copy must not be retried
+        # in the observe fallback.
+        self._hook_envelope_attempted = True
         envelope = create_envelope(
             tool_name=tool_name,
             tool_input=tool_input,
@@ -272,8 +284,11 @@ class CrewAIAdapter:
         self._hook_attempts_advanced = True
         await self._session.increment_attempts()
 
-        # Start OTel span
+        # Start OTel span. Mark first: a failed start must not be retried
+        # in the observe fallback.
+        self._hook_span_attempted = True
         span = self._guard.telemetry.start_tool_span(envelope)
+        self._hook_span = span
 
         # Run pipeline
         try:
@@ -573,18 +588,37 @@ class CrewAIAdapter:
             tool_input = raw_input if isinstance(raw_input, dict) else {}
             call_index = self._call_index - 1 if self._hook_call_index_advanced else self._call_index
             principal = self._hook_resolved_principal if self._hook_principal_resolved else self._principal
-            envelope = create_envelope(
-                tool_name=tool_name,
-                tool_input=tool_input,
-                run_id=self._session_id,
-                call_index=call_index,
-                tool_use_id=str(uuid.uuid4()),
-                environment=self._guard.environment,
-                registry=self._guard.tool_registry,
-                principal=principal,
-            )
+            if self._hook_envelope_attempted:
+                # create_envelope already failed. Do not retry the deep-copy.
+                # Seed a minimal correlation envelope without copying inputs.
+                envelope = ToolCall(
+                    tool_name=tool_name,
+                    args=tool_input,
+                    run_id=self._session_id,
+                    call_index=call_index,
+                    tool_use_id=str(uuid.uuid4()),
+                    environment=self._guard.environment,
+                    principal=principal,
+                )
+            else:
+                envelope = create_envelope(
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    run_id=self._session_id,
+                    call_index=call_index,
+                    tool_use_id=str(uuid.uuid4()),
+                    environment=self._guard.environment,
+                    registry=self._guard.tool_registry,
+                    principal=principal,
+                )
         if self._pending_span is None:
-            self._pending_span = self._guard.telemetry.start_tool_span(envelope)
+            if self._hook_span is not None:
+                self._pending_span = self._hook_span
+            elif self._hook_span_attempted:
+                # start_tool_span already failed. Do not retry the tracer.
+                self._pending_span = _NoOpSpan()
+            else:
+                self._pending_span = self._guard.telemetry.start_tool_span(envelope)
         self._pending_envelope = envelope
         if self._pending_decision is None:
             # Reuse the evaluated decision when pre_execute already succeeded.
