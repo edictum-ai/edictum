@@ -1,0 +1,75 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "enabledManagers": [
+    "github-actions",
+    "pep621"
+  ],
+  "minimumReleaseAge": "15 days",
+  "internalChecksFilter": "strict",
+  "prCreation": "not-pending",
+  "timezone": "Europe/Berlin",
+  "schedule": [
+    "after 9am on monday"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "dependencyDashboard": true,
+  "packageRules": [
+    {
+      "description": "GitHub Actions: pin to commit SHA (the repo already SHA-pins; Renovate updates the SHA + the version comment), batch into one PR. The 15-day release-age floor is global and is never weakened here.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "github-actions",
+      "pinDigests": true,
+      "commitMessagePrefix": "chore(deps):"
+    },
+    {
+      "description": "First-party acartag7/* only: exempt from the 15-day release-age floor so hardening fixes propagate immediately. Scoped exclusion — never a blanket disable.",
+      "matchPackageNames": [
+        "/^acartag7\\//"
+      ],
+      "minimumReleaseAge": "0"
+    },
+    {
+      "description": "pip (pep621/pyproject.toml + uv.lock) minor+patch together.",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "pip minor+patch"
+    },
+    {
+      "description": "Adapter hosts (crewai, langchain-core, starlette, otel 1->2 / experimental OTLP) — separate group, not automerged.",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchPackageNames": [
+        "crewai",
+        "langchain-core",
+        "starlette",
+        "/^opentelemetry-/"
+      ],
+      "groupName": "pip majors and adapter-hosts",
+      "automerge": false
+    },
+    {
+      "description": "Remaining pip majors join the non-automerge majors/adapter-hosts group.",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": "pip majors and adapter-hosts",
+      "automerge": false
+    }
+  ]
+}

@@ -1,6 +1,10 @@
 version: 2
-updates:
-  - package-ecosystem: pip
-    directory: /
-    schedule:
-      interval: weekly
+# Dependabot SECURITY alerts (CVEs) are configured via GitHub's Security &
+# Advisories toggle, not here — they arrive as alerts regardless of this file.
+#
+# Version-update ecosystems are disabled. Dependabot cannot enforce
+# minimumReleaseAge, so pip and github-actions version bumps are owned by
+# Renovate (renovate.json, minimumReleaseAge: 15 days). One bot per
+# ecosystem: leaving Dependabot version updates on would open double PRs.
+# Install the Renovate GitHub App (https://github.com/apps/renovate) to
+# activate version updates.
