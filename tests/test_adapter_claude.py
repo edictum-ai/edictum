@@ -1563,6 +1563,148 @@ class TestClaudeSdkHostHooks:
         )
 
     @pytest.mark.security
+    async def test_early_post_hook_recovery_records_execution(self):
+        def boom_check(tool_name, tool_response):
+            raise RuntimeError("success_check failed")
+
+        adapter = ClaudeAgentSDKAdapter(make_guard(success_check=boom_check))
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        before = await adapter._session.execution_count()
+        result = await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result == {}
+        after = await adapter._session.execution_count()
+        assert after == before + 1, f"early recovery skipped record_execution; {before} -> {after}"
+
+    @pytest.mark.security
+    async def test_workflow_execution_fallback_does_not_replay_local(self):
+        from dataclasses import replace
+        from types import SimpleNamespace
+
+        from edictum.workflow.result import WorkflowState
+
+        class _FailExecOnce:
+            def __init__(self):
+                self.events = []
+                self.calls = 0
+
+            async def emit(self, event):
+                if event.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED):
+                    self.calls += 1
+                    if self.calls == 1:
+                        raise RuntimeError("downstream rejected workflow execution")
+                self.events.append(event)
+
+        class _FakeRuntime:
+            definition = SimpleNamespace(metadata=SimpleNamespace(name="demo", version="1"))
+
+            async def record_result(self, session, stage_id, envelope):
+                return [
+                    {
+                        "action": AuditAction.WORKFLOW_STAGE_ADVANCED.value,
+                        "workflow": {"name": "demo", "active_stage": "s1", "stage_id": "s0", "to_stage_id": "s1"},
+                    }
+                ]
+
+            async def state(self, session):
+                state = WorkflowState(session_id=session.session_id, active_stage="s1")
+                state.ensure_defaults()
+                return state
+
+        configured = _FailExecOnce()
+        guard = make_guard(audit_sink=configured)
+        adapter = ClaudeAgentSDKAdapter(guard)
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        guard._workflow_runtime = _FakeRuntime()
+        decision = adapter._pending_decisions["tu-1"]
+        adapter._pending_decisions["tu-1"] = replace(decision, workflow_involved=True, workflow_stage_id="s1")
+        await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        local_executed = [
+            e for e in guard.local_sink.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)
+        ]
+        assert len(local_executed) == 1, (
+            f"workflow execution fallback replayed local; got {[(e.action, e.reason) for e in guard.local_sink.events]}"
+        )
+
+    @pytest.mark.security
+    async def test_workflow_events_stashed_when_state_lookup_raises(self):
+        from dataclasses import replace
+        from types import SimpleNamespace
+
+        class _FakeRuntime:
+            definition = SimpleNamespace(metadata=SimpleNamespace(name="demo", version="1"))
+
+            async def record_result(self, session, stage_id, envelope):
+                return [
+                    {
+                        "action": AuditAction.WORKFLOW_STAGE_ADVANCED.value,
+                        "workflow": {"name": "demo", "active_stage": "s1", "stage_id": "s0", "to_stage_id": "s1"},
+                    }
+                ]
+
+            async def state(self, session):
+                raise RuntimeError("workflow state lookup failed")
+
+        sink = NullAuditSink()
+        guard = make_guard(audit_sink=sink)
+        adapter = ClaudeAgentSDKAdapter(guard)
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        guard._workflow_runtime = _FakeRuntime()
+        decision = adapter._pending_decisions["tu-1"]
+        adapter._pending_decisions["tu-1"] = replace(decision, workflow_involved=True, workflow_stage_id="s1")
+        await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        workflow_events = [
+            e for e in sink.events if e.action in (AuditAction.WORKFLOW_STAGE_ADVANCED, AuditAction.WORKFLOW_COMPLETED)
+        ]
+        assert workflow_events, (
+            "stashed workflow transition missing after state() raise; "
+            f"got {[(e.action, e.reason) for e in sink.events]}"
+        )
+        assert adapter._pending_workflow_events == {}
+
+    @pytest.mark.security
+    async def test_to_hook_callables_clears_recovery_after_complete(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        hooks = adapter.to_hook_callables()
+        await hooks["pre_tool_use"]("canary", {"payload": "ping"}, "tu-1")
+        assert "tu-1" in adapter._hook_recovery
+        await hooks["post_tool_use"](tool_use_id="tu-1", tool_response="ok")
+        assert adapter._hook_recovery == {}, f"raw hook recovery leaked: {adapter._hook_recovery}"
+
+    @pytest.mark.security
     async def test_multiple_workflow_transitions_are_not_collapsed(self):
         from dataclasses import replace
         from types import SimpleNamespace
