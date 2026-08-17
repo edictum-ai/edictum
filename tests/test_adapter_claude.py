@@ -1139,9 +1139,7 @@ class TestClaudeSdkHostHooks:
             {"signal": None},
         )
         assert result == {}
-        executed = [
-            e for e in configured.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)
-        ]
+        executed = [e for e in configured.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)]
         assert executed, (
             f"configured sink missed execution after reject; got {[(e.action, e.reason) for e in configured.events]}"
         )
