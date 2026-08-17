@@ -168,6 +168,7 @@ class ClaudeAgentSDKAdapter:
         self._parent_session_id: str | None = None
         self._internal_exception_count = 0
         self._hook_recovery: dict[str, _HookRecovery] = {}
+        self._execution_audit_completed: set[str] = set()
 
     @property
     def session_id(self) -> str:
@@ -525,6 +526,9 @@ class ClaudeAgentSDKAdapter:
     async def _audit_post_hook_exception(self, pending: Any, tool_response: Any) -> None:
         """Emit adapter-sourced executed/failed after a post-hook raise."""
         envelope = pending[0] if isinstance(pending, tuple) and pending else None
+        if envelope is not None and envelope.call_id in self._execution_audit_completed:
+            self._execution_audit_completed.discard(envelope.call_id)
+            return
         tool_success = False
         if envelope is not None:
             try:
@@ -887,6 +891,7 @@ class ClaudeAgentSDKAdapter:
                     workflow=workflow,
                 )
             )
+            self._execution_audit_completed.add(envelope.call_id)
             await self._emit_workflow_events(envelope, workflow_events)
 
             span.set_attribute("governance.tool_success", tool_success)
@@ -912,6 +917,7 @@ class ClaudeAgentSDKAdapter:
                 logger.exception("on_postcondition_warn callback raised")
 
         # Return warnings as additionalContext
+        self._execution_audit_completed.discard(envelope.call_id)
         if post_decision.warnings:
             return {
                 "hookSpecificOutput": {

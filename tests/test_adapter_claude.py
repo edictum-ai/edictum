@@ -1030,6 +1030,42 @@ class TestClaudeSdkHostHooks:
         assert fallback[0].tool_name == "canary"
         assert adapter._pending == {}
         assert adapter._pending_decisions == {}
+        executed = [e for e in sink.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)]
+        assert len(executed) == 1
+
+    @pytest.mark.security
+    async def test_late_post_hook_exception_does_not_double_count_execution(self):
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+
+        async def boom(*_args, **_kwargs):
+            raise RuntimeError("workflow events down")
+
+        adapter._emit_workflow_events = boom
+        result = await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result == {}
+        executed = [e for e in sink.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)]
+        assert len(executed) == 1, (
+            f"late post-hook failure double-counted; got {[(e.action, e.reason) for e in sink.events]}"
+        )
+        assert executed[0].action == AuditAction.CALL_EXECUTED
+        assert executed[0].reason != ADAPTER_POST_HOOK_EXCEPTION_REASON
+        assert not any(e.reason == ADAPTER_POST_HOOK_EXCEPTION_REASON for e in sink.events)
+        assert adapter._pending == {}
+        assert adapter._pending_decisions == {}
 
     @pytest.mark.security
     async def test_post_failure_hook_exception_still_audits(self):
