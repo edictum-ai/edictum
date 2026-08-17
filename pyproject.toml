@@ -33,7 +33,7 @@ Changelog = "https://github.com/edictum-ai/edictum/releases"
 yaml = ["pyyaml>=6.0", "jsonschema>=4.20"]
 otel = ["opentelemetry-api>=1.20.0", "opentelemetry-sdk>=1.20.0", "opentelemetry-exporter-otlp>=1.20.0"]
 langchain = ["langchain-core>=0.3"]
-crewai = ["crewai>=0.80"]
+crewai = ["crewai>=1.14.4"]
 agno = ["agno>=1.0"]
 semantic-kernel = ["semantic-kernel>=1.39.4"]
 openai-agents = ["openai-agents>=0.1"]
