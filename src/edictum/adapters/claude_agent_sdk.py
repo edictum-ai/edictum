@@ -538,21 +538,41 @@ class ClaudeAgentSDKAdapter:
             return composite
         return [self._guard.audit_sink]
 
-    def _ack_sink(self, sink: Any, event: AuditEvent) -> None:
+    @staticmethod
+    def _ack_identity(event: AuditEvent) -> tuple[str, str, str] | None:
         call_id = getattr(event, "call_id", "")
         action = getattr(event, "action", None)
         if not call_id or action is None:
+            return None
+        action_key = action.value if isinstance(action, AuditAction) else str(action)
+        extra = ""
+        workflow = getattr(event, "workflow", None)
+        if isinstance(workflow, dict):
+            completed = workflow.get("completed_stages") or ()
+            extra = f"{workflow.get('name', '')}:{workflow.get('active_stage', '')}:{tuple(completed)}"
+        return (call_id, action_key, extra)
+
+    def _ack_sink(self, sink: Any, event: AuditEvent) -> None:
+        identity = self._ack_identity(event)
+        if identity is None:
             return
-        key = action.value if isinstance(action, AuditAction) else str(action)
-        self._sink_ack.setdefault(id(sink), set()).add((call_id, key))
+        self._sink_ack.setdefault(id(sink), set()).add(identity)
 
     def _sink_acked(self, sink: Any, event: AuditEvent) -> bool:
-        call_id = getattr(event, "call_id", "")
-        action = getattr(event, "action", None)
-        if not call_id or action is None:
+        identity = self._ack_identity(event)
+        if identity is None:
             return False
-        key = action.value if isinstance(action, AuditAction) else str(action)
-        return (call_id, key) in self._sink_ack.get(id(sink), set())
+        return identity in self._sink_ack.get(id(sink), set())
+
+    def _clear_sink_ack(self, call_id: str) -> None:
+        if not call_id:
+            return
+        for sink_id, keys in list(self._sink_ack.items()):
+            remaining = {key for key in keys if key[0] != call_id}
+            if remaining:
+                self._sink_ack[sink_id] = remaining
+            else:
+                del self._sink_ack[sink_id]
 
     async def _emit_per_sink(self, event: AuditEvent) -> None:
         """Fan out one audit, skipping sinks that already accepted this call+action."""
@@ -583,6 +603,7 @@ class ClaudeAgentSDKAdapter:
             self._execution_audit_completed.discard(envelope.call_id)
             self._execution_tool_success.pop(envelope.call_id, None)
             await self._recover_workflow_events(envelope)
+            self._clear_sink_ack(envelope.call_id)
             return
         tool_success = False
         if envelope is not None and envelope.call_id in self._execution_tool_success:
@@ -618,6 +639,7 @@ class ClaudeAgentSDKAdapter:
                 )
             )
             await self._recover_workflow_events(envelope)
+            self._clear_sink_ack(envelope.call_id)
             return
         await self._guard.audit_sink.emit(
             AuditEvent(
@@ -983,6 +1005,7 @@ class ClaudeAgentSDKAdapter:
         self._execution_audit_completed.discard(envelope.call_id)
         self._execution_tool_success.pop(envelope.call_id, None)
         self._pending_workflow_events.pop(envelope.call_id, None)
+        self._clear_sink_ack(envelope.call_id)
         if post_decision.warnings:
             return {
                 "hookSpecificOutput": {

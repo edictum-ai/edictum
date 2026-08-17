@@ -1429,6 +1429,78 @@ class TestClaudeSdkHostHooks:
         assert seen == ["a"], f"first hook set must keep its callback; got {seen}"
 
     @pytest.mark.security
+    async def test_sink_acks_cleared_after_successful_post(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        leftover = [key for keys in adapter._sink_ack.values() for key in keys if key[0]]
+        assert leftover == [], f"sink acks leaked after completion: {leftover}"
+
+    @pytest.mark.security
+    async def test_multiple_workflow_transitions_are_not_collapsed(self):
+        from dataclasses import replace
+        from types import SimpleNamespace
+
+        from edictum.workflow.result import WorkflowState
+
+        class _FakeRuntime:
+            definition = SimpleNamespace(metadata=SimpleNamespace(name="demo", version="1"))
+
+            async def record_result(self, session, stage_id, envelope):
+                return [
+                    {
+                        "action": AuditAction.WORKFLOW_STAGE_ADVANCED.value,
+                        "workflow": {"name": "demo", "active_stage": "s1", "completed_stages": []},
+                    },
+                    {
+                        "action": AuditAction.WORKFLOW_STAGE_ADVANCED.value,
+                        "workflow": {"name": "demo", "active_stage": "s2", "completed_stages": ["s1"]},
+                    },
+                ]
+
+            async def state(self, session):
+                state = WorkflowState(session_id=session.session_id, active_stage="s2", completed_stages=["s1"])
+                state.ensure_defaults()
+                return state
+
+        sink = NullAuditSink()
+        guard = make_guard(audit_sink=sink)
+        adapter = ClaudeAgentSDKAdapter(guard)
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        guard._workflow_runtime = _FakeRuntime()
+        decision = adapter._pending_decisions["tu-1"]
+        adapter._pending_decisions["tu-1"] = replace(decision, workflow_involved=True, workflow_stage_id="s1")
+        await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        stages = [
+            (e.workflow or {}).get("active_stage")
+            for e in sink.events
+            if e.action == AuditAction.WORKFLOW_STAGE_ADVANCED
+        ]
+        assert stages == ["s1", "s2"], f"collapsed workflow transitions; got {stages}"
+
+    @pytest.mark.security
     async def test_post_failure_hook_exception_still_audits(self):
         sink = NullAuditSink()
         adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
