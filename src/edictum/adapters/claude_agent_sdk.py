@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from edictum.approval import ApprovalStatus
-from edictum.audit import AuditAction, AuditEvent
+from edictum.audit import AuditAction, AuditEvent, CompositeSink
 from edictum.envelope import Principal, ToolCall, _validate_tool_name, create_envelope
 from edictum.findings import Finding, build_findings
 from edictum.pipeline import CheckPipeline, PreDecision
@@ -578,8 +578,10 @@ class ClaudeAgentSDKAdapter:
 
     @staticmethod
     def _flatten_sinks(sink: Any) -> list[Any]:
-        children = getattr(sink, "sinks", None)
-        if not isinstance(children, list) or not children:
+        if not isinstance(sink, CompositeSink):
+            return [sink]
+        children = sink.sinks
+        if not children:
             return [sink]
         leaves: list[Any] = []
         for child in children:

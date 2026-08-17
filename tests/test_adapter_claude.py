@@ -1796,6 +1796,43 @@ class TestClaudeSdkHostHooks:
         assert leftover == [], f"pre-hook exception leaked sink acks: {leftover}"
 
     @pytest.mark.security
+    async def test_custom_sink_with_sinks_attr_is_not_flattened(self):
+        class _Child:
+            def __init__(self):
+                self.events = []
+
+            async def emit(self, event):
+                self.events.append(event)
+
+        class _Wrapper:
+            def __init__(self, child):
+                self.sinks = [child]
+                self.events = []
+
+            async def emit(self, event):
+                self.events.append(event)
+                await child.emit(event)
+
+        child = _Child()
+        wrapper = _Wrapper(child)
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=wrapper))
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        wrapped_exec = [e for e in wrapper.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)]
+        assert wrapped_exec, f"custom wrapper emit skipped; got {[(e.action, e.reason) for e in wrapper.events]}"
+
+    @pytest.mark.security
     async def test_multiple_workflow_transitions_are_not_collapsed(self):
         from dataclasses import replace
         from types import SimpleNamespace
