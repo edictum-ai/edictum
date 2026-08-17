@@ -931,6 +931,36 @@ class TestClaudeSdkHostHooks:
         assert adapter._internal_exception_count == 1
 
     @pytest.mark.security
+    async def test_allow_audit_failure_emits_correlated_block(self):
+        class _FailAllow:
+            def __init__(self):
+                self.events = []
+
+            async def emit(self, event):
+                if event.action == AuditAction.CALL_ALLOWED:
+                    raise RuntimeError("allow sink down")
+                self.events.append(event)
+
+        configured = _FailAllow()
+        guard = make_guard(audit_sink=configured)
+        adapter = ClaudeAgentSDKAdapter(guard)
+        result = await _sdk_pre(adapter)(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        allowed = [e for e in guard.local_sink.events if e.action == AuditAction.CALL_ALLOWED]
+        denied = [
+            e
+            for e in guard.local_sink.events
+            if e.action == AuditAction.CALL_DENIED and e.reason == ADAPTER_INTERNAL_EXCEPTION_REASON
+        ]
+        assert allowed, f"missing CALL_ALLOWED; got {[(e.action, e.reason) for e in guard.local_sink.events]}"
+        assert denied, f"missing correlated CALL_DENIED; got {[(e.action, e.reason) for e in guard.local_sink.events]}"
+        assert allowed[0].call_id
+        assert denied[0].call_id == allowed[0].call_id
+        assert denied[0].decision_source == "adapter"
+        assert denied[0].policy_error is True
+        assert adapter._pending == {}
+
+    @pytest.mark.security
     async def test_observe_exception_allows_loudly(self):
         from edictum.adapters.claude_agent_sdk import ADAPTER_INTERNAL_EXCEPTION_REASON
 

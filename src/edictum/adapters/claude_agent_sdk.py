@@ -340,14 +340,15 @@ class ClaudeAgentSDKAdapter:
                 return {}
             except Exception:
                 logger.exception("Claude PreToolUse hook raised")
+                recovery = self._hook_recovery.get(call_id)
+                envelope = recovery.envelope if recovery is not None else None
                 try:
-                    await self._on_internal_exception(tool_name)
+                    await self._on_internal_exception(tool_name, envelope)
                 except Exception:
                     logger.exception("Claude internal-exception audit failed")
-                recovery = self._hook_recovery.get(call_id)
                 envelope_call_id = ""
-                if recovery is not None and recovery.envelope is not None:
-                    envelope_call_id = getattr(recovery.envelope, "call_id", "") or ""
+                if envelope is not None:
+                    envelope_call_id = getattr(envelope, "call_id", "") or ""
                 if envelope_call_id:
                     self._clear_sink_ack(envelope_call_id)
                 if self._guard.mode == "observe":
@@ -822,14 +823,40 @@ class ClaudeAgentSDKAdapter:
             return ADAPTER_UNKNOWN_TOOL_NAME
         return name
 
-    async def _on_internal_exception(self, tool_name: str) -> None:
+    async def _on_internal_exception(self, tool_name: str, envelope: Any | None = None) -> None:
         """Emit the D7 loud audit + counter/span for a hook-path exception."""
         self._internal_exception_count += 1
         reason = ADAPTER_INTERNAL_EXCEPTION_REASON
         mode = self._guard.mode
         action = AuditAction.CALL_WOULD_DENY if mode == "observe" else AuditAction.CALL_DENIED
         safe_name = self._safe_tool_name(tool_name)
-        self._guard.telemetry.record_adapter_exception(safe_name, mode)
+        self._guard.telemetry.record_adapter_exception(
+            envelope.tool_name if envelope is not None and envelope.tool_name else safe_name,
+            mode,
+        )
+        if envelope is not None:
+            await self._guard.audit_sink.emit(
+                AuditEvent(
+                    action=action,
+                    run_id=envelope.run_id,
+                    call_id=envelope.call_id,
+                    call_index=envelope.call_index,
+                    session_id=self._session_id,
+                    parent_session_id=self._audit_parent_session_id(),
+                    tool_name=envelope.tool_name or safe_name,
+                    tool_args=self._guard.redaction.redact_args(envelope.args),
+                    side_effect=envelope.side_effect.value,
+                    environment=envelope.environment,
+                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    reason=reason,
+                    decision_source="adapter",
+                    decision_name=reason,
+                    mode=mode,
+                    policy_version=self._guard.policy_version,
+                    policy_error=True,
+                )
+            )
+            return
         await self._guard.audit_sink.emit(
             AuditEvent(
                 action=action,
