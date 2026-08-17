@@ -1729,6 +1729,73 @@ class TestClaudeSdkHostHooks:
         assert leftover == [], f"raw post failure leaked sink acks: {leftover}"
 
     @pytest.mark.security
+    async def test_recovery_does_not_replay_partial_record_execution(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        real_record = adapter._session.record_execution
+        calls = {"n": 0}
+
+        async def partial(*args, **kwargs):
+            calls["n"] += 1
+            await real_record(*args, **kwargs)
+            if calls["n"] == 1:
+                raise RuntimeError("backend dropped after execs")
+
+        adapter._session.record_execution = partial
+        before = await adapter._session.execution_count()
+        result = await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result == {}
+        after = await adapter._session.execution_count()
+        assert calls["n"] == 1, f"recovery replayed record_execution; calls={calls['n']}"
+        assert after == before + 1, f"execs double-counted; {before} -> {after}"
+
+    @pytest.mark.security
+    async def test_pre_hook_exception_clears_workflow_sink_acks(self):
+        from edictum.pipeline import PreDecision
+
+        class _FailWorkflow:
+            def __init__(self):
+                self.events = []
+
+            async def emit(self, event):
+                if event.action in (AuditAction.WORKFLOW_STAGE_ADVANCED, AuditAction.WORKFLOW_COMPLETED):
+                    raise RuntimeError("workflow sink down")
+                self.events.append(event)
+
+        configured = _FailWorkflow()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=configured))
+
+        async def fake_pre(envelope, session):
+            return PreDecision(
+                action="allow",
+                workflow_events=[
+                    {
+                        "action": AuditAction.WORKFLOW_STAGE_ADVANCED.value,
+                        "workflow": {"name": "demo", "active_stage": "s1", "stage_id": "s0", "to_stage_id": "s1"},
+                    }
+                ],
+            )
+
+        adapter._pipeline.pre_execute = fake_pre
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        result = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        leftover = [key for keys in adapter._sink_ack.values() for key in keys]
+        assert leftover == [], f"pre-hook exception leaked sink acks: {leftover}"
+
+    @pytest.mark.security
     async def test_multiple_workflow_transitions_are_not_collapsed(self):
         from dataclasses import replace
         from types import SimpleNamespace

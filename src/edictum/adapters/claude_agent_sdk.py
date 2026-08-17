@@ -175,6 +175,7 @@ class ClaudeAgentSDKAdapter:
         self._execution_audit_completed: set[str] = set()
         self._execution_tool_success: dict[str, bool] = {}
         self._execution_recorded: set[str] = set()
+        self._execution_record_attempted: set[str] = set()
         self._pending_workflow_events: dict[str, list[dict]] = {}
         self._pending_execution_event: dict[str, AuditEvent] = {}
         self._sink_ack: dict[int, set[tuple[str, str]]] = {}
@@ -342,6 +343,12 @@ class ClaudeAgentSDKAdapter:
                     await self._on_internal_exception(tool_name)
                 except Exception:
                     logger.exception("Claude internal-exception audit failed")
+                recovery = self._hook_recovery.get(call_id)
+                envelope_call_id = ""
+                if recovery is not None and recovery.envelope is not None:
+                    envelope_call_id = getattr(recovery.envelope, "call_id", "") or ""
+                if envelope_call_id:
+                    self._clear_sink_ack(envelope_call_id)
                 if self._guard.mode == "observe":
                     try:
                         await self._ensure_observe_exception_pending(tool_name, tool_input, call_id)
@@ -619,6 +626,7 @@ class ClaudeAgentSDKAdapter:
             self._execution_audit_completed.discard(envelope_call_id)
             self._execution_tool_success.pop(envelope_call_id, None)
             self._execution_recorded.discard(envelope_call_id)
+            self._execution_record_attempted.discard(envelope_call_id)
             self._pending_workflow_events.pop(envelope_call_id, None)
             self._pending_execution_event.pop(envelope_call_id, None)
             self._clear_sink_ack(envelope_call_id)
@@ -681,8 +689,9 @@ class ClaudeAgentSDKAdapter:
                     tool_success = False
             action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
             reason = ADAPTER_POST_HOOK_EXCEPTION_REASON
-            if envelope is not None and envelope.call_id not in self._execution_recorded:
+            if envelope is not None and envelope.call_id not in self._execution_record_attempted:
                 try:
+                    self._execution_record_attempted.add(envelope.call_id)
                     await self._session.record_execution(envelope.tool_name, success=tool_success)
                     self._execution_recorded.add(envelope.call_id)
                 except Exception:
@@ -1021,6 +1030,7 @@ class ClaudeAgentSDKAdapter:
                 workflow = build_workflow_snapshot(self._guard._workflow_runtime.definition, workflow_state)
 
             # Record in session
+            self._execution_record_attempted.add(envelope.call_id)
             await self._session.record_execution(envelope.tool_name, success=tool_success)
             self._execution_recorded.add(envelope.call_id)
 
