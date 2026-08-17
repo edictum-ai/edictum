@@ -170,6 +170,7 @@ class ClaudeAgentSDKAdapter:
         self._hook_recovery: dict[str, _HookRecovery] = {}
         self._execution_audit_completed: set[str] = set()
         self._execution_tool_success: dict[str, bool] = {}
+        self._pending_workflow_events: dict[str, list[dict]] = {}
 
     @property
     def session_id(self) -> str:
@@ -526,12 +527,50 @@ class ClaudeAgentSDKAdapter:
         except Exception:
             logger.exception("Claude pending span end failed")
 
+    _EXECUTION_AUDIT_ACTIONS = (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)
+    _WORKFLOW_AUDIT_ACTIONS = (AuditAction.WORKFLOW_STAGE_ADVANCED, AuditAction.WORKFLOW_COMPLETED)
+
+    def _sink_recorded_actions(self, sink: Any, call_id: str, actions: tuple[AuditAction, ...]) -> bool:
+        events = getattr(sink, "events", None)
+        if not isinstance(events, list) or not call_id:
+            return False
+        return any(getattr(event, "call_id", None) == call_id and event.action in actions for event in events)
+
+    async def _emit_skipping_acked(self, event: AuditEvent, actions: tuple[AuditAction, ...]) -> None:
+        """Replay an audit without re-delivering to sinks that already accepted it."""
+        composite = getattr(self._guard.audit_sink, "sinks", None)
+        if not isinstance(composite, list):
+            if self._sink_recorded_actions(self._guard.audit_sink, event.call_id, actions):
+                return
+            await self._guard.audit_sink.emit(event)
+            return
+        errors: list[Exception] = []
+        for sink in composite:
+            if self._sink_recorded_actions(sink, event.call_id, actions):
+                continue
+            try:
+                await sink.emit(event)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("Claude fallback: one or more sinks failed", errors)
+
+    async def _recover_workflow_events(self, envelope: Any) -> None:
+        call_id = getattr(envelope, "call_id", "")
+        records = self._pending_workflow_events.pop(call_id, None)
+        if not records:
+            return
+        if self._sink_recorded_actions(self._guard.local_sink, call_id, self._WORKFLOW_AUDIT_ACTIONS):
+            return
+        await self._emit_workflow_events(envelope, records)
+
     async def _audit_post_hook_exception(self, pending: Any, tool_response: Any) -> None:
         """Emit adapter-sourced executed/failed after a post-hook raise."""
         envelope = pending[0] if isinstance(pending, tuple) and pending else None
         if envelope is not None and envelope.call_id in self._execution_audit_completed:
             self._execution_audit_completed.discard(envelope.call_id)
             self._execution_tool_success.pop(envelope.call_id, None)
+            await self._recover_workflow_events(envelope)
             return
         tool_success = False
         if envelope is not None and envelope.call_id in self._execution_tool_success:
@@ -544,7 +583,7 @@ class ClaudeAgentSDKAdapter:
         action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
         reason = ADAPTER_POST_HOOK_EXCEPTION_REASON
         if envelope is not None:
-            await self._guard.audit_sink.emit(
+            await self._emit_skipping_acked(
                 AuditEvent(
                     action=action,
                     run_id=envelope.run_id,
@@ -564,8 +603,10 @@ class ClaudeAgentSDKAdapter:
                     mode=self._guard.mode,
                     policy_version=self._guard.policy_version,
                     policy_error=True,
-                )
+                ),
+                self._EXECUTION_AUDIT_ACTIONS,
             )
+            await self._recover_workflow_events(envelope)
             return
         await self._guard.audit_sink.emit(
             AuditEvent(
@@ -874,6 +915,7 @@ class ClaudeAgentSDKAdapter:
 
             # Emit audit. Mark complete only after emit returns so a sink
             # that rejects the primary event can still receive fallback.
+            self._pending_workflow_events[envelope.call_id] = list(workflow_events)
             action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
             event = AuditEvent(
                 action=action,
@@ -900,6 +942,7 @@ class ClaudeAgentSDKAdapter:
             await self._guard.audit_sink.emit(event)
             self._execution_audit_completed.add(envelope.call_id)
             await self._emit_workflow_events(envelope, workflow_events)
+            self._pending_workflow_events.pop(envelope.call_id, None)
 
             span.set_attribute("governance.tool_success", tool_success)
             span.set_attribute("governance.postconditions_passed", post_decision.postconditions_passed)
@@ -926,6 +969,7 @@ class ClaudeAgentSDKAdapter:
         # Return warnings as additionalContext
         self._execution_audit_completed.discard(envelope.call_id)
         self._execution_tool_success.pop(envelope.call_id, None)
+        self._pending_workflow_events.pop(envelope.call_id, None)
         if post_decision.warnings:
             return {
                 "hookSpecificOutput": {
