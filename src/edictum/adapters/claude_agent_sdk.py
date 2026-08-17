@@ -261,11 +261,7 @@ class ClaudeAgentSDKAdapter:
             call_id = tool_use_id or input_tool_use_id or str(uuid.uuid4())
             try:
                 if not isinstance(tool_input, dict):
-                    try:
-                        await self._audit_adapter_block(tool_name, _INVALID_TOOL_INPUT_REASON)
-                    except Exception:
-                        logger.exception("Claude malformed-input audit failed")
-                    return self._deny(_INVALID_TOOL_INPUT_REASON)
+                    return await self._block_pending(call_id, tool_name, _INVALID_TOOL_INPUT_REASON)
 
                 pending = self._pending.get(call_id)
                 if pending is not None:
@@ -376,12 +372,22 @@ class ClaudeAgentSDKAdapter:
         """Wrap an SDK permission callback so it cannot mutate args after PreToolUse."""
 
         async def wrapped(tool_name: str, tool_input: dict[str, Any], context: Any) -> Any:
+            call_id = getattr(context, "tool_use_id", None)
+            if isinstance(context, dict):
+                call_id = context.get("tool_use_id", call_id)
+            if not isinstance(call_id, str) or not call_id:
+                call_id = ""
+
+            async def deny(reason: str, interrupt: bool = False) -> Any:
+                await self._block_pending(call_id, tool_name, reason)
+                return _permission_deny(reason, interrupt=interrupt)
+
             try:
                 pending = self._pending_for_permission(tool_name, tool_input, context)
                 if pending == "mismatch":
-                    return _permission_deny(_INPUT_REPLACEMENT_REASON)
+                    return await deny(_INPUT_REPLACEMENT_REASON)
                 if pending == "compare_failed":
-                    return _permission_deny(_INPUT_COMPARE_REASON)
+                    return await deny(_INPUT_COMPARE_REASON)
 
                 isolated = copy.deepcopy(tool_input) if isinstance(tool_input, dict) else tool_input
                 result = await callback(tool_name, isolated, context)
@@ -390,31 +396,31 @@ class ClaudeAgentSDKAdapter:
                     envelope = pending[0]
                     try:
                         if envelope.tool_name != tool_name or not _governed_input_equals(envelope.args, tool_input):
-                            return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+                            return await deny(_PERMISSION_BOUNDARY_REASON)
                     except Exception:
-                        return _permission_deny(_INPUT_COMPARE_REASON)
+                        return await deny(_INPUT_COMPARE_REASON)
 
                 if result is None:
-                    return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+                    return await deny(_PERMISSION_BOUNDARY_REASON)
 
                 behavior, updated_input, updated_permissions, message, interrupt = self._permission_fields(result)
                 if behavior == "allow":
                     if updated_input is not None or updated_permissions is not None:
-                        return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+                        return await deny(_PERMISSION_BOUNDARY_REASON)
                     pinned = None
                     if isinstance(pending, tuple):
                         pinned = copy.deepcopy(pending[0].args)
                     return _permission_allow(updated_input=pinned)
                 if behavior == "deny":
                     if not isinstance(message, str):
-                        return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+                        return await deny(_PERMISSION_BOUNDARY_REASON)
                     if interrupt is not None and not isinstance(interrupt, bool):
-                        return _permission_deny(_PERMISSION_BOUNDARY_REASON)
-                    return _permission_deny(message, interrupt=bool(interrupt))
-                return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+                        return await deny(_PERMISSION_BOUNDARY_REASON)
+                    return await deny(message, interrupt=bool(interrupt))
+                return await deny(_PERMISSION_BOUNDARY_REASON)
             except Exception:
                 logger.exception("Claude can_use_tool wrapper raised")
-                return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+                return await deny(_PERMISSION_BOUNDARY_REASON)
 
         return wrapped
 

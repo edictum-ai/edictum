@@ -11,6 +11,7 @@ from edictum import Decision, Edictum, postcondition, precondition
 from edictum.adapters.claude_agent_sdk import (
     _INPUT_REPLACEMENT_REASON,
     _INVALID_TOOL_INPUT_REASON,
+    _PERMISSION_BOUNDARY_REASON,
     ClaudeAgentSDKAdapter,
 )
 from edictum.audit import AuditAction
@@ -617,6 +618,90 @@ class TestClaudeSdkHostHooks:
         )
         assert result.behavior == "deny"
         assert "BLOCKED" in result.message
+
+    @pytest.mark.security
+    async def test_wrap_mutation_emits_adapter_audit(self):
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
+        await _sdk_pre(adapter)(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert any(e.action == AuditAction.CALL_ALLOWED for e in sink.events)
+        envelope, _old = adapter._pending["tu-1"]
+        span = MagicMock()
+        adapter._pending["tu-1"] = (envelope, span)
+
+        async def rewrite_cb(tool_name, tool_input, context):
+            return {"behavior": "allow", "updated_input": {"payload": "pwn"}}
+
+        wrapped = adapter.wrap_can_use_tool(rewrite_cb)
+        result = await wrapped(
+            "canary",
+            {"payload": "ping"},
+            type("Ctx", (), {"tool_use_id": "tu-1"})(),
+        )
+        assert result.behavior == "deny"
+        events = [e for e in sink.events if e.reason == _PERMISSION_BOUNDARY_REASON]
+        assert events, f"wrap mutation missing audit; got {[(e.action, e.reason) for e in sink.events]}"
+        assert events[0].action == AuditAction.CALL_DENIED
+        assert events[0].decision_source == "adapter"
+        assert events[0].decision_name == _PERMISSION_BOUNDARY_REASON
+        assert any(e.action == AuditAction.CALL_DENIED for e in sink.events)
+        assert "tu-1" not in adapter._pending
+        assert "tu-1" not in adapter._pending_decisions
+        span.end.assert_called_once()
+
+    @pytest.mark.security
+    async def test_wrap_deny_clears_pending_and_ends_span(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        await _sdk_pre(adapter)(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert "tu-1" in adapter._pending
+        envelope, _old = adapter._pending["tu-1"]
+        span = MagicMock()
+        adapter._pending["tu-1"] = (envelope, span)
+
+        async def deny_cb(tool_name, tool_input, context):
+            return {"behavior": "deny", "message": "nope"}
+
+        wrapped = adapter.wrap_can_use_tool(deny_cb)
+        result = await wrapped(
+            "canary",
+            {"payload": "ping"},
+            type("Ctx", (), {"tool_use_id": "tu-1"})(),
+        )
+        assert result.behavior == "deny"
+        assert result.message == "nope"
+        assert "tu-1" not in adapter._pending
+        assert "tu-1" not in adapter._pending_decisions
+        span.end.assert_called_once()
+
+    @pytest.mark.security
+    async def test_malformed_redispatch_clears_pending(self):
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
+        pre = _sdk_pre(adapter)
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        assert "tu-1" in adapter._pending
+        envelope, _old = adapter._pending["tu-1"]
+        span = MagicMock()
+        adapter._pending["tu-1"] = (envelope, span)
+        second = await pre(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "canary",
+                "tool_input": ["not", "a", "dict"],
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert second["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "tu-1" not in adapter._pending
+        assert "tu-1" not in adapter._pending_decisions
+        span.end.assert_called_once()
+        events = [e for e in sink.events if e.reason == _INVALID_TOOL_INPUT_REASON]
+        assert events, f"malformed redispatch missing audit; got {[(e.action, e.reason) for e in sink.events]}"
+        assert events[0].action == AuditAction.CALL_DENIED
+        assert events[0].decision_source == "adapter"
 
     @pytest.mark.security
     async def test_enforce_exception_fails_closed(self):
