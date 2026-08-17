@@ -254,6 +254,10 @@ class ClaudeAgentSDKAdapter:
             call_id = tool_use_id or input_tool_use_id or str(uuid.uuid4())
             try:
                 if not isinstance(tool_input, dict):
+                    try:
+                        await self._audit_adapter_block(tool_name, _INVALID_TOOL_INPUT_REASON)
+                    except Exception:
+                        logger.exception("Claude malformed-input audit failed")
                     return self._deny(_INVALID_TOOL_INPUT_REASON)
 
                 pending = self._pending.get(call_id)
@@ -262,8 +266,10 @@ class ClaudeAgentSDKAdapter:
                     try:
                         matches = envelope.tool_name == tool_name and _governed_input_equals(envelope.args, tool_input)
                     except Exception:
+                        self._clear_pending(call_id)
                         return self._deny(_INPUT_COMPARE_REASON)
                     if not matches:
+                        self._clear_pending(call_id)
                         return self._deny(_INPUT_REPLACEMENT_REASON)
                     return {}
 
@@ -279,12 +285,10 @@ class ClaudeAgentSDKAdapter:
                         and _governed_input_equals(stored[0].args, tool_input)
                     )
                 except Exception:
-                    self._pending.pop(call_id, None)
-                    self._pending_decisions.pop(call_id, None)
+                    self._clear_pending(call_id)
                     return self._deny(_INPUT_COMPARE_REASON)
                 if not still_matches:
-                    self._pending.pop(call_id, None)
-                    self._pending_decisions.pop(call_id, None)
+                    self._clear_pending(call_id)
                     return self._deny(_INPUT_REPLACEMENT_REASON)
                 return {}
             except Exception:
@@ -452,6 +456,33 @@ class ClaudeAgentSDKAdapter:
             getattr(result, "updated_permissions", None),
             getattr(result, "message", ""),
             getattr(result, "interrupt", False),
+        )
+
+    def _clear_pending(self, call_id: str) -> None:
+        """Remove pending state and end the saved span for a blocked call."""
+        pending = self._pending.pop(call_id, None)
+        self._pending_decisions.pop(call_id, None)
+        if pending is None:
+            return
+        _envelope, span = pending
+        try:
+            span.end()
+        except Exception:
+            logger.exception("Claude pending span end failed")
+
+    async def _audit_adapter_block(self, tool_name: str, reason: str) -> None:
+        """Emit an adapter-sourced CALL_DENIED for a host-level block with no envelope."""
+        await self._guard.audit_sink.emit(
+            AuditEvent(
+                action=AuditAction.CALL_DENIED,
+                session_id=self._session_id,
+                tool_name=self._safe_tool_name(tool_name),
+                reason=reason,
+                decision_source="adapter",
+                decision_name=reason,
+                mode=self._guard.mode,
+                policy_version=self._guard.policy_version,
+            )
         )
 
     @staticmethod

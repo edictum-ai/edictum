@@ -7,7 +7,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from edictum import Decision, Edictum, postcondition, precondition
-from edictum.adapters.claude_agent_sdk import ClaudeAgentSDKAdapter
+from edictum.adapters.claude_agent_sdk import (
+    _INPUT_REPLACEMENT_REASON,
+    _INVALID_TOOL_INPUT_REASON,
+    ClaudeAgentSDKAdapter,
+)
 from edictum.audit import AuditAction
 from edictum.findings import Finding
 from edictum.storage import MemoryBackend
@@ -490,6 +494,23 @@ class TestClaudeSdkHostHooks:
         assert "BLOCKED" in second["hookSpecificOutput"]["permissionDecisionReason"]
 
     @pytest.mark.security
+    async def test_replacement_clears_pending_and_ends_span(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        pre = _sdk_pre(adapter)
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        assert "tu-1" in adapter._pending
+        envelope, _old = adapter._pending["tu-1"]
+        span = MagicMock()
+        adapter._pending["tu-1"] = (envelope, span)
+        second = await pre(_pre_input(tool_input={"payload": "pwn"}), "tu-1", {"signal": None})
+        assert second["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert second["hookSpecificOutput"]["permissionDecisionReason"] == _INPUT_REPLACEMENT_REASON
+        assert "tu-1" not in adapter._pending
+        assert "tu-1" not in adapter._pending_decisions
+        span.end.assert_called_once()
+
+    @pytest.mark.security
     async def test_pretooluse_rejects_mutation_during_pre(self):
         adapter = ClaudeAgentSDKAdapter(make_guard())
         tool_input = {"payload": "ping"}
@@ -522,6 +543,28 @@ class TestClaudeSdkHostHooks:
             {"signal": None},
         )
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    @pytest.mark.security
+    async def test_malformed_tool_input_emits_adapter_audit(self):
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
+        result = await _sdk_pre(adapter)(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "canary",
+                "tool_input": ["not", "a", "dict"],
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        events = [e for e in sink.events if e.reason == _INVALID_TOOL_INPUT_REASON]
+        assert events, f"malformed block missing audit; got {[(e.action, e.reason) for e in sink.events]}"
+        assert events[0].action == AuditAction.CALL_DENIED
+        assert events[0].decision_source == "adapter"
+        assert events[0].decision_name == _INVALID_TOOL_INPUT_REASON
+        assert events[0].tool_name == "canary"
 
     @pytest.mark.security
     async def test_wrap_can_use_tool_blocks_replacement(self):
