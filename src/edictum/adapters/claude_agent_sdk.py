@@ -2,22 +2,116 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from edictum.approval import ApprovalStatus
 from edictum.audit import AuditAction, AuditEvent
-from edictum.envelope import Principal, create_envelope
+from edictum.envelope import Principal, ToolCall, _validate_tool_name, create_envelope
 from edictum.findings import Finding, build_findings
-from edictum.pipeline import CheckPipeline
+from edictum.pipeline import CheckPipeline, PreDecision
 from edictum.session import Session, validate_session_id
+from edictum.telemetry import _NoOpSpan
 from edictum.workflow.state import build_workflow_snapshot
 
 logger = logging.getLogger(__name__)
 _MAX_WORKFLOW_APPROVAL_ROUNDS = 32
+# Fixed reason code for D7 / O7: a silently-broken observe trial must be visible.
+ADAPTER_INTERNAL_EXCEPTION_REASON = "adapter_internal_exception"
+ADAPTER_UNKNOWN_TOOL_NAME = "unknown_tool"
+_MAX_GOVERNED_INPUT_DEPTH = 64
+_PERMISSION_BOUNDARY_REASON = (
+    "BLOCKED: Edictum rejected an unsafe or invalid SDK permission result; "
+    "input and permission mutations are not supported after PreToolUse governance"
+)
+_INPUT_REPLACEMENT_REASON = "BLOCKED: Edictum rejected a tool input replacement after PreToolUse governance"
+_INPUT_COMPARE_REASON = "BLOCKED: Edictum could not compare tool input against the governed snapshot"
+_INVALID_TOOL_INPUT_REASON = "BLOCKED: Claude Agent SDK supplied invalid tool input"
+
+
+@dataclass
+class _SdkHookMatcher:
+    """Stand-in matcher when claude-agent-sdk is not installed.
+
+    The host converts matchers via ``matcher.matcher`` / ``matcher.hooks``.
+    """
+
+    matcher: str | None = None
+    hooks: list = field(default_factory=list)
+
+
+@dataclass
+class _PermissionAllow:
+    behavior: str = "allow"
+    updated_input: dict[str, Any] | None = None
+    updated_permissions: list[Any] | None = None
+
+
+@dataclass
+class _PermissionDeny:
+    behavior: str = "deny"
+    message: str = ""
+    interrupt: bool = False
+
+
+def _hook_matcher(hooks: list) -> Any:
+    try:
+        from claude_agent_sdk.types import HookMatcher
+
+        return HookMatcher(hooks=hooks)
+    except ImportError:
+        return _SdkHookMatcher(hooks=hooks)
+
+
+def _permission_allow(*, updated_input: dict[str, Any] | None = None) -> Any:
+    try:
+        from claude_agent_sdk.types import PermissionResultAllow
+
+        return PermissionResultAllow(updated_input=updated_input)
+    except ImportError:
+        return _PermissionAllow(updated_input=updated_input)
+
+
+def _permission_deny(message: str, interrupt: bool = False) -> Any:
+    try:
+        from claude_agent_sdk.types import PermissionResultDeny
+
+        return PermissionResultDeny(message=message, interrupt=interrupt)
+    except ImportError:
+        return _PermissionDeny(message=message, interrupt=interrupt)
+
+
+def _governed_input_equals(left: Any, right: Any, depth: int = 0) -> bool:
+    """Deep-compare the tool args that will execute against the governed snapshot."""
+    if depth > _MAX_GOVERNED_INPUT_DEPTH:
+        raise TypeError("BLOCKED: tool input exceeded compare depth")
+    if left is right:
+        return True
+    if left is None or right is None:
+        return False
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, (str, bytes, bool, int, float)):
+        return left == right
+    if isinstance(left, datetime):
+        return left == right
+    if isinstance(left, list):
+        if len(left) != len(right):
+            return False
+        return all(_governed_input_equals(a, b, depth + 1) for a, b in zip(left, right, strict=True))
+    if isinstance(left, dict):
+        if type(left) is not dict or type(right) is not dict:
+            raise TypeError("BLOCKED: governed input compare requires plain JSON-like values")
+        if left.keys() != right.keys():
+            return False
+        return all(_governed_input_equals(left[k], right[k], depth + 1) for k in left)
+    raise TypeError("BLOCKED: governed input compare requires plain JSON-like values")
+
 
 if TYPE_CHECKING:
     from edictum import Edictum
@@ -55,6 +149,14 @@ class ClaudeAgentSDKAdapter:
         self._principal = principal
         self._principal_resolver = principal_resolver
         self._parent_session_id: str | None = None
+        self._internal_exception_count = 0
+        self._hook_envelope: Any | None = None
+        self._hook_envelope_attempted = False
+        self._hook_decision: PreDecision | None = None
+        self._hook_span: Any | None = None
+        self._hook_span_attempted = False
+        self._hook_call_index_advanced = False
+        self._hook_attempts_advanced = False
 
     @property
     def session_id(self) -> str:
@@ -94,8 +196,8 @@ class ClaudeAgentSDKAdapter:
             result = await hooks["post_tool_use"](tool_use_id=id, tool_response=resp)
 
         These are **not** directly compatible with
-        ``ClaudeAgentOptions(hooks=...)``.  See the adapter docs for a bridge
-        recipe that wraps them into SDK-native format.
+        ``ClaudeAgentOptions(hooks=...)``. Use ``to_sdk_hooks()`` for the
+        host hook protocol matchers.
 
         Args:
             on_postcondition_warn: Optional callback invoked when postconditions
@@ -116,8 +218,345 @@ class ClaudeAgentSDKAdapter:
             "post_tool_use": self._post_tool_use,
         }
 
+    def to_sdk_hooks(
+        self,
+        on_postcondition_warn: Callable[[Any, list[Finding]], Any] | None = None,
+    ) -> dict[str, list[Any]]:
+        """Return SDK-native hook matchers for ClaudeAgentOptions.hooks.
+
+        Shape matches the host hook protocol: ``{event: [HookMatcher(hooks=[fn])]}``.
+        Pass → ``{}`` (emit nothing). Block → ``permissionDecision: deny``.
+        Never emit the SDK's ``ask`` or ``allow``.
+        """
+        self._on_postcondition_warn = on_postcondition_warn
+
+        async def pre_tool_use(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+            hook_event = ""
+            if isinstance(input, dict):
+                hook_event = str(input.get("hook_event_name") or "")
+            else:
+                hook_event = str(getattr(input, "hook_event_name", "") or "")
+            if hook_event and hook_event != "PreToolUse":
+                return {}
+
+            tool_name = ""
+            tool_input: Any = None
+            input_tool_use_id = None
+            if isinstance(input, dict):
+                tool_name = input.get("tool_name") or ""
+                tool_input = input.get("tool_input")
+                input_tool_use_id = input.get("tool_use_id")
+            else:
+                tool_name = getattr(input, "tool_name", "") or ""
+                tool_input = getattr(input, "tool_input", None)
+                input_tool_use_id = getattr(input, "tool_use_id", None)
+
+            call_id = tool_use_id or input_tool_use_id or str(uuid.uuid4())
+            try:
+                if not isinstance(tool_input, dict):
+                    return self._deny(_INVALID_TOOL_INPUT_REASON)
+
+                pending = self._pending.get(call_id)
+                if pending is not None:
+                    envelope, _span = pending
+                    try:
+                        matches = envelope.tool_name == tool_name and _governed_input_equals(envelope.args, tool_input)
+                    except Exception:
+                        return self._deny(_INPUT_COMPARE_REASON)
+                    if not matches:
+                        return self._deny(_INPUT_REPLACEMENT_REASON)
+                    return {}
+
+                result = await self._pre_tool_use(tool_name, tool_input, call_id)
+                if result:
+                    return result
+
+                stored = self._pending.get(call_id)
+                try:
+                    still_matches = (
+                        stored is not None
+                        and stored[0].tool_name == tool_name
+                        and _governed_input_equals(stored[0].args, tool_input)
+                    )
+                except Exception:
+                    self._pending.pop(call_id, None)
+                    self._pending_decisions.pop(call_id, None)
+                    return self._deny(_INPUT_COMPARE_REASON)
+                if not still_matches:
+                    self._pending.pop(call_id, None)
+                    self._pending_decisions.pop(call_id, None)
+                    return self._deny(_INPUT_REPLACEMENT_REASON)
+                return {}
+            except Exception:
+                logger.exception("Claude PreToolUse hook raised")
+                try:
+                    await self._on_internal_exception(tool_name)
+                except Exception:
+                    logger.exception("Claude internal-exception audit failed")
+                if self._guard.mode == "observe":
+                    try:
+                        await self._ensure_observe_exception_pending(tool_name, tool_input, call_id)
+                    except Exception:
+                        logger.exception("Claude observe-exception pending seed failed")
+                    return {}
+                return self._deny(ADAPTER_INTERNAL_EXCEPTION_REASON)
+
+        async def post_tool_use(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+            hook_event = ""
+            tool_response: Any = None
+            input_tool_use_id = None
+            if isinstance(input, dict):
+                hook_event = str(input.get("hook_event_name") or "")
+                tool_response = input.get("tool_response")
+                input_tool_use_id = input.get("tool_use_id")
+            else:
+                hook_event = str(getattr(input, "hook_event_name", "") or "")
+                tool_response = getattr(input, "tool_response", None)
+                input_tool_use_id = getattr(input, "tool_use_id", None)
+            if hook_event and hook_event != "PostToolUse":
+                return {}
+            call_id = tool_use_id or input_tool_use_id
+            if not call_id:
+                return {}
+            try:
+                return await self._post_tool_use(tool_use_id=call_id, tool_response=tool_response)
+            except Exception:
+                logger.exception("Claude PostToolUse hook raised; keeping original result")
+                return {}
+
+        async def post_tool_use_failure(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+            hook_event = ""
+            error = None
+            input_tool_use_id = None
+            if isinstance(input, dict):
+                hook_event = str(input.get("hook_event_name") or "")
+                error = input.get("error")
+                input_tool_use_id = input.get("tool_use_id")
+            else:
+                hook_event = str(getattr(input, "hook_event_name", "") or "")
+                error = getattr(input, "error", None)
+                input_tool_use_id = getattr(input, "tool_use_id", None)
+            if hook_event and hook_event != "PostToolUseFailure":
+                return {}
+            call_id = tool_use_id or input_tool_use_id
+            if not call_id:
+                return {}
+            failure_response = {"is_error": True, "error": error}
+            try:
+                result = await self._post_tool_use(tool_use_id=call_id, tool_response=failure_response)
+            except Exception:
+                logger.exception("Claude PostToolUseFailure hook raised")
+                return {}
+            if not result:
+                return {}
+            specific = result.get("hookSpecificOutput")
+            if isinstance(specific, dict):
+                specific = dict(specific)
+                specific["hookEventName"] = "PostToolUseFailure"
+                return {"hookSpecificOutput": specific}
+            return result
+
+        hooks = {
+            "PreToolUse": [_hook_matcher([pre_tool_use])],
+            "PostToolUse": [_hook_matcher([post_tool_use])],
+            "PostToolUseFailure": [_hook_matcher([post_tool_use_failure])],
+        }
+        return hooks
+
+    def wrap_can_use_tool(self, callback: Callable) -> Callable:
+        """Wrap an SDK permission callback so it cannot mutate args after PreToolUse."""
+
+        async def wrapped(tool_name: str, tool_input: dict[str, Any], context: Any) -> Any:
+            try:
+                pending = self._pending_for_permission(tool_name, tool_input, context)
+                if pending == "mismatch":
+                    return _permission_deny(_INPUT_REPLACEMENT_REASON)
+                if pending == "compare_failed":
+                    return _permission_deny(_INPUT_COMPARE_REASON)
+
+                isolated = copy.deepcopy(tool_input) if isinstance(tool_input, dict) else tool_input
+                result = await callback(tool_name, isolated, context)
+
+                if isinstance(pending, tuple):
+                    envelope = pending[0]
+                    try:
+                        if envelope.tool_name != tool_name or not _governed_input_equals(envelope.args, tool_input):
+                            return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+                    except Exception:
+                        return _permission_deny(_INPUT_COMPARE_REASON)
+
+                if result is None:
+                    return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+
+                behavior, updated_input, updated_permissions, message, interrupt = self._permission_fields(result)
+                if behavior == "allow":
+                    if updated_input is not None or updated_permissions is not None:
+                        return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+                    pinned = None
+                    if isinstance(pending, tuple):
+                        pinned = copy.deepcopy(pending[0].args)
+                    return _permission_allow(updated_input=pinned)
+                if behavior == "deny":
+                    if not isinstance(message, str):
+                        return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+                    if interrupt is not None and not isinstance(interrupt, bool):
+                        return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+                    return _permission_deny(message, interrupt=bool(interrupt))
+                return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+            except Exception:
+                logger.exception("Claude can_use_tool wrapper raised")
+                return _permission_deny(_PERMISSION_BOUNDARY_REASON)
+
+        return wrapped
+
+    def _pending_for_permission(self, tool_name: str, tool_input: Any, context: Any) -> Any:
+        tool_use_id = getattr(context, "tool_use_id", None)
+        if isinstance(context, dict):
+            tool_use_id = context.get("tool_use_id", tool_use_id)
+        if tool_use_id and tool_use_id in self._pending:
+            envelope, span = self._pending[tool_use_id]
+            try:
+                if envelope.tool_name == tool_name and _governed_input_equals(envelope.args, tool_input):
+                    return (envelope, span)
+                return "mismatch"
+            except Exception:
+                return "compare_failed"
+
+        same_name: list[tuple[Any, Any]] = []
+        for envelope, span in self._pending.values():
+            if envelope.tool_name == tool_name:
+                same_name.append((envelope, span))
+        if not same_name:
+            return None
+        for envelope, span in same_name:
+            try:
+                if _governed_input_equals(envelope.args, tool_input):
+                    return (envelope, span)
+            except Exception:
+                return "compare_failed"
+        return "mismatch"
+
+    @staticmethod
+    def _permission_fields(result: Any) -> tuple[Any, Any, Any, Any, Any]:
+        if isinstance(result, dict):
+            return (
+                result.get("behavior"),
+                result.get("updated_input", result.get("updatedInput")),
+                result.get("updated_permissions", result.get("updatedPermissions")),
+                result.get("message", ""),
+                result.get("interrupt", False),
+            )
+        return (
+            getattr(result, "behavior", None),
+            getattr(result, "updated_input", None),
+            getattr(result, "updated_permissions", None),
+            getattr(result, "message", ""),
+            getattr(result, "interrupt", False),
+        )
+
+    @staticmethod
+    def _safe_tool_name(name: Any) -> str:
+        if not isinstance(name, str) or not name:
+            return ADAPTER_UNKNOWN_TOOL_NAME
+        try:
+            _validate_tool_name(name)
+        except ValueError:
+            return ADAPTER_UNKNOWN_TOOL_NAME
+        return name
+
+    async def _on_internal_exception(self, tool_name: str) -> None:
+        """Emit the D7 loud audit + counter/span for a hook-path exception."""
+        self._internal_exception_count += 1
+        reason = ADAPTER_INTERNAL_EXCEPTION_REASON
+        mode = self._guard.mode
+        action = AuditAction.CALL_WOULD_DENY if mode == "observe" else AuditAction.CALL_DENIED
+        safe_name = self._safe_tool_name(tool_name)
+        self._guard.telemetry.record_adapter_exception(safe_name, mode)
+        await self._guard.audit_sink.emit(
+            AuditEvent(
+                action=action,
+                session_id=self._session_id,
+                tool_name=safe_name,
+                reason=reason,
+                decision_source="adapter",
+                decision_name=reason,
+                mode=mode,
+                policy_version=self._guard.policy_version,
+                policy_error=True,
+            )
+        )
+
+    async def _ensure_observe_exception_pending(
+        self,
+        tool_name: str,
+        tool_input: Any,
+        tool_use_id: str,
+    ) -> None:
+        """Keep enough pending state so post-hook can record the allowed execution."""
+        if tool_use_id in self._pending and tool_use_id in self._pending_decisions:
+            return
+        envelope = self._hook_envelope
+        if envelope is None:
+            safe_name = self._safe_tool_name(tool_name)
+            args = tool_input if isinstance(tool_input, dict) else {}
+            call_index = self._call_index - 1 if self._hook_call_index_advanced else self._call_index
+            if self._hook_envelope_attempted:
+                envelope = ToolCall(
+                    tool_name=safe_name,
+                    args=args,
+                    run_id=self._session_id,
+                    call_index=call_index,
+                    tool_use_id=tool_use_id,
+                    environment=self._guard.environment,
+                    principal=self._principal,
+                )
+            else:
+                envelope = create_envelope(
+                    tool_name=safe_name,
+                    tool_input=args,
+                    run_id=self._session_id,
+                    call_index=call_index,
+                    tool_use_id=tool_use_id,
+                    environment=self._guard.environment,
+                    registry=self._guard.tool_registry,
+                    principal=self._principal,
+                )
+        if self._hook_span is not None:
+            span = self._hook_span
+        elif self._hook_span_attempted:
+            span = _NoOpSpan()
+        else:
+            span = self._guard.telemetry.start_tool_span(envelope)
+        if self._hook_decision is not None:
+            decision = self._hook_decision
+        else:
+            decision = PreDecision(
+                action="allow",
+                reason=ADAPTER_INTERNAL_EXCEPTION_REASON,
+                decision_source="adapter",
+                decision_name=ADAPTER_INTERNAL_EXCEPTION_REASON,
+                policy_error=True,
+            )
+        self._pending[tool_use_id] = (envelope, span)
+        self._pending_decisions[tool_use_id] = decision
+        if not self._hook_call_index_advanced:
+            self._call_index += 1
+            self._hook_call_index_advanced = True
+        if not self._hook_attempts_advanced:
+            self._hook_attempts_advanced = True
+            await self._session.increment_attempts()
+
     async def _pre_tool_use(self, tool_name: str, tool_input: dict, tool_use_id: str, **kwargs) -> dict[str, Any]:
+        self._hook_envelope = None
+        self._hook_envelope_attempted = False
+        self._hook_decision = None
+        self._hook_span = None
+        self._hook_span_attempted = False
+        self._hook_call_index_advanced = False
+        self._hook_attempts_advanced = False
+
         # Create envelope
+        self._hook_envelope_attempted = True
         envelope = create_envelope(
             tool_name=tool_name,
             tool_input=tool_input,
@@ -128,17 +567,23 @@ class ClaudeAgentSDKAdapter:
             registry=self._guard.tool_registry,
             principal=self._resolve_principal(tool_name, tool_input),
         )
+        self._hook_envelope = envelope
         self._call_index += 1
+        self._hook_call_index_advanced = True
 
         # Increment attempts BEFORE governance
+        self._hook_attempts_advanced = True
         await self._session.increment_attempts()
 
         # Start OTel span
+        self._hook_span_attempted = True
         span = self._guard.telemetry.start_tool_span(envelope)
+        self._hook_span = span
 
         try:
             # Run pipeline
             decision = await self._pipeline.pre_execute(envelope, self._session)
+            self._hook_decision = decision
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
             # Handle observe mode: convert block to allow with warning

@@ -367,3 +367,232 @@ class TestClaudeSDKPostconditionCallback:
         assert isinstance(f, Finding)
         assert f.rule_id == "detect_secret"
         assert "API token" in f.message
+
+
+def _sdk_pre(adapter):
+    return adapter.to_sdk_hooks()["PreToolUse"][0].hooks[0]
+
+
+def _pre_input(tool_name="canary", tool_input=None, tool_use_id="tu-1"):
+    return {
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool_name,
+        "tool_input": {} if tool_input is None else tool_input,
+        "tool_use_id": tool_use_id,
+    }
+
+
+_ASK_RULES = """
+apiVersion: edictum/v1
+kind: Ruleset
+metadata:
+  name: claude-ask
+defaults:
+  mode: enforce
+tools:
+  canary:
+    side_effect: write
+rules:
+  - id: ask-canary
+    type: pre
+    tool: canary
+    when:
+      args.payload: {equals: ping}
+    then:
+      action: ask
+      message: would ask a human
+      timeout: 30
+      timeout_action: block
+"""
+
+
+class SpyApprovalBackend:
+    def __init__(self) -> None:
+        self.requests: list[dict] = []
+
+    async def request_approval(self, **kwargs):
+        from edictum.approval import ApprovalRequest
+
+        self.requests.append(kwargs)
+        return ApprovalRequest(
+            approval_id="spy-1",
+            tool_name=kwargs.get("tool_name", ""),
+            tool_args=kwargs.get("tool_args") or {},
+            message=kwargs.get("message") or "",
+            timeout=kwargs.get("timeout") or 30,
+        )
+
+    async def wait_for_decision(self, approval_id: str, timeout: int | None = None):
+        from edictum.approval import ApprovalDecision, ApprovalStatus
+
+        return ApprovalDecision(approved=False, reason="spy-block", status=ApprovalStatus.DENIED)
+
+
+class TestClaudeSdkHostHooks:
+    """Host hook protocol: matchers, no-match {}, no SDK ask, fail-closed replacement, D7."""
+
+    async def test_to_sdk_hooks_matchers_have_hooks(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        hooks = adapter.to_sdk_hooks()
+        assert "PreToolUse" in hooks
+        assert hooks["PreToolUse"][0].hooks
+        assert hooks["PostToolUse"][0].hooks
+
+    async def test_no_match_emits_nothing(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        result = await _sdk_pre(adapter)(_pre_input(), "tu-1", {"signal": None})
+        assert result == {}
+        assert "permissionDecision" not in result
+        assert "hookSpecificOutput" not in result
+
+    @pytest.mark.security
+    async def test_block_emits_host_deny_not_ask(self):
+        @precondition("*")
+        def always_block(tool_call):
+            return Decision.fail("canary blocked")
+
+        adapter = ClaudeAgentSDKAdapter(make_guard(rules=[always_block]))
+        result = await _sdk_pre(adapter)(_pre_input(), "tu-1", {"signal": None})
+        emitted = result["hookSpecificOutput"]
+        assert emitted["permissionDecision"] == "deny"
+        assert emitted["permissionDecision"] != "ask"
+        assert "canary blocked" in emitted["permissionDecisionReason"]
+
+    @pytest.mark.security
+    async def test_ask_uses_approval_backend_never_emits_sdk_ask(self):
+        spy = SpyApprovalBackend()
+        sink = NullAuditSink()
+        guard = Edictum.from_yaml_string(
+            _ASK_RULES,
+            backend=MemoryBackend(),
+            audit_sink=sink,
+            approval_backend=spy,
+        )
+        adapter = ClaudeAgentSDKAdapter(guard)
+        result = await _sdk_pre(adapter)(
+            _pre_input(tool_input={"payload": "ping"}),
+            "tu-1",
+            {"signal": None},
+        )
+        assert spy.requests, "ask must go through Edictum ApprovalBackend"
+        emitted = result.get("hookSpecificOutput") or {}
+        assert emitted.get("permissionDecision") != "ask"
+        assert emitted.get("permissionDecision") == "deny"
+
+    @pytest.mark.security
+    async def test_pretooluse_rejects_input_replacement(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        pre = _sdk_pre(adapter)
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        second = await pre(_pre_input(tool_input={"payload": "pwn"}), "tu-1", {"signal": None})
+        assert second["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "BLOCKED" in second["hookSpecificOutput"]["permissionDecisionReason"]
+
+    @pytest.mark.security
+    async def test_pretooluse_rejects_mutation_during_pre(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        tool_input = {"payload": "ping"}
+        original = adapter._pipeline.pre_execute
+
+        async def mutate_then_pre(envelope, session):
+            tool_input["payload"] = "pwn"
+            return await original(envelope, session)
+
+        adapter._pipeline.pre_execute = mutate_then_pre
+        result = await _sdk_pre(adapter)(
+            _pre_input(tool_input=tool_input),
+            "tu-1",
+            {"signal": None},
+        )
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "BLOCKED" in result["hookSpecificOutput"]["permissionDecisionReason"]
+
+    @pytest.mark.security
+    async def test_malformed_tool_input_blocks(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        result = await _sdk_pre(adapter)(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "canary",
+                "tool_input": ["not", "a", "dict"],
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    @pytest.mark.security
+    async def test_wrap_can_use_tool_blocks_replacement(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        await _sdk_pre(adapter)(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+
+        async def allow_cb(tool_name, tool_input, context):
+            return {"behavior": "allow"}
+
+        wrapped = adapter.wrap_can_use_tool(allow_cb)
+        result = await wrapped(
+            "canary",
+            {"payload": "pwn"},
+            type("Ctx", (), {"tool_use_id": "tu-1"})(),
+        )
+        assert result.behavior == "deny"
+        assert "BLOCKED" in result.message
+
+    @pytest.mark.security
+    async def test_wrap_can_use_tool_strips_updated_input(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        await _sdk_pre(adapter)(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+
+        async def rewrite_cb(tool_name, tool_input, context):
+            return {"behavior": "allow", "updated_input": {"payload": "pwn"}}
+
+        wrapped = adapter.wrap_can_use_tool(rewrite_cb)
+        result = await wrapped(
+            "canary",
+            {"payload": "ping"},
+            type("Ctx", (), {"tool_use_id": "tu-1"})(),
+        )
+        assert result.behavior == "deny"
+        assert "BLOCKED" in result.message
+
+    @pytest.mark.security
+    async def test_enforce_exception_fails_closed(self):
+        from edictum.adapters.claude_agent_sdk import ADAPTER_INTERNAL_EXCEPTION_REASON
+
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
+
+        async def explode(*args, **kwargs):
+            raise RuntimeError("backend outage")
+
+        adapter._pre_tool_use = explode
+        result = await _sdk_pre(adapter)(_pre_input(), "tu-1", {"signal": None})
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        events = [e for e in sink.events if e.reason == ADAPTER_INTERNAL_EXCEPTION_REASON]
+        assert events
+        assert events[0].action == AuditAction.CALL_DENIED
+        assert events[0].decision_source == "adapter"
+        assert events[0].policy_error is True
+        assert adapter._internal_exception_count == 1
+
+    @pytest.mark.security
+    async def test_observe_exception_allows_loudly(self):
+        from edictum.adapters.claude_agent_sdk import ADAPTER_INTERNAL_EXCEPTION_REASON
+
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(mode="observe", audit_sink=sink))
+
+        async def explode(*args, **kwargs):
+            raise RuntimeError("backend outage")
+
+        adapter._pre_tool_use = explode
+        result = await _sdk_pre(adapter)(_pre_input(), "tu-1", {"signal": None})
+        assert result == {}
+        events = [e for e in sink.events if e.reason == ADAPTER_INTERNAL_EXCEPTION_REASON]
+        assert events
+        assert events[0].action == AuditAction.CALL_WOULD_DENY
+        assert events[0].decision_source == "adapter"
+        assert events[0].policy_error is True
+        assert adapter._internal_exception_count == 1
