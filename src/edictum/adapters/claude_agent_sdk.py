@@ -76,6 +76,10 @@ class _HookRecovery:
     attempts_advanced: bool = False
 
 
+def _has_control_chars(value: str) -> bool:
+    return any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
+
+
 def _hook_matcher(hooks: list) -> Any:
     try:
         from claude_agent_sdk.types import HookMatcher
@@ -450,6 +454,8 @@ class ClaudeAgentSDKAdapter:
                         return await deny(_PERMISSION_BOUNDARY_REASON)
                     if interrupt is not None and not isinstance(interrupt, bool):
                         return await deny(_PERMISSION_BOUNDARY_REASON)
+                    if _has_control_chars(message):
+                        return await deny(_PERMISSION_BOUNDARY_REASON)
                     return await deny(message, interrupt=bool(interrupt))
                 return await deny(_PERMISSION_BOUNDARY_REASON)
             except Exception:
@@ -526,7 +532,8 @@ class ClaudeAgentSDKAdapter:
         self._pending_decisions.pop(call_id, None)
         if pending is None:
             return
-        _envelope, span = pending
+        envelope, span = pending
+        self._clear_sink_ack(getattr(envelope, "call_id", "") or call_id)
         try:
             span.end()
         except Exception:
@@ -612,36 +619,52 @@ class ClaudeAgentSDKAdapter:
     async def _audit_post_hook_exception(self, pending: Any, tool_response: Any) -> None:
         """Emit adapter-sourced executed/failed after a post-hook raise."""
         envelope = pending[0] if isinstance(pending, tuple) and pending else None
-        if envelope is not None and envelope.call_id in self._execution_audit_completed:
-            self._execution_audit_completed.discard(envelope.call_id)
-            self._execution_tool_success.pop(envelope.call_id, None)
-            await self._recover_workflow_events(envelope)
-            self._clear_sink_ack(envelope.call_id)
-            return
-        tool_success = False
-        if envelope is not None and envelope.call_id in self._execution_tool_success:
-            tool_success = self._execution_tool_success.pop(envelope.call_id)
-        elif envelope is not None:
-            try:
-                tool_success = self._check_tool_success(envelope.tool_name, tool_response)
-            except Exception:
-                tool_success = False
-        action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
-        reason = ADAPTER_POST_HOOK_EXCEPTION_REASON
-        if envelope is not None:
-            await self._emit_per_sink(
+        try:
+            if envelope is not None and envelope.call_id in self._execution_audit_completed:
+                self._execution_audit_completed.discard(envelope.call_id)
+                self._execution_tool_success.pop(envelope.call_id, None)
+                await self._recover_workflow_events(envelope)
+                return
+            tool_success = False
+            if envelope is not None and envelope.call_id in self._execution_tool_success:
+                tool_success = self._execution_tool_success.pop(envelope.call_id)
+            elif envelope is not None:
+                try:
+                    tool_success = self._check_tool_success(envelope.tool_name, tool_response)
+                except Exception:
+                    tool_success = False
+            action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
+            reason = ADAPTER_POST_HOOK_EXCEPTION_REASON
+            if envelope is not None:
+                await self._emit_per_sink(
+                    AuditEvent(
+                        action=action,
+                        run_id=envelope.run_id,
+                        call_id=envelope.call_id,
+                        call_index=envelope.call_index,
+                        session_id=self._session_id,
+                        parent_session_id=self._audit_parent_session_id(),
+                        tool_name=envelope.tool_name,
+                        tool_args=self._guard.redaction.redact_args(envelope.args),
+                        side_effect=envelope.side_effect.value,
+                        environment=envelope.environment,
+                        principal=asdict(envelope.principal) if envelope.principal else None,
+                        reason=reason,
+                        decision_source="adapter",
+                        decision_name=reason,
+                        tool_success=tool_success,
+                        mode=self._guard.mode,
+                        policy_version=self._guard.policy_version,
+                        policy_error=True,
+                    )
+                )
+                await self._recover_workflow_events(envelope)
+                return
+            await self._guard.audit_sink.emit(
                 AuditEvent(
                     action=action,
-                    run_id=envelope.run_id,
-                    call_id=envelope.call_id,
-                    call_index=envelope.call_index,
                     session_id=self._session_id,
-                    parent_session_id=self._audit_parent_session_id(),
-                    tool_name=envelope.tool_name,
-                    tool_args=self._guard.redaction.redact_args(envelope.args),
-                    side_effect=envelope.side_effect.value,
-                    environment=envelope.environment,
-                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    tool_name=ADAPTER_UNKNOWN_TOOL_NAME,
                     reason=reason,
                     decision_source="adapter",
                     decision_name=reason,
@@ -651,23 +674,10 @@ class ClaudeAgentSDKAdapter:
                     policy_error=True,
                 )
             )
-            await self._recover_workflow_events(envelope)
-            self._clear_sink_ack(envelope.call_id)
-            return
-        await self._guard.audit_sink.emit(
-            AuditEvent(
-                action=action,
-                session_id=self._session_id,
-                tool_name=ADAPTER_UNKNOWN_TOOL_NAME,
-                reason=reason,
-                decision_source="adapter",
-                decision_name=reason,
-                tool_success=tool_success,
-                mode=self._guard.mode,
-                policy_version=self._guard.policy_version,
-                policy_error=True,
-            )
-        )
+        finally:
+            if envelope is not None:
+                self._pending_workflow_events.pop(envelope.call_id, None)
+                self._clear_sink_ack(envelope.call_id)
 
     async def _audit_adapter_block(self, tool_name: str, reason: str, envelope: Any | None = None) -> None:
         """Emit an adapter-sourced CALL_DENIED, keeping pending identity when present."""
@@ -852,6 +862,7 @@ class ClaudeAgentSDKAdapter:
                     span.end()
                     self._pending.pop(tool_use_id, None)
                     self._pending_decisions.pop(tool_use_id, None)
+                    self._clear_sink_ack(envelope.call_id)
                     return blocked_result
 
             # Handle block
@@ -868,6 +879,7 @@ class ClaudeAgentSDKAdapter:
                 span.end()
                 self._pending.pop(tool_use_id, None)
                 self._pending_decisions.pop(tool_use_id, None)
+                self._clear_sink_ack(envelope.call_id)
                 return self._deny(decision.reason or "")
 
             # Handle per-rule observed blocks
