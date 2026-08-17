@@ -108,6 +108,12 @@ jobs:
         run: pip install --target /tmp/claude-host-cli "claude-agent-sdk==0.2.139" && install -m 0755 /tmp/claude-host-cli/claude_agent_sdk/_bundled/claude /usr/local/bin/claude
       - name: Real-framework Claude Agent SDK smokes
         env:
-          EDICTUM_CLAUDE_SMOKE: "1"
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: glm-5.3[1m]
+          ANTHROPIC_DEFAULT_SONNET_MODEL: glm-5.3[1m]
+          ANTHROPIC_DEFAULT_OPUS_MODEL: glm-5.3[1m]
+          API_TIMEOUT_MS: "3000000"
+          EDICTUM_CLAUDE_SMOKE: "1"
         run: pytest -o addopts= tests/test_adapter_claude_smoke.py -v --tb=short
