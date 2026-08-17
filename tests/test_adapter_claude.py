@@ -1168,7 +1168,9 @@ class TestClaudeSdkHostHooks:
         )
         assert configured.calls >= 2
         assert executed[0].action == AuditAction.CALL_EXECUTED
-        assert executed[0].reason == ADAPTER_POST_HOOK_EXCEPTION_REASON
+        assert executed[0].reason != ADAPTER_POST_HOOK_EXCEPTION_REASON
+        assert executed[0].policy_error is not True
+        assert executed[0].postconditions_passed is True
         assert adapter._pending == {}
         assert adapter._pending_decisions == {}
 
@@ -1219,7 +1221,9 @@ class TestClaudeSdkHostHooks:
             f"configured sink missed fallback; got {[(e.action, e.reason) for e in configured.events]}"
         )
         assert configured.calls >= 2
-        assert configured_executed[0].reason == ADAPTER_POST_HOOK_EXCEPTION_REASON
+        assert configured_executed[0].reason != ADAPTER_POST_HOOK_EXCEPTION_REASON
+        assert configured_executed[0].policy_error is not True
+        assert configured_executed[0].postconditions_passed is True
 
     @pytest.mark.security
     async def test_workflow_events_emitted_when_execution_audit_falls_back(self):
@@ -1703,6 +1707,26 @@ class TestClaudeSdkHostHooks:
         assert "tu-1" in adapter._hook_recovery
         await hooks["post_tool_use"](tool_use_id="tu-1", tool_response="ok")
         assert adapter._hook_recovery == {}, f"raw hook recovery leaked: {adapter._hook_recovery}"
+
+    @pytest.mark.security
+    async def test_to_hook_callables_clears_recovery_after_post_failure(self):
+        def boom_check(tool_name, tool_response):
+            raise RuntimeError("success_check failed")
+
+        adapter = ClaudeAgentSDKAdapter(make_guard(success_check=boom_check))
+        hooks = adapter.to_hook_callables()
+        await hooks["pre_tool_use"]("canary", {"payload": "ping"}, "tu-1")
+        envelope = adapter._pending["tu-1"][0]
+        result = await hooks["post_tool_use"](tool_use_id="tu-1", tool_response="ok")
+        assert result == {}
+        assert adapter._hook_recovery == {}
+        assert adapter._execution_tool_success == {}
+        assert adapter._execution_recorded == set()
+        assert adapter._pending_workflow_events == {}
+        assert adapter._pending_execution_event == {}
+        assert adapter._execution_audit_completed == set()
+        leftover = [key for keys in adapter._sink_ack.values() for key in keys if key[0] == envelope.call_id]
+        assert leftover == [], f"raw post failure leaked sink acks: {leftover}"
 
     @pytest.mark.security
     async def test_multiple_workflow_transitions_are_not_collapsed(self):

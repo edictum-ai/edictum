@@ -176,6 +176,7 @@ class ClaudeAgentSDKAdapter:
         self._execution_tool_success: dict[str, bool] = {}
         self._execution_recorded: set[str] = set()
         self._pending_workflow_events: dict[str, list[dict]] = {}
+        self._pending_execution_event: dict[str, AuditEvent] = {}
         self._sink_ack: dict[int, set[tuple[str, str]]] = {}
 
     @property
@@ -241,10 +242,21 @@ class ClaudeAgentSDKAdapter:
                     self._hook_recovery.pop(tool_use_id, None)
 
         async def post_tool_use(tool_use_id: str, tool_response: Any = None, **kwargs) -> dict[str, Any]:
+            pending_snapshot = self._pending.get(tool_use_id)
             try:
                 return await self._post_tool_use(tool_use_id, tool_response=tool_response, **kwargs)
+            except Exception:
+                logger.exception("Claude raw post_tool_use raised")
+                try:
+                    await self._audit_post_hook_exception(pending_snapshot, tool_response)
+                except Exception:
+                    logger.exception("Claude post-hook exception audit failed")
+                return {}
             finally:
-                self._hook_recovery.pop(tool_use_id, None)
+                envelope_call_id = ""
+                if pending_snapshot:
+                    envelope_call_id = getattr(pending_snapshot[0], "call_id", "") or ""
+                self._clear_call_state(envelope_call_id, tool_use_id)
 
         return {
             "pre_tool_use": pre_tool_use,
@@ -602,6 +614,17 @@ class ClaudeAgentSDKAdapter:
             return False
         return identity in self._sink_ack.get(id(sink), set())
 
+    def _clear_call_state(self, envelope_call_id: str = "", tool_use_id: str = "") -> None:
+        if envelope_call_id:
+            self._execution_audit_completed.discard(envelope_call_id)
+            self._execution_tool_success.pop(envelope_call_id, None)
+            self._execution_recorded.discard(envelope_call_id)
+            self._pending_workflow_events.pop(envelope_call_id, None)
+            self._pending_execution_event.pop(envelope_call_id, None)
+            self._clear_sink_ack(envelope_call_id)
+        if tool_use_id:
+            self._hook_recovery.pop(tool_use_id, None)
+
     def _clear_sink_ack(self, call_id: str) -> None:
         if not call_id:
             return
@@ -641,6 +664,11 @@ class ClaudeAgentSDKAdapter:
             if envelope is not None and envelope.call_id in self._execution_audit_completed:
                 self._execution_audit_completed.discard(envelope.call_id)
                 self._execution_tool_success.pop(envelope.call_id, None)
+                await self._recover_workflow_events(envelope)
+                return
+            stashed = self._pending_execution_event.get(envelope.call_id) if envelope is not None else None
+            if stashed is not None:
+                await self._emit_per_sink(stashed)
                 await self._recover_workflow_events(envelope)
                 return
             tool_success = False
@@ -700,9 +728,7 @@ class ClaudeAgentSDKAdapter:
             )
         finally:
             if envelope is not None:
-                self._pending_workflow_events.pop(envelope.call_id, None)
-                self._execution_recorded.discard(envelope.call_id)
-                self._clear_sink_ack(envelope.call_id)
+                self._clear_call_state(envelope.call_id)
 
     async def _audit_adapter_block(self, tool_name: str, reason: str, envelope: Any | None = None) -> None:
         """Emit an adapter-sourced CALL_DENIED, keeping pending identity when present."""
@@ -1023,6 +1049,7 @@ class ClaudeAgentSDKAdapter:
                 policy_error=post_decision.policy_error,
                 workflow=workflow,
             )
+            self._pending_execution_event[envelope.call_id] = event
             await self._emit_per_sink(event)
             self._execution_audit_completed.add(envelope.call_id)
             await self._emit_workflow_events(envelope, workflow_events)
@@ -1053,12 +1080,7 @@ class ClaudeAgentSDKAdapter:
                 logger.exception("on_postcondition_warn callback raised")
 
         # Return warnings as additionalContext
-        self._execution_audit_completed.discard(envelope.call_id)
-        self._execution_tool_success.pop(envelope.call_id, None)
-        self._execution_recorded.discard(envelope.call_id)
-        self._pending_workflow_events.pop(envelope.call_id, None)
-        self._hook_recovery.pop(tool_use_id, None)
-        self._clear_sink_ack(envelope.call_id)
+        self._clear_call_state(envelope.call_id, tool_use_id)
         if post_decision.warnings:
             return {
                 "hookSpecificOutput": {
