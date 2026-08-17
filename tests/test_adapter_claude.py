@@ -21,6 +21,7 @@ from edictum.adapters.claude_agent_sdk import (
 )
 from edictum.audit import AuditAction, CompositeSink
 from edictum.findings import Finding
+from edictum.limits import OperationLimits
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
 
@@ -1033,7 +1034,7 @@ class TestClaudeSdkHostHooks:
         async def boom(*_args, **_kwargs):
             raise RuntimeError("session down")
 
-        adapter._session.record_execution = boom
+        adapter._record_session_execution = boom
         result = await post(
             {
                 "hook_event_name": "PostToolUse",
@@ -1110,7 +1111,7 @@ class TestClaudeSdkHostHooks:
         async def boom(*_args, **_kwargs):
             raise RuntimeError("session down")
 
-        adapter._session.record_execution = boom
+        adapter._record_session_execution = boom
         result = await post(
             {
                 "hook_event_name": "PostToolUse",
@@ -1730,21 +1731,26 @@ class TestClaudeSdkHostHooks:
 
     @pytest.mark.security
     async def test_recovery_does_not_replay_partial_record_execution(self):
-        adapter = ClaudeAgentSDKAdapter(make_guard())
+        class _FailAfterExecs(MemoryBackend):
+            def __init__(self):
+                super().__init__()
+                self.execs_increments = 0
+                self.fail_tool = True
+
+            async def increment(self, key: str, amount: float = 1) -> float:
+                if key.endswith(":execs"):
+                    self.execs_increments += 1
+                if self.fail_tool and ":tool:" in key:
+                    self.fail_tool = False
+                    raise RuntimeError("backend dropped after execs")
+                return await super().increment(key, amount)
+
+        backend = _FailAfterExecs()
+        adapter = ClaudeAgentSDKAdapter(make_guard(backend=backend))
         hooks = adapter.to_sdk_hooks()
         pre = hooks["PreToolUse"][0].hooks[0]
         post = hooks["PostToolUse"][0].hooks[0]
         await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
-        real_record = adapter._session.record_execution
-        calls = {"n": 0}
-
-        async def partial(*args, **kwargs):
-            calls["n"] += 1
-            await real_record(*args, **kwargs)
-            if calls["n"] == 1:
-                raise RuntimeError("backend dropped after execs")
-
-        adapter._session.record_execution = partial
         before = await adapter._session.execution_count()
         result = await post(
             {
@@ -1757,8 +1763,51 @@ class TestClaudeSdkHostHooks:
         )
         assert result == {}
         after = await adapter._session.execution_count()
-        assert calls["n"] == 1, f"recovery replayed record_execution; calls={calls['n']}"
+        assert backend.execs_increments == 1, f"execs replayed; increments={backend.execs_increments}"
         assert after == before + 1, f"execs double-counted; {before} -> {after}"
+
+    @pytest.mark.security
+    async def test_recovery_finishes_remaining_execution_counters(self):
+        class _FailAfterExecs(MemoryBackend):
+            def __init__(self):
+                super().__init__()
+                self.execs_increments = 0
+                self.fail_tool = True
+
+            async def increment(self, key: str, amount: float = 1) -> float:
+                if key.endswith(":execs"):
+                    self.execs_increments += 1
+                if self.fail_tool and ":tool:" in key:
+                    self.fail_tool = False
+                    raise RuntimeError("backend dropped after execs")
+                return await super().increment(key, amount)
+
+        backend = _FailAfterExecs()
+        limits = OperationLimits(max_tool_calls=1, max_calls_per_tool={"canary": 1})
+        adapter = ClaudeAgentSDKAdapter(make_guard(backend=backend, limits=limits))
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        result = await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result == {}
+        assert backend.execs_increments == 1, f"execs replayed; increments={backend.execs_increments}"
+        assert await adapter._session.execution_count() == 1
+        assert await adapter._session.tool_execution_count("canary") == 1
+        assert await adapter._session.consecutive_failures() == 0
+        second = await pre(_pre_input(tool_input={"payload": "ping"}, tool_use_id="tu-2"), "tu-2", {"signal": None})
+        assert second.get("hookSpecificOutput", {}).get("permissionDecision") == "deny", (
+            f"stale counters failed open; got {second}"
+        )
 
     @pytest.mark.security
     async def test_pre_hook_exception_clears_workflow_sink_acks(self):
@@ -1957,7 +2006,7 @@ class TestClaudeSdkHostHooks:
         async def boom(*_args, **_kwargs):
             raise RuntimeError("session down")
 
-        adapter._session.record_execution = boom
+        adapter._record_session_execution = boom
         result = await fail(
             {
                 "hook_event_name": "PostToolUseFailure",

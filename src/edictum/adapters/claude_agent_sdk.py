@@ -25,6 +25,7 @@ _MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 ADAPTER_INTERNAL_EXCEPTION_REASON = "adapter_internal_exception"
 ADAPTER_POST_HOOK_EXCEPTION_REASON = "adapter_post_hook_exception"
 ADAPTER_UNKNOWN_TOOL_NAME = "unknown_tool"
+_EXECUTION_RECORD_STEPS = frozenset({"execs", "tool", "status"})
 _MAX_GOVERNED_INPUT_DEPTH = 64
 _PERMISSION_BOUNDARY_REASON = (
     "BLOCKED: Edictum rejected an unsafe or invalid SDK permission result; "
@@ -175,7 +176,7 @@ class ClaudeAgentSDKAdapter:
         self._execution_audit_completed: set[str] = set()
         self._execution_tool_success: dict[str, bool] = {}
         self._execution_recorded: set[str] = set()
-        self._execution_record_attempted: set[str] = set()
+        self._execution_record_steps: dict[str, set[str]] = {}
         self._pending_workflow_events: dict[str, list[dict]] = {}
         self._pending_execution_event: dict[str, AuditEvent] = {}
         self._sink_ack: dict[int, set[tuple[str, str]]] = {}
@@ -644,7 +645,7 @@ class ClaudeAgentSDKAdapter:
             self._execution_audit_completed.discard(envelope_call_id)
             self._execution_tool_success.pop(envelope_call_id, None)
             self._execution_recorded.discard(envelope_call_id)
-            self._execution_record_attempted.discard(envelope_call_id)
+            self._execution_record_steps.pop(envelope_call_id, None)
             self._pending_workflow_events.pop(envelope_call_id, None)
             self._pending_execution_event.pop(envelope_call_id, None)
             self._clear_sink_ack(envelope_call_id)
@@ -675,6 +676,25 @@ class ClaudeAgentSDKAdapter:
             self._ack_sink(sink, event)
         if errors:
             raise ExceptionGroup("Claude audit fan-out: one or more sinks failed", errors)
+
+    async def _record_session_execution(self, call_id: str, tool_name: str, success: bool) -> None:
+        """Apply remaining session execution counters without replaying completed ones."""
+        _validate_tool_name(tool_name)
+        completed = self._execution_record_steps.setdefault(call_id, set())
+        if "execs" not in completed:
+            await self._session._backend.increment(self._session._key("execs"))
+            completed.add("execs")
+        if "tool" not in completed:
+            await self._session._backend.increment(self._session._key(f"tool:{tool_name}"))
+            completed.add("tool")
+        if "status" not in completed:
+            if success:
+                await self._session._backend.delete(self._session._key("consec_fail"))
+            else:
+                await self._session._backend.increment(self._session._key("consec_fail"))
+            completed.add("status")
+        if _EXECUTION_RECORD_STEPS <= completed:
+            self._execution_recorded.add(call_id)
 
     async def _recover_workflow_events(self, envelope: Any) -> None:
         call_id = getattr(envelope, "call_id", "")
@@ -707,11 +727,9 @@ class ClaudeAgentSDKAdapter:
                     tool_success = False
             action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
             reason = ADAPTER_POST_HOOK_EXCEPTION_REASON
-            if envelope is not None and envelope.call_id not in self._execution_record_attempted:
+            if envelope is not None and envelope.call_id not in self._execution_recorded:
                 try:
-                    self._execution_record_attempted.add(envelope.call_id)
-                    await self._session.record_execution(envelope.tool_name, success=tool_success)
-                    self._execution_recorded.add(envelope.call_id)
+                    await self._record_session_execution(envelope.call_id, envelope.tool_name, tool_success)
                 except Exception:
                     logger.exception("Claude recovery record_execution failed")
             if envelope is not None:
@@ -1047,10 +1065,9 @@ class ClaudeAgentSDKAdapter:
                 workflow_state = await self._guard._workflow_runtime.state(self._session)
                 workflow = build_workflow_snapshot(self._guard._workflow_runtime.definition, workflow_state)
 
-            # Record in session
-            self._execution_record_attempted.add(envelope.call_id)
-            await self._session.record_execution(envelope.tool_name, success=tool_success)
-            self._execution_recorded.add(envelope.call_id)
+            # Record in session. Track completed counter steps so recovery
+            # can finish remaining writes without replaying successful ones.
+            await self._record_session_execution(envelope.call_id, envelope.tool_name, tool_success)
 
             # Emit audit. Mark complete only after emit returns so a sink
             # that rejects the primary event can still receive fallback.
