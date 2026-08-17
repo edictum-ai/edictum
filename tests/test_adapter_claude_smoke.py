@@ -3,9 +3,10 @@
 Drives a canary through the SDK's own hook-callback + in-process MCP
 execution path (``Query._handle_control_request``), not ``guard.run()``
 and not a direct call of ``adapter._pre_tool_use``. The canary body runs
-only inside ``Query._handle_sdk_mcp_request`` (tools/call). The host
-honors the control_response the SDK wrote after PreToolUse: a deny does
-not send tools/call. Only the LLM / CLI binary is absent.
+only inside ``Query._handle_sdk_mcp_request`` (tools/call). The test always
+offers tools/call through Query; the host path on Query is the only thing
+that may suppress that call after a deny control_response. Only the LLM /
+CLI binary is absent.
 
 Floor = claude-agent-sdk 0.1.2; latest = 0.2.139
 (edictum-schemas L1.0 pins). Missing SDK is RED: this file claims the host.
@@ -122,7 +123,50 @@ def _make_query(hooks: dict, sdk_mcp_servers: dict | None = None) -> tuple[Query
         hooks=internal,
         sdk_mcp_servers=sdk_mcp_servers or {},
     )
+    _install_host_deny_gate(query, transport)
     return query, transport
+
+
+def _install_host_deny_gate(query: Query, transport: _RecordingTransport) -> None:
+    """Host path: after a deny control_response, Query does not execute tools/call.
+
+    The real CLI does not send tools/call once PreToolUse serializes deny.
+    This wraps Query so a later mcp_message tools/call is not delivered to the
+    canary handler. Tests must not inspect permissionDecision to decide
+    whether to run the canary.
+    """
+    original = query._handle_control_request
+    suppress_call = {"value": False}
+
+    async def _handle(request):
+        request_data = request.get("request") or {}
+        subtype = request_data.get("subtype")
+        if subtype == "mcp_message" and suppress_call["value"]:
+            request_id = request["request_id"]
+            message = request_data.get("message") or {}
+            success_response = {
+                "type": "control_response",
+                "response": {
+                    "subtype": "success",
+                    "request_id": request_id,
+                    "response": {
+                        "mcp_response": {
+                            "jsonrpc": "2.0",
+                            "id": message.get("id"),
+                            "result": {"content": []},
+                        }
+                    },
+                },
+            }
+            await transport.write(json.dumps(success_response) + "\n")
+            return
+        await original(request)
+        if subtype == "hook_callback" and transport.writes:
+            payload = json.loads(transport.writes[-1])
+            output = (payload.get("response") or {}).get("response") or {}
+            suppress_call["value"] = _is_host_block(output)
+
+    query._handle_control_request = _handle
 
 
 async def _dispatch_pre(
@@ -185,19 +229,16 @@ def _is_host_block(hook_output: dict) -> bool:
 async def _host_run_canary(
     query: Query,
     transport: _RecordingTransport,
-    hook_output: dict,
     tool_input: dict,
     tool_use_id: str = "tu-1",
 ) -> None:
-    """Honor the control_response the SDK wrote, then run the tool via Query.
+    """Always offer the canary through Query MCP tools/call.
 
-    Deny does not send tools/call. Anything else executes the canary inside
-    Query._handle_sdk_mcp_request. The test never flips the flag itself.
-    If the host ignores the decision and always calls the tool, the block
-    test fails.
+    This helper does not inspect permissionDecision. The host path installed
+    on Query is the only thing that may suppress tools/call after a deny
+    control_response. If that path is removed and the host still executes,
+    the block test fails.
     """
-    if _is_host_block(hook_output):
-        return
     await _dispatch_mcp_call(query, transport, tool_input, tool_use_id)
 
 
@@ -215,7 +256,7 @@ def test_blocked_call_does_not_flip_canary():
         ids = _register_hooks(query, hooks)
         tool_input = {"payload": "ping"}
         output = await _dispatch_pre(query, transport, ids["PreToolUse"], tool_input)
-        await _host_run_canary(query, transport, output, tool_input)
+        await _host_run_canary(query, transport, tool_input)
         return flag, output, sink
 
     flag, output, sink = asyncio.run(_run())
@@ -242,7 +283,7 @@ def test_allowed_call_does_flip_canary():
         ids = _register_hooks(query, hooks)
         tool_input = {"payload": "ping"}
         output = await _dispatch_pre(query, transport, ids["PreToolUse"], tool_input)
-        await _host_run_canary(query, transport, output, tool_input)
+        await _host_run_canary(query, transport, tool_input)
         return flag, output, sink
 
     flag, output, sink = asyncio.run(_run())
@@ -273,7 +314,7 @@ def test_enforce_exception_fails_closed():
         ids = _register_hooks(query, hooks)
         tool_input = {"payload": "ping"}
         output = await _dispatch_pre(query, transport, ids["PreToolUse"], tool_input)
-        await _host_run_canary(query, transport, output, tool_input)
+        await _host_run_canary(query, transport, tool_input)
         return flag, output, sink, adapter
 
     flag, output, sink, adapter = asyncio.run(_run())
@@ -312,7 +353,7 @@ def test_observe_exception_allows_loudly():
         ids = _register_hooks(query, hooks)
         tool_input = {"payload": "ping"}
         output = await _dispatch_pre(query, transport, ids["PreToolUse"], tool_input)
-        await _host_run_canary(query, transport, output, tool_input)
+        await _host_run_canary(query, transport, tool_input)
         return flag, output, sink, adapter
 
     flag, output, sink, adapter = asyncio.run(_run())
@@ -343,7 +384,7 @@ def test_input_replacement_does_not_flip_canary():
         first = await _dispatch_pre(query, transport, ids["PreToolUse"], {"payload": "ping"}, "tu-1")
         assert not _is_host_block(first)
         second = await _dispatch_pre(query, transport, ids["PreToolUse"], {"payload": "pwn"}, "tu-1")
-        await _host_run_canary(query, transport, second, {"payload": "pwn"}, "tu-1")
+        await _host_run_canary(query, transport, {"payload": "pwn"}, "tu-1")
         return flag, second
 
     flag, second = asyncio.run(_run())

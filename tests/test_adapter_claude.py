@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -511,6 +512,23 @@ class TestClaudeSdkHostHooks:
         span.end.assert_called_once()
 
     @pytest.mark.security
+    async def test_replacement_emits_adapter_audit(self):
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
+        pre = _sdk_pre(adapter)
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        assert any(e.action == AuditAction.CALL_ALLOWED for e in sink.events)
+        second = await pre(_pre_input(tool_input={"payload": "pwn"}), "tu-1", {"signal": None})
+        assert second["hookSpecificOutput"]["permissionDecision"] == "deny"
+        events = [e for e in sink.events if e.reason == _INPUT_REPLACEMENT_REASON]
+        assert events, f"replacement block missing audit; got {[(e.action, e.reason) for e in sink.events]}"
+        assert events[0].action == AuditAction.CALL_DENIED
+        assert events[0].decision_source == "adapter"
+        assert events[0].decision_name == _INPUT_REPLACEMENT_REASON
+        assert events[0].tool_name == "canary"
+
+    @pytest.mark.security
     async def test_pretooluse_rejects_mutation_during_pre(self):
         adapter = ClaudeAgentSDKAdapter(make_guard())
         tool_input = {"payload": "ping"}
@@ -639,3 +657,51 @@ class TestClaudeSdkHostHooks:
         assert events[0].decision_source == "adapter"
         assert events[0].policy_error is True
         assert adapter._internal_exception_count == 1
+
+    @pytest.mark.security
+    async def test_observe_recovery_isolated_per_tool_call(self):
+        """Overlapping observe PreToolUse must not stash the other call's envelope."""
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(mode="observe", audit_sink=sink))
+        pre = _sdk_pre(adapter)
+        original = adapter._pipeline.pre_execute
+        a_started = asyncio.Event()
+        release_a = asyncio.Event()
+
+        async def staggered(envelope, session):
+            if envelope.tool_use_id == "tu-a":
+                a_started.set()
+                await release_a.wait()
+                raise RuntimeError("a failed after b progressed")
+            return await original(envelope, session)
+
+        adapter._pipeline.pre_execute = staggered
+
+        async def run_a():
+            return await pre(
+                _pre_input(tool_name="tool_a", tool_input={"x": 1}, tool_use_id="tu-a"),
+                "tu-a",
+                {"signal": None},
+            )
+
+        async def run_b():
+            await a_started.wait()
+            result = await pre(
+                _pre_input(tool_name="tool_b", tool_input={"y": 2}, tool_use_id="tu-b"),
+                "tu-b",
+                {"signal": None},
+            )
+            release_a.set()
+            return result
+
+        result_a, result_b = await asyncio.gather(run_a(), run_b())
+        assert result_a == {}
+        assert result_b == {}
+        assert "tu-a" in adapter._pending
+        assert "tu-b" in adapter._pending
+        envelope_a, _span_a = adapter._pending["tu-a"]
+        envelope_b, _span_b = adapter._pending["tu-b"]
+        assert envelope_a.tool_name == "tool_a"
+        assert envelope_a.args == {"x": 1}
+        assert envelope_b.tool_name == "tool_b"
+        assert envelope_b.args == {"y": 2}

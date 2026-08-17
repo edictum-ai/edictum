@@ -59,6 +59,19 @@ class _PermissionDeny:
     interrupt: bool = False
 
 
+@dataclass
+class _HookRecovery:
+    """Per-tool-call observe-exception stash. Do not share one adapter slot."""
+
+    envelope: Any | None = None
+    envelope_attempted: bool = False
+    decision: PreDecision | None = None
+    span: Any | None = None
+    span_attempted: bool = False
+    call_index_advanced: bool = False
+    attempts_advanced: bool = False
+
+
 def _hook_matcher(hooks: list) -> Any:
     try:
         from claude_agent_sdk.types import HookMatcher
@@ -150,13 +163,7 @@ class ClaudeAgentSDKAdapter:
         self._principal_resolver = principal_resolver
         self._parent_session_id: str | None = None
         self._internal_exception_count = 0
-        self._hook_envelope: Any | None = None
-        self._hook_envelope_attempted = False
-        self._hook_decision: PreDecision | None = None
-        self._hook_span: Any | None = None
-        self._hook_span_attempted = False
-        self._hook_call_index_advanced = False
-        self._hook_attempts_advanced = False
+        self._hook_recovery: dict[str, _HookRecovery] = {}
 
     @property
     def session_id(self) -> str:
@@ -266,11 +273,9 @@ class ClaudeAgentSDKAdapter:
                     try:
                         matches = envelope.tool_name == tool_name and _governed_input_equals(envelope.args, tool_input)
                     except Exception:
-                        self._clear_pending(call_id)
-                        return self._deny(_INPUT_COMPARE_REASON)
+                        return await self._block_pending(call_id, tool_name, _INPUT_COMPARE_REASON)
                     if not matches:
-                        self._clear_pending(call_id)
-                        return self._deny(_INPUT_REPLACEMENT_REASON)
+                        return await self._block_pending(call_id, tool_name, _INPUT_REPLACEMENT_REASON)
                     return {}
 
                 result = await self._pre_tool_use(tool_name, tool_input, call_id)
@@ -285,11 +290,9 @@ class ClaudeAgentSDKAdapter:
                         and _governed_input_equals(stored[0].args, tool_input)
                     )
                 except Exception:
-                    self._clear_pending(call_id)
-                    return self._deny(_INPUT_COMPARE_REASON)
+                    return await self._block_pending(call_id, tool_name, _INPUT_COMPARE_REASON)
                 if not still_matches:
-                    self._clear_pending(call_id)
-                    return self._deny(_INPUT_REPLACEMENT_REASON)
+                    return await self._block_pending(call_id, tool_name, _INPUT_REPLACEMENT_REASON)
                 return {}
             except Exception:
                 logger.exception("Claude PreToolUse hook raised")
@@ -304,6 +307,8 @@ class ClaudeAgentSDKAdapter:
                         logger.exception("Claude observe-exception pending seed failed")
                     return {}
                 return self._deny(ADAPTER_INTERNAL_EXCEPTION_REASON)
+            finally:
+                self._hook_recovery.pop(call_id, None)
 
         async def post_tool_use(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
             hook_event = ""
@@ -458,6 +463,15 @@ class ClaudeAgentSDKAdapter:
             getattr(result, "interrupt", False),
         )
 
+    async def _block_pending(self, call_id: str, tool_name: str, reason: str) -> dict[str, Any]:
+        """Emit the adapter blocked-call audit, then clear pending and return a host block."""
+        try:
+            await self._audit_adapter_block(tool_name, reason)
+        except Exception:
+            logger.exception("Claude host-block audit failed")
+        self._clear_pending(call_id)
+        return self._deny(reason)
+
     def _clear_pending(self, call_id: str) -> None:
         """Remove pending state and end the saved span for a blocked call."""
         pending = self._pending.pop(call_id, None)
@@ -526,12 +540,14 @@ class ClaudeAgentSDKAdapter:
         """Keep enough pending state so post-hook can record the allowed execution."""
         if tool_use_id in self._pending and tool_use_id in self._pending_decisions:
             return
-        envelope = self._hook_envelope
+        recovery = self._hook_recovery.get(tool_use_id)
+        envelope = recovery.envelope if recovery is not None else None
         if envelope is None:
             safe_name = self._safe_tool_name(tool_name)
             args = tool_input if isinstance(tool_input, dict) else {}
-            call_index = self._call_index - 1 if self._hook_call_index_advanced else self._call_index
-            if self._hook_envelope_attempted:
+            call_index_advanced = bool(recovery and recovery.call_index_advanced)
+            call_index = self._call_index - 1 if call_index_advanced else self._call_index
+            if recovery is not None and recovery.envelope_attempted:
                 envelope = ToolCall(
                     tool_name=safe_name,
                     args=args,
@@ -552,14 +568,14 @@ class ClaudeAgentSDKAdapter:
                     registry=self._guard.tool_registry,
                     principal=self._principal,
                 )
-        if self._hook_span is not None:
-            span = self._hook_span
-        elif self._hook_span_attempted:
+        if recovery is not None and recovery.span is not None:
+            span = recovery.span
+        elif recovery is not None and recovery.span_attempted:
             span = _NoOpSpan()
         else:
             span = self._guard.telemetry.start_tool_span(envelope)
-        if self._hook_decision is not None:
-            decision = self._hook_decision
+        if recovery is not None and recovery.decision is not None:
+            decision = recovery.decision
         else:
             decision = PreDecision(
                 action="allow",
@@ -570,24 +586,21 @@ class ClaudeAgentSDKAdapter:
             )
         self._pending[tool_use_id] = (envelope, span)
         self._pending_decisions[tool_use_id] = decision
-        if not self._hook_call_index_advanced:
+        if recovery is None or not recovery.call_index_advanced:
             self._call_index += 1
-            self._hook_call_index_advanced = True
-        if not self._hook_attempts_advanced:
-            self._hook_attempts_advanced = True
+            if recovery is not None:
+                recovery.call_index_advanced = True
+        if recovery is None or not recovery.attempts_advanced:
+            if recovery is not None:
+                recovery.attempts_advanced = True
             await self._session.increment_attempts()
 
     async def _pre_tool_use(self, tool_name: str, tool_input: dict, tool_use_id: str, **kwargs) -> dict[str, Any]:
-        self._hook_envelope = None
-        self._hook_envelope_attempted = False
-        self._hook_decision = None
-        self._hook_span = None
-        self._hook_span_attempted = False
-        self._hook_call_index_advanced = False
-        self._hook_attempts_advanced = False
+        recovery = _HookRecovery()
+        self._hook_recovery[tool_use_id] = recovery
 
         # Create envelope
-        self._hook_envelope_attempted = True
+        recovery.envelope_attempted = True
         envelope = create_envelope(
             tool_name=tool_name,
             tool_input=tool_input,
@@ -598,23 +611,23 @@ class ClaudeAgentSDKAdapter:
             registry=self._guard.tool_registry,
             principal=self._resolve_principal(tool_name, tool_input),
         )
-        self._hook_envelope = envelope
+        recovery.envelope = envelope
         self._call_index += 1
-        self._hook_call_index_advanced = True
+        recovery.call_index_advanced = True
 
         # Increment attempts BEFORE governance
-        self._hook_attempts_advanced = True
+        recovery.attempts_advanced = True
         await self._session.increment_attempts()
 
         # Start OTel span
-        self._hook_span_attempted = True
+        recovery.span_attempted = True
         span = self._guard.telemetry.start_tool_span(envelope)
-        self._hook_span = span
+        recovery.span = span
 
         try:
             # Run pipeline
             decision = await self._pipeline.pre_execute(envelope, self._session)
-            self._hook_decision = decision
+            recovery.decision = decision
             await self._emit_workflow_events(envelope, decision.workflow_events)
 
             # Handle observe mode: convert block to allow with warning
