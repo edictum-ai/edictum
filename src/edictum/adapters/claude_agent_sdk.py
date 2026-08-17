@@ -32,6 +32,7 @@ _PERMISSION_BOUNDARY_REASON = (
 _INPUT_REPLACEMENT_REASON = "BLOCKED: Edictum rejected a tool input replacement after PreToolUse governance"
 _INPUT_COMPARE_REASON = "BLOCKED: Edictum could not compare tool input against the governed snapshot"
 _INVALID_TOOL_INPUT_REASON = "BLOCKED: Claude Agent SDK supplied invalid tool input"
+_MISSING_TOOL_USE_ID_REASON = "BLOCKED: Claude Agent SDK PreToolUse omitted tool_use_id"
 
 
 @dataclass
@@ -258,7 +259,9 @@ class ClaudeAgentSDKAdapter:
                 tool_input = getattr(input, "tool_input", None)
                 input_tool_use_id = getattr(input, "tool_use_id", None)
 
-            call_id = tool_use_id or input_tool_use_id or str(uuid.uuid4())
+            call_id = tool_use_id or input_tool_use_id
+            if not isinstance(call_id, str) or not call_id:
+                return await self._block_pending("", tool_name, _MISSING_TOOL_USE_ID_REASON)
             try:
                 if not isinstance(tool_input, dict):
                     return await self._block_pending(call_id, tool_name, _INVALID_TOOL_INPUT_REASON)
@@ -384,7 +387,7 @@ class ClaudeAgentSDKAdapter:
 
             try:
                 pending = self._pending_for_permission(tool_name, tool_input, context)
-                if isinstance(pending, tuple) and not call_id:
+                if isinstance(pending, tuple):
                     call_id = pending[2]
                 if pending == "mismatch":
                     return await deny(_INPUT_REPLACEMENT_REASON)

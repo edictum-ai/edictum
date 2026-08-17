@@ -11,6 +11,7 @@ from edictum import Decision, Edictum, Principal, postcondition, precondition
 from edictum.adapters.claude_agent_sdk import (
     _INPUT_REPLACEMENT_REASON,
     _INVALID_TOOL_INPUT_REASON,
+    _MISSING_TOOL_USE_ID_REASON,
     _PERMISSION_BOUNDARY_REASON,
     ClaudeAgentSDKAdapter,
 )
@@ -577,6 +578,41 @@ class TestClaudeSdkHostHooks:
         assert "BLOCKED" in result["hookSpecificOutput"]["permissionDecisionReason"]
 
     @pytest.mark.security
+    async def test_pretooluse_rejects_missing_tool_use_id(self):
+        """ID-less PreToolUse must deny and leave no unrecoverable pending entry."""
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
+        result = await _sdk_pre(adapter)(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "canary",
+                "tool_input": {"payload": "ping"},
+            },
+            None,
+            {"signal": None},
+        )
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert result["hookSpecificOutput"]["permissionDecisionReason"] == _MISSING_TOOL_USE_ID_REASON
+        assert adapter._pending == {}
+        assert adapter._pending_decisions == {}
+        events = [e for e in sink.events if e.reason == _MISSING_TOOL_USE_ID_REASON]
+        assert events, f"missing-id block missing audit; got {[(e.action, e.reason) for e in sink.events]}"
+        assert events[0].action == AuditAction.CALL_DENIED
+        assert events[0].decision_source == "adapter"
+        assert events[0].decision_name == _MISSING_TOOL_USE_ID_REASON
+        assert events[0].tool_name == "canary"
+        post = adapter.to_sdk_hooks()["PostToolUse"][0].hooks[0]
+        post_result = await post(
+            {"hook_event_name": "PostToolUse", "tool_response": "ok"},
+            None,
+            {"signal": None},
+        )
+        assert post_result == {}
+        assert adapter._pending == {}
+        assert adapter._pending_decisions == {}
+        assert not any(e.action == AuditAction.CALL_EXECUTED for e in sink.events)
+
+    @pytest.mark.security
     async def test_malformed_tool_input_blocks(self):
         adapter = ClaudeAgentSDKAdapter(make_guard())
         result = await _sdk_pre(adapter)(
@@ -727,6 +763,32 @@ class TestClaudeSdkHostHooks:
         assert "tu-1" not in adapter._pending
         assert "tu-1" not in adapter._pending_decisions
         assert "" not in adapter._pending
+        span.end.assert_called_once()
+
+    @pytest.mark.security
+    async def test_wrap_deny_clears_matched_pending_when_context_id_unknown(self):
+        """Unknown nonempty tool_use_id must still clear the unique name+input match."""
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        await _sdk_pre(adapter)(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert "tu-1" in adapter._pending
+        envelope, _old = adapter._pending["tu-1"]
+        span = MagicMock()
+        adapter._pending["tu-1"] = (envelope, span)
+
+        async def deny_cb(tool_name, tool_input, context):
+            return {"behavior": "deny", "message": "nope"}
+
+        wrapped = adapter.wrap_can_use_tool(deny_cb)
+        result = await wrapped(
+            "canary",
+            {"payload": "ping"},
+            type("Ctx", (), {"tool_use_id": "unknown-id"})(),
+        )
+        assert result.behavior == "deny"
+        assert result.message == "nope"
+        assert "tu-1" not in adapter._pending
+        assert "tu-1" not in adapter._pending_decisions
+        assert "unknown-id" not in adapter._pending
         span.end.assert_called_once()
 
     @pytest.mark.security
