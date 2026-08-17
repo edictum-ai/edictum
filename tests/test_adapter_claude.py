@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from edictum import Decision, Edictum, postcondition, precondition
+from edictum import Decision, Edictum, Principal, postcondition, precondition
 from edictum.adapters.claude_agent_sdk import (
     _INPUT_REPLACEMENT_REASON,
     _INVALID_TOOL_INPUT_REASON,
@@ -530,6 +530,34 @@ class TestClaudeSdkHostHooks:
         assert events[0].tool_name == "canary"
 
     @pytest.mark.security
+    async def test_replacement_audit_preserves_pending_identity(self):
+        """CALL_DENIED after a governed allow must keep the envelope identity."""
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(
+            make_guard(audit_sink=sink),
+            principal=Principal(user_id="alice"),
+        )
+        pre = _sdk_pre(adapter)
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        allowed = [e for e in sink.events if e.action == AuditAction.CALL_ALLOWED]
+        assert allowed
+        allowed_event = allowed[0]
+        assert allowed_event.call_id
+        second = await pre(_pre_input(tool_input={"payload": "pwn"}), "tu-1", {"signal": None})
+        assert second["hookSpecificOutput"]["permissionDecision"] == "deny"
+        denied = [e for e in sink.events if e.reason == _INPUT_REPLACEMENT_REASON]
+        assert denied
+        event = denied[0]
+        assert event.action == AuditAction.CALL_DENIED
+        assert event.run_id == allowed_event.run_id
+        assert event.call_id == allowed_event.call_id
+        assert event.call_index == allowed_event.call_index
+        assert event.tool_name == allowed_event.tool_name
+        assert event.tool_args == allowed_event.tool_args
+        assert event.principal == allowed_event.principal
+
+    @pytest.mark.security
     async def test_pretooluse_rejects_mutation_during_pre(self):
         adapter = ClaudeAgentSDKAdapter(make_guard())
         tool_input = {"payload": "ping"}
@@ -644,6 +672,12 @@ class TestClaudeSdkHostHooks:
         assert events[0].action == AuditAction.CALL_DENIED
         assert events[0].decision_source == "adapter"
         assert events[0].decision_name == _PERMISSION_BOUNDARY_REASON
+        allowed = [e for e in sink.events if e.action == AuditAction.CALL_ALLOWED]
+        assert allowed
+        assert events[0].run_id == allowed[0].run_id
+        assert events[0].call_id == allowed[0].call_id
+        assert events[0].call_index == allowed[0].call_index
+        assert events[0].principal == allowed[0].principal
         assert any(e.action == AuditAction.CALL_DENIED for e in sink.events)
         assert "tu-1" not in adapter._pending
         assert "tu-1" not in adapter._pending_decisions
@@ -694,6 +728,40 @@ class TestClaudeSdkHostHooks:
         assert "tu-1" not in adapter._pending_decisions
         assert "" not in adapter._pending
         span.end.assert_called_once()
+
+    @pytest.mark.security
+    async def test_wrap_no_id_does_not_clear_wrong_of_two_identical_pending(self):
+        """Ambiguous no-ID name+input match must not pick or clear the first pending."""
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        await _sdk_pre(adapter)(
+            _pre_input(tool_input={"payload": "ping"}, tool_use_id="tu-1"),
+            "tu-1",
+            {"signal": None},
+        )
+        await _sdk_pre(adapter)(
+            _pre_input(tool_input={"payload": "ping"}, tool_use_id="tu-2"),
+            "tu-2",
+            {"signal": None},
+        )
+        env1, _old1 = adapter._pending["tu-1"]
+        env2, _old2 = adapter._pending["tu-2"]
+        span1 = MagicMock()
+        span2 = MagicMock()
+        adapter._pending["tu-1"] = (env1, span1)
+        adapter._pending["tu-2"] = (env2, span2)
+
+        async def deny_cb(tool_name, tool_input, context):
+            return {"behavior": "deny", "message": "nope"}
+
+        wrapped = adapter.wrap_can_use_tool(deny_cb)
+        result = await wrapped("canary", {"payload": "ping"}, type("Ctx", (), {})())
+        assert result.behavior == "deny"
+        assert "tu-1" in adapter._pending
+        assert "tu-2" in adapter._pending
+        assert "tu-1" in adapter._pending_decisions
+        assert "tu-2" in adapter._pending_decisions
+        span1.end.assert_not_called()
+        span2.end.assert_not_called()
 
     @pytest.mark.security
     async def test_malformed_redispatch_clears_pending(self):

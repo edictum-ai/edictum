@@ -90,6 +90,7 @@ jobs:
         run: pytest -o addopts= tests/test_adapter_crewai_smoke.py tests/test_behavior/test_crewai_block_behavior.py -v --tb=short
 
   claude-smoke:
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     strategy:
       fail-fast: false

@@ -445,12 +445,16 @@ class ClaudeAgentSDKAdapter:
                 same_name.append((key, envelope, span))
         if not same_name:
             return None
+        matches: list[tuple[str, Any, Any]] = []
         for key, envelope, span in same_name:
             try:
                 if _governed_input_equals(envelope.args, tool_input):
-                    return (envelope, span, key)
+                    matches.append((key, envelope, span))
             except Exception:
                 return "compare_failed"
+        if len(matches) == 1:
+            key, envelope, span = matches[0]
+            return (envelope, span, key)
         return "mismatch"
 
     @staticmethod
@@ -473,8 +477,10 @@ class ClaudeAgentSDKAdapter:
 
     async def _block_pending(self, call_id: str, tool_name: str, reason: str) -> dict[str, Any]:
         """Emit the adapter blocked-call audit, then clear pending and return a host block."""
+        pending = self._pending.get(call_id)
+        envelope = pending[0] if pending is not None else None
         try:
-            await self._audit_adapter_block(tool_name, reason)
+            await self._audit_adapter_block(tool_name, reason, envelope)
         except Exception:
             logger.exception("Claude host-block audit failed")
         self._clear_pending(call_id)
@@ -492,8 +498,30 @@ class ClaudeAgentSDKAdapter:
         except Exception:
             logger.exception("Claude pending span end failed")
 
-    async def _audit_adapter_block(self, tool_name: str, reason: str) -> None:
-        """Emit an adapter-sourced CALL_DENIED for a host-level block with no envelope."""
+    async def _audit_adapter_block(self, tool_name: str, reason: str, envelope: Any | None = None) -> None:
+        """Emit an adapter-sourced CALL_DENIED, keeping pending identity when present."""
+        if envelope is not None:
+            await self._guard.audit_sink.emit(
+                AuditEvent(
+                    action=AuditAction.CALL_DENIED,
+                    run_id=envelope.run_id,
+                    call_id=envelope.call_id,
+                    call_index=envelope.call_index,
+                    session_id=self._session_id,
+                    parent_session_id=self._audit_parent_session_id(),
+                    tool_name=envelope.tool_name or self._safe_tool_name(tool_name),
+                    tool_args=self._guard.redaction.redact_args(envelope.args),
+                    side_effect=envelope.side_effect.value,
+                    environment=envelope.environment,
+                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    reason=reason,
+                    decision_source="adapter",
+                    decision_name=reason,
+                    mode=self._guard.mode,
+                    policy_version=self._guard.policy_version,
+                )
+            )
+            return
         await self._guard.audit_sink.emit(
             AuditEvent(
                 action=AuditAction.CALL_DENIED,
