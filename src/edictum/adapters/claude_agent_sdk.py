@@ -459,8 +459,12 @@ class ClaudeAgentSDKAdapter:
                     self._clear_matching_pending(tool_name, tool_input)
                     return await deny(_INPUT_REPLACEMENT_REASON)
                 if pending == "mismatch":
+                    if not call_id or call_id not in self._pending:
+                        self._clear_same_name_pending(tool_name)
                     return await deny(_INPUT_REPLACEMENT_REASON)
                 if pending == "compare_failed":
+                    if not call_id or call_id not in self._pending:
+                        self._clear_same_name_pending(tool_name)
                     return await deny(_INPUT_COMPARE_REASON)
                 if pending is None:
                     return await deny(_NO_GOVERNED_SNAPSHOT_REASON)
@@ -565,6 +569,11 @@ class ClaudeAgentSDKAdapter:
             logger.exception("Claude host-block audit failed")
         self._clear_pending(call_id)
         return self._deny(reason)
+
+    def _clear_same_name_pending(self, tool_name: str) -> None:
+        keys = [key for key, (envelope, _span) in list(self._pending.items()) if envelope.tool_name == tool_name]
+        for key in keys:
+            self._clear_pending(key)
 
     def _clear_matching_pending(self, tool_name: str, tool_input: Any) -> None:
         keys: list[str] = []

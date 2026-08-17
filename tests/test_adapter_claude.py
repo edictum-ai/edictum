@@ -9,6 +9,7 @@ import pytest
 
 from edictum import Decision, Edictum, Principal, postcondition, precondition
 from edictum.adapters.claude_agent_sdk import (
+    _INPUT_COMPARE_REASON,
     _INPUT_REPLACEMENT_REASON,
     _INVALID_TOOL_INPUT_REASON,
     _INVALID_TOOL_NAME_REASON,
@@ -856,6 +857,77 @@ class TestClaudeSdkHostHooks:
         assert "tu-2" not in adapter._pending_decisions
         span1.end.assert_called_once()
         span2.end.assert_called_once()
+
+    @pytest.mark.security
+    async def test_wrap_no_id_mismatch_expires_same_name_pending(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        await _sdk_pre(adapter)(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        envelope, _old = adapter._pending["tu-1"]
+        span = MagicMock()
+        adapter._pending["tu-1"] = (envelope, span)
+
+        async def deny_cb(tool_name, tool_input, context):
+            return {"behavior": "allow"}
+
+        wrapped = adapter.wrap_can_use_tool(deny_cb)
+        result = await wrapped("canary", {"payload": "other"}, type("Ctx", (), {})())
+        assert result.behavior == "deny"
+        assert result.message == _INPUT_REPLACEMENT_REASON
+        assert "tu-1" not in adapter._pending
+        assert "tu-1" not in adapter._pending_decisions
+        span.end.assert_called_once()
+
+    @pytest.mark.security
+    async def test_wrap_unknown_id_mismatch_expires_same_name_pending(self):
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        await _sdk_pre(adapter)(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        envelope, _old = adapter._pending["tu-1"]
+        span = MagicMock()
+        adapter._pending["tu-1"] = (envelope, span)
+
+        async def deny_cb(tool_name, tool_input, context):
+            return {"behavior": "allow"}
+
+        wrapped = adapter.wrap_can_use_tool(deny_cb)
+        result = await wrapped(
+            "canary",
+            {"payload": "other"},
+            type("Ctx", (), {"tool_use_id": "unknown-id"})(),
+        )
+        assert result.behavior == "deny"
+        assert result.message == _INPUT_REPLACEMENT_REASON
+        assert "tu-1" not in adapter._pending
+        assert "unknown-id" not in adapter._pending
+        span.end.assert_called_once()
+
+    @pytest.mark.security
+    async def test_wrap_no_id_compare_failure_expires_same_name_pending(self):
+        from edictum.adapters import claude_agent_sdk as cas
+
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        await _sdk_pre(adapter)(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        envelope, _old = adapter._pending["tu-1"]
+        span = MagicMock()
+        adapter._pending["tu-1"] = (envelope, span)
+
+        async def deny_cb(tool_name, tool_input, context):
+            return {"behavior": "allow"}
+
+        def boom(*_args, **_kwargs):
+            raise TypeError("compare exploded")
+
+        original = cas._governed_input_equals
+        cas._governed_input_equals = boom
+        try:
+            wrapped = adapter.wrap_can_use_tool(deny_cb)
+            result = await wrapped("canary", {"payload": "ping"}, type("Ctx", (), {})())
+        finally:
+            cas._governed_input_equals = original
+        assert result.behavior == "deny"
+        assert result.message == _INPUT_COMPARE_REASON
+        assert "tu-1" not in adapter._pending
+        assert "tu-1" not in adapter._pending_decisions
+        span.end.assert_called_once()
 
     @pytest.mark.security
     async def test_wrap_deny_rejects_control_characters_in_message(self):
