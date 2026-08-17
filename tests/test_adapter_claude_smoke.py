@@ -17,6 +17,7 @@ EDICTUM_CLAUDE_SMOKE=1 and must stay fail-closed.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import uuid
@@ -88,20 +89,23 @@ def _query_options(hooks: dict) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(**kwargs)
 
 
-async def _prompt_stream(text: str):
+async def _prompt_stream(text: str, hold_open: asyncio.Event):
     """Yield one user message so 0.1.2 query() streams and registers hooks.
 
     Floor InternalClient sets is_streaming = not isinstance(prompt, str).
     Query.initialize() returns None unless streaming, so a string prompt
     never sends PreToolUse to the CLI and the Bash canary runs under a block.
-    0.2.139 always initialize()s; this stream keeps both pins on the host path.
+    0.1.2 stream_input() closes stdin when this iterable ends; hold until the
+    host result so PreToolUse can use the control protocol. 0.2.139 always
+    initialize()s and waits for that result before ending input.
     """
     yield {
         "type": "user",
         "message": {"role": "user", "content": text},
         "parent_tool_use_id": None,
-        "session_id": "default",
+        "session_id": "",
     }
+    await hold_open.wait()
 
 
 async def _live_touch(hooks: dict, sentinel: Path) -> None:
@@ -110,16 +114,20 @@ async def _live_touch(hooks: dict, sentinel: Path) -> None:
         sentinel.unlink()
     prompt = f"Use the Bash tool exactly once to run this exact command, then stop: touch {sentinel}"
     result = None
+    hold_open = asyncio.Event()
     try:
-        async for message in query(prompt=_prompt_stream(prompt), options=_query_options(hooks)):
+        async for message in query(prompt=_prompt_stream(prompt, hold_open), options=_query_options(hooks)):
             if type(message).__name__ == "ResultMessage":
                 result = message
+                hold_open.set()
     except Exception as exc:
         if result is None:
             raise RuntimeError(
                 f"Claude CLI host path failed (claude-agent-sdk {_sdk_version()}); "
                 "the smoke must drive query()+CLI, not a test-installed deny gate"
             ) from exc
+    finally:
+        hold_open.set()
     if result is None:
         raise RuntimeError(
             f"Claude CLI host path emitted no result (claude-agent-sdk {_sdk_version()}); "
