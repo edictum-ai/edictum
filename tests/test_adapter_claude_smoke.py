@@ -88,6 +88,22 @@ def _query_options(hooks: dict) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(**kwargs)
 
 
+async def _prompt_stream(text: str):
+    """Yield one user message so 0.1.2 query() streams and registers hooks.
+
+    Floor InternalClient sets is_streaming = not isinstance(prompt, str).
+    Query.initialize() returns None unless streaming, so a string prompt
+    never sends PreToolUse to the CLI and the Bash canary runs under a block.
+    0.2.139 always initialize()s; this stream keeps both pins on the host path.
+    """
+    yield {
+        "type": "user",
+        "message": {"role": "user", "content": text},
+        "parent_tool_use_id": None,
+        "session_id": "default",
+    }
+
+
 async def _live_touch(hooks: dict, sentinel: Path) -> None:
     """Drive the real CLI host via query(). Do not inspect permissionDecision."""
     if sentinel.exists():
@@ -95,7 +111,7 @@ async def _live_touch(hooks: dict, sentinel: Path) -> None:
     prompt = f"Use the Bash tool exactly once to run this exact command, then stop: touch {sentinel}"
     result = None
     try:
-        async for message in query(prompt=prompt, options=_query_options(hooks)):
+        async for message in query(prompt=_prompt_stream(prompt), options=_query_options(hooks)):
             if type(message).__name__ == "ResultMessage":
                 result = message
     except Exception as exc:
