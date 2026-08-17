@@ -33,6 +33,7 @@ _INPUT_REPLACEMENT_REASON = "BLOCKED: Edictum rejected a tool input replacement 
 _INPUT_COMPARE_REASON = "BLOCKED: Edictum could not compare tool input against the governed snapshot"
 _INVALID_TOOL_INPUT_REASON = "BLOCKED: Claude Agent SDK supplied invalid tool input"
 _MISSING_TOOL_USE_ID_REASON = "BLOCKED: Claude Agent SDK PreToolUse omitted tool_use_id"
+_NO_GOVERNED_SNAPSHOT_REASON = "BLOCKED: Claude Agent SDK permission callback had no governed PreToolUse snapshot"
 
 
 @dataclass
@@ -393,6 +394,8 @@ class ClaudeAgentSDKAdapter:
                     return await deny(_INPUT_REPLACEMENT_REASON)
                 if pending == "compare_failed":
                     return await deny(_INPUT_COMPARE_REASON)
+                if pending is None:
+                    return await deny(_NO_GOVERNED_SNAPSHOT_REASON)
 
                 isolated = copy.deepcopy(tool_input) if isinstance(tool_input, dict) else tool_input
                 result = await callback(tool_name, isolated, context)

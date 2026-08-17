@@ -12,6 +12,7 @@ from edictum.adapters.claude_agent_sdk import (
     _INPUT_REPLACEMENT_REASON,
     _INVALID_TOOL_INPUT_REASON,
     _MISSING_TOOL_USE_ID_REASON,
+    _NO_GOVERNED_SNAPSHOT_REASON,
     _PERMISSION_BOUNDARY_REASON,
     ClaudeAgentSDKAdapter,
 )
@@ -647,6 +648,33 @@ class TestClaudeSdkHostHooks:
         assert events[0].action == AuditAction.CALL_DENIED
         assert events[0].decision_source == "adapter"
         assert events[0].decision_name == _INVALID_TOOL_INPUT_REASON
+        assert events[0].tool_name == "canary"
+
+    @pytest.mark.security
+    async def test_wrap_no_pending_allow_denies_and_audits(self):
+        """Permission allow without a governed snapshot must deny and audit."""
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
+        called = {"n": 0}
+
+        async def allow_cb(tool_name, tool_input, context):
+            called["n"] += 1
+            return {"behavior": "allow"}
+
+        wrapped = adapter.wrap_can_use_tool(allow_cb)
+        result = await wrapped(
+            "canary",
+            {"payload": "ping"},
+            type("Ctx", (), {"tool_use_id": "tu-1"})(),
+        )
+        assert result.behavior == "deny"
+        assert result.message == _NO_GOVERNED_SNAPSHOT_REASON
+        assert called["n"] == 0
+        events = [e for e in sink.events if e.reason == _NO_GOVERNED_SNAPSHOT_REASON]
+        assert events, f"no-pending block missing audit; got {[(e.action, e.reason) for e in sink.events]}"
+        assert events[0].action == AuditAction.CALL_DENIED
+        assert events[0].decision_source == "adapter"
+        assert events[0].decision_name == _NO_GOVERNED_SNAPSHOT_REASON
         assert events[0].tool_name == "canary"
 
     @pytest.mark.security
