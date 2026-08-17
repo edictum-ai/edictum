@@ -8,8 +8,15 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from edictum import Decision, Edictum, postcondition
-from edictum.adapters.claude_agent_sdk import ClaudeAgentSDKAdapter
+from edictum.adapters.claude_agent_sdk import (
+    _INPUT_REPLACEMENT_REASON,
+    _INVALID_TOOL_NAME_REASON,
+    ClaudeAgentSDKAdapter,
+)
+from edictum.audit import AuditAction
 from edictum.findings import Finding
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -80,3 +87,32 @@ class TestToSdkHooksPostconditionWarn:
         await post(_post_input(tool_response="ok"), "tu-1", {"signal": None})
 
         callback.assert_not_called()
+
+
+class TestToSdkHooksSecurityBoundaries:
+    """Bypass attempts against PreToolUse must stay blocked on the public path."""
+
+    @pytest.mark.security
+    async def test_pretooluse_rejects_input_replacement(self):
+        adapter = ClaudeAgentSDKAdapter(_make_guard())
+        pre = adapter.to_sdk_hooks()["PreToolUse"][0].hooks[0]
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        second = await pre(_pre_input(tool_input={"payload": "pwn"}), "tu-1", {"signal": None})
+        emitted = second["hookSpecificOutput"]
+        assert emitted["permissionDecision"] == "deny"
+        assert emitted["permissionDecisionReason"] == _INPUT_REPLACEMENT_REASON
+
+    @pytest.mark.security
+    async def test_invalid_tool_name_blocks_in_observe(self):
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(_make_guard(mode="observe", audit_sink=sink))
+        pre = adapter.to_sdk_hooks()["PreToolUse"][0].hooks[0]
+        result = await pre(_pre_input(tool_name="", tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        emitted = result["hookSpecificOutput"]
+        assert emitted["permissionDecision"] == "deny"
+        assert emitted["permissionDecisionReason"] == _INVALID_TOOL_NAME_REASON
+        events = [e for e in sink.events if e.reason == _INVALID_TOOL_NAME_REASON]
+        assert events
+        assert events[0].action == AuditAction.CALL_DENIED
+        assert events[0].decision_source == "adapter"

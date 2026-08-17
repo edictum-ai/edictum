@@ -147,10 +147,10 @@ def test_blocked_call_does_not_flip_canary():
     async def _run():
         sentinel = _sentinel_path()
         sink = NullAuditSink()
-        denied = {"value": False}
+        blocked = {"value": False}
 
         def _on_block(*_args):
-            denied["value"] = True
+            blocked["value"] = True
 
         guard = Edictum(
             environment="test",
@@ -167,11 +167,11 @@ def test_blocked_call_does_not_flip_canary():
             present = sentinel.exists()
             if present:
                 sentinel.unlink()
-        return present, denied["value"], sink
+        return present, blocked["value"], sink
 
-    present, hook_denied, sink = asyncio.run(_run())
+    present, hook_blocked, sink = asyncio.run(_run())
     assert present is False, f"canary ran under a block rule (claude-agent-sdk {_sdk_version()})"
-    assert hook_denied is True
+    assert hook_blocked is True
     blocked = [e for e in sink.events if e.action == AuditAction.CALL_DENIED]
     assert blocked, f"audit missing CALL_DENIED; got {[e.action for e in sink.events]}"
     assert any("canary blocked" in (e.reason or "") for e in blocked)
@@ -184,10 +184,10 @@ def test_allowed_call_does_flip_canary():
     async def _run():
         sentinel = _sentinel_path()
         sink = NullAuditSink()
-        denied = {"value": False}
+        blocked = {"value": False}
 
         def _on_block(*_args):
-            denied["value"] = True
+            blocked["value"] = True
 
         guard = Edictum(
             environment="test",
@@ -204,11 +204,11 @@ def test_allowed_call_does_flip_canary():
             present = sentinel.exists()
             if present:
                 sentinel.unlink()
-        return present, denied["value"], sink
+        return present, blocked["value"], sink
 
-    present, hook_denied, sink = asyncio.run(_run())
+    present, hook_blocked, sink = asyncio.run(_run())
     assert present is True, f"control did not flip the flag (claude-agent-sdk {_sdk_version()})"
-    assert hook_denied is False
+    assert hook_blocked is False
     allowed = [e for e in sink.events if e.action == AuditAction.CALL_ALLOWED]
     assert allowed, f"audit missing CALL_ALLOWED; got {[e.action for e in sink.events]}"
 

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 _MAX_WORKFLOW_APPROVAL_ROUNDS = 32
 # Fixed reason code for D7 / O7: a silently-broken observe trial must be visible.
 ADAPTER_INTERNAL_EXCEPTION_REASON = "adapter_internal_exception"
+ADAPTER_POST_HOOK_EXCEPTION_REASON = "adapter_post_hook_exception"
 ADAPTER_UNKNOWN_TOOL_NAME = "unknown_tool"
 _MAX_GOVERNED_INPUT_DEPTH = 64
 _PERMISSION_BOUNDARY_REASON = (
@@ -32,6 +33,7 @@ _PERMISSION_BOUNDARY_REASON = (
 _INPUT_REPLACEMENT_REASON = "BLOCKED: Edictum rejected a tool input replacement after PreToolUse governance"
 _INPUT_COMPARE_REASON = "BLOCKED: Edictum could not compare tool input against the governed snapshot"
 _INVALID_TOOL_INPUT_REASON = "BLOCKED: Claude Agent SDK supplied invalid tool input"
+_INVALID_TOOL_NAME_REASON = "BLOCKED: Claude Agent SDK supplied invalid tool name"
 _MISSING_TOOL_USE_ID_REASON = "BLOCKED: Claude Agent SDK PreToolUse omitted tool_use_id"
 _NO_GOVERNED_SNAPSHOT_REASON = "BLOCKED: Claude Agent SDK permission callback had no governed PreToolUse snapshot"
 
@@ -266,6 +268,12 @@ class ClaudeAgentSDKAdapter:
             try:
                 if not isinstance(tool_input, dict):
                     return await self._block_pending(call_id, tool_name, _INVALID_TOOL_INPUT_REASON)
+                if not isinstance(tool_name, str):
+                    return await self._block_pending(call_id, tool_name, _INVALID_TOOL_NAME_REASON)
+                try:
+                    _validate_tool_name(tool_name)
+                except ValueError:
+                    return await self._block_pending(call_id, tool_name, _INVALID_TOOL_NAME_REASON)
 
                 pending = self._pending.get(call_id)
                 if pending is not None:
@@ -327,10 +335,15 @@ class ClaudeAgentSDKAdapter:
             call_id = tool_use_id or input_tool_use_id
             if not call_id:
                 return {}
+            pending_snapshot = self._pending.get(call_id)
             try:
                 return await self._post_tool_use(tool_use_id=call_id, tool_response=tool_response)
             except Exception:
                 logger.exception("Claude PostToolUse hook raised; keeping original result")
+                try:
+                    await self._audit_post_hook_exception(pending_snapshot, tool_response)
+                except Exception:
+                    logger.exception("Claude post-hook exception audit failed")
                 return {}
 
         async def post_tool_use_failure(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
@@ -351,10 +364,15 @@ class ClaudeAgentSDKAdapter:
             if not call_id:
                 return {}
             failure_response = {"is_error": True, "error": error}
+            pending_snapshot = self._pending.get(call_id)
             try:
                 result = await self._post_tool_use(tool_use_id=call_id, tool_response=failure_response)
             except Exception:
                 logger.exception("Claude PostToolUseFailure hook raised")
+                try:
+                    await self._audit_post_hook_exception(pending_snapshot, failure_response)
+                except Exception:
+                    logger.exception("Claude post-hook exception audit failed")
                 return {}
             if not result:
                 return {}
@@ -503,6 +521,56 @@ class ClaudeAgentSDKAdapter:
             span.end()
         except Exception:
             logger.exception("Claude pending span end failed")
+
+    async def _audit_post_hook_exception(self, pending: Any, tool_response: Any) -> None:
+        """Emit adapter-sourced executed/failed after a post-hook raise."""
+        envelope = pending[0] if isinstance(pending, tuple) and pending else None
+        tool_success = False
+        if envelope is not None:
+            try:
+                tool_success = self._check_tool_success(envelope.tool_name, tool_response)
+            except Exception:
+                tool_success = False
+        action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
+        reason = ADAPTER_POST_HOOK_EXCEPTION_REASON
+        if envelope is not None:
+            await self._guard.audit_sink.emit(
+                AuditEvent(
+                    action=action,
+                    run_id=envelope.run_id,
+                    call_id=envelope.call_id,
+                    call_index=envelope.call_index,
+                    session_id=self._session_id,
+                    parent_session_id=self._audit_parent_session_id(),
+                    tool_name=envelope.tool_name,
+                    tool_args=self._guard.redaction.redact_args(envelope.args),
+                    side_effect=envelope.side_effect.value,
+                    environment=envelope.environment,
+                    principal=asdict(envelope.principal) if envelope.principal else None,
+                    reason=reason,
+                    decision_source="adapter",
+                    decision_name=reason,
+                    tool_success=tool_success,
+                    mode=self._guard.mode,
+                    policy_version=self._guard.policy_version,
+                    policy_error=True,
+                )
+            )
+            return
+        await self._guard.audit_sink.emit(
+            AuditEvent(
+                action=action,
+                session_id=self._session_id,
+                tool_name=ADAPTER_UNKNOWN_TOOL_NAME,
+                reason=reason,
+                decision_source="adapter",
+                decision_name=reason,
+                tool_success=tool_success,
+                mode=self._guard.mode,
+                policy_version=self._guard.policy_version,
+                policy_error=True,
+            )
+        )
 
     async def _audit_adapter_block(self, tool_name: str, reason: str, envelope: Any | None = None) -> None:
         """Emit an adapter-sourced CALL_DENIED, keeping pending identity when present."""

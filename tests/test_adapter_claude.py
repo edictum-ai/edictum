@@ -11,9 +11,12 @@ from edictum import Decision, Edictum, Principal, postcondition, precondition
 from edictum.adapters.claude_agent_sdk import (
     _INPUT_REPLACEMENT_REASON,
     _INVALID_TOOL_INPUT_REASON,
+    _INVALID_TOOL_NAME_REASON,
     _MISSING_TOOL_USE_ID_REASON,
     _NO_GOVERNED_SNAPSHOT_REASON,
     _PERMISSION_BOUNDARY_REASON,
+    ADAPTER_INTERNAL_EXCEPTION_REASON,
+    ADAPTER_POST_HOOK_EXCEPTION_REASON,
     ClaudeAgentSDKAdapter,
 )
 from edictum.audit import AuditAction
@@ -548,9 +551,9 @@ class TestClaudeSdkHostHooks:
         assert allowed_event.call_id
         second = await pre(_pre_input(tool_input={"payload": "pwn"}), "tu-1", {"signal": None})
         assert second["hookSpecificOutput"]["permissionDecision"] == "deny"
-        denied = [e for e in sink.events if e.reason == _INPUT_REPLACEMENT_REASON]
-        assert denied
-        event = denied[0]
+        blocked = [e for e in sink.events if e.reason == _INPUT_REPLACEMENT_REASON]
+        assert blocked
+        event = blocked[0]
         assert event.action == AuditAction.CALL_DENIED
         assert event.run_id == allowed_event.run_id
         assert event.call_id == allowed_event.call_id
@@ -970,3 +973,91 @@ class TestClaudeSdkHostHooks:
         assert envelope_a.args == {"x": 1}
         assert envelope_b.tool_name == "tool_b"
         assert envelope_b.args == {"y": 2}
+
+    @pytest.mark.security
+    @pytest.mark.parametrize("tool_name", ["", "bad/name", "bad\\name", "bad\x00name"])
+    async def test_invalid_tool_name_blocks_in_observe(self, tool_name):
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(mode="observe", audit_sink=sink))
+        result = await _sdk_pre(adapter)(
+            _pre_input(tool_name=tool_name, tool_input={"payload": "ping"}),
+            "tu-1",
+            {"signal": None},
+        )
+        assert result != {}
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert result["hookSpecificOutput"]["permissionDecisionReason"] == _INVALID_TOOL_NAME_REASON
+        events = [e for e in sink.events if e.reason == _INVALID_TOOL_NAME_REASON]
+        assert events, f"invalid tool_name missing audit; got {[(e.action, e.reason) for e in sink.events]}"
+        assert events[0].action == AuditAction.CALL_DENIED
+        assert events[0].decision_source == "adapter"
+        assert events[0].decision_name == _INVALID_TOOL_NAME_REASON
+        assert not any(e.reason == ADAPTER_INTERNAL_EXCEPTION_REASON for e in sink.events)
+        assert adapter._internal_exception_count == 0
+        assert adapter._pending == {}
+        assert adapter._pending_decisions == {}
+
+    @pytest.mark.security
+    async def test_post_hook_exception_still_audits_execution(self):
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+
+        async def boom(*_args, **_kwargs):
+            raise RuntimeError("session down")
+
+        adapter._session.record_execution = boom
+        result = await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result == {}
+        fallback = [e for e in sink.events if e.reason == ADAPTER_POST_HOOK_EXCEPTION_REASON]
+        assert fallback, f"post-hook exception missing audit; got {[(e.action, e.reason) for e in sink.events]}"
+        assert fallback[0].action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)
+        assert fallback[0].decision_source == "adapter"
+        assert fallback[0].decision_name == ADAPTER_POST_HOOK_EXCEPTION_REASON
+        assert fallback[0].policy_error is True
+        assert fallback[0].tool_name == "canary"
+        assert adapter._pending == {}
+        assert adapter._pending_decisions == {}
+
+    @pytest.mark.security
+    async def test_post_failure_hook_exception_still_audits(self):
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        fail = hooks["PostToolUseFailure"][0].hooks[0]
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+
+        async def boom(*_args, **_kwargs):
+            raise RuntimeError("session down")
+
+        adapter._session.record_execution = boom
+        result = await fail(
+            {
+                "hook_event_name": "PostToolUseFailure",
+                "error": "host failed",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result == {}
+        fallback = [e for e in sink.events if e.reason == ADAPTER_POST_HOOK_EXCEPTION_REASON]
+        assert fallback, f"post-failure exception missing audit; got {[(e.action, e.reason) for e in sink.events]}"
+        assert fallback[0].action == AuditAction.CALL_FAILED
+        assert fallback[0].decision_source == "adapter"
+        assert fallback[0].policy_error is True
+        assert fallback[0].tool_success is False
