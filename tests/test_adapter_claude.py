@@ -674,6 +674,28 @@ class TestClaudeSdkHostHooks:
         span.end.assert_called_once()
 
     @pytest.mark.security
+    async def test_wrap_deny_clears_matched_pending_when_context_lacks_id(self):
+        """Name+input match must clear that pending key when tool_use_id is missing."""
+        adapter = ClaudeAgentSDKAdapter(make_guard())
+        await _sdk_pre(adapter)(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert "tu-1" in adapter._pending
+        envelope, _old = adapter._pending["tu-1"]
+        span = MagicMock()
+        adapter._pending["tu-1"] = (envelope, span)
+
+        async def deny_cb(tool_name, tool_input, context):
+            return {"behavior": "deny", "message": "nope"}
+
+        wrapped = adapter.wrap_can_use_tool(deny_cb)
+        result = await wrapped("canary", {"payload": "ping"}, type("Ctx", (), {})())
+        assert result.behavior == "deny"
+        assert result.message == "nope"
+        assert "tu-1" not in adapter._pending
+        assert "tu-1" not in adapter._pending_decisions
+        assert "" not in adapter._pending
+        span.end.assert_called_once()
+
+    @pytest.mark.security
     async def test_malformed_redispatch_clears_pending(self):
         sink = NullAuditSink()
         adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))

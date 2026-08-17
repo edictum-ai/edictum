@@ -384,6 +384,8 @@ class ClaudeAgentSDKAdapter:
 
             try:
                 pending = self._pending_for_permission(tool_name, tool_input, context)
+                if isinstance(pending, tuple) and not call_id:
+                    call_id = pending[2]
                 if pending == "mismatch":
                     return await deny(_INPUT_REPLACEMENT_REASON)
                 if pending == "compare_failed":
@@ -432,21 +434,21 @@ class ClaudeAgentSDKAdapter:
             envelope, span = self._pending[tool_use_id]
             try:
                 if envelope.tool_name == tool_name and _governed_input_equals(envelope.args, tool_input):
-                    return (envelope, span)
+                    return (envelope, span, tool_use_id)
                 return "mismatch"
             except Exception:
                 return "compare_failed"
 
-        same_name: list[tuple[Any, Any]] = []
-        for envelope, span in self._pending.values():
+        same_name: list[tuple[str, Any, Any]] = []
+        for key, (envelope, span) in self._pending.items():
             if envelope.tool_name == tool_name:
-                same_name.append((envelope, span))
+                same_name.append((key, envelope, span))
         if not same_name:
             return None
-        for envelope, span in same_name:
+        for key, envelope, span in same_name:
             try:
                 if _governed_input_equals(envelope.args, tool_input):
-                    return (envelope, span)
+                    return (envelope, span, key)
             except Exception:
                 return "compare_failed"
         return "mismatch"

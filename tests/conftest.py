@@ -36,11 +36,19 @@ def pytest_configure(config):
             ) from exc
     if os.environ.get(_CLAUDE_SMOKE_ENV) == "1":
         try:
-            importlib.import_module("claude_agent_sdk")
+            sdk = importlib.import_module("claude_agent_sdk")
         except ImportError as exc:
             raise pytest.UsageError(
                 "EDICTUM_CLAUDE_SMOKE=1 requires claude-agent-sdk; missing host for a claimed capability is RED"
             ) from exc
+        import shutil
+        from pathlib import Path
+
+        bundled = Path(sdk.__file__).parent / "_bundled" / "claude"
+        if shutil.which("claude") is None and not bundled.is_file():
+            raise pytest.UsageError(
+                "EDICTUM_CLAUDE_SMOKE=1 requires the Claude Code CLI; missing host for a claimed capability is RED"
+            )
 
 
 def pytest_addoption(parser):

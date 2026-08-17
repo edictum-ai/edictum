@@ -1,27 +1,29 @@
 """Real-framework Claude Agent SDK smokes (L1.1 Claude Python).
 
-Drives a canary through the SDK's own hook-callback + in-process MCP
-execution path (``Query._handle_control_request``), not ``guard.run()``
-and not a direct call of ``adapter._pre_tool_use``. The canary body runs
-only inside ``Query._handle_sdk_mcp_request`` (tools/call). The test always
-offers tools/call through Query; the host path on Query is the only thing
-that may suppress that call after a deny control_response. Only the LLM /
-CLI binary is absent.
+Drives a Bash sentinel through the SDK's public ``query()`` API and the
+real Claude Code CLI host — the same model as edictum-ts#179
+``live-sdk-hook-proof.mjs`` at 830b0f0. The CLI consumes PreToolUse
+``permissionDecision`` and either runs or skips the tool. Query
+in-process does not honor deny (``hook_callback`` and ``mcp_message``
+tools/call are independent), so this file does not offer tools/call
+itself and does not install a permissionDecision gate.
 
 Floor = claude-agent-sdk 0.1.2; latest = 0.2.139
-(edictum-schemas L1.0 pins). Missing SDK is RED: this file claims the host.
-Default/parity collection ignores this file (addopts + collect_ignore).
-Dedicated smoke jobs set EDICTUM_CLAUDE_SMOKE=1 and must stay fail-closed.
+(edictum-schemas L1.0 pins). Missing SDK or CLI is RED: this file
+claims the host. Default/parity collection ignores this file
+(addopts + collect_ignore). Dedicated smoke jobs set
+EDICTUM_CLAUDE_SMOKE=1 and must stay fail-closed.
 """
 
 from __future__ import annotations
 
-import json
+import os
+import shutil
+import uuid
+from pathlib import Path
 
 import claude_agent_sdk  # noqa: F401 — claimed host; ImportError is RED
-import pytest
-from claude_agent_sdk._internal.query import Query
-from mcp.types import CallToolRequest
+from claude_agent_sdk import ClaudeAgentOptions, query
 
 from edictum import Decision, Edictum, precondition
 from edictum.adapters.claude_agent_sdk import ADAPTER_INTERNAL_EXCEPTION_REASON, ClaudeAgentSDKAdapter
@@ -29,12 +31,26 @@ from edictum.audit import AuditAction
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
 
-_CANARY_SERVER = "canary-host"
+
+def _sdk_version() -> str:
+    return getattr(claude_agent_sdk, "__version__", "unknown")
 
 
-@precondition("canary")
-def _block_canary(tool_call):
-    return Decision.fail("canary blocked")
+def _find_cli() -> str | None:
+    which = shutil.which("claude")
+    if which:
+        return which
+    bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
+    if bundled.is_file():
+        return str(bundled)
+    return None
+
+
+_CLI = _find_cli()
+if not _CLI:
+    raise RuntimeError(
+        "EDICTUM_CLAUDE_SMOKE=1 requires the Claude Code CLI; missing host for a claimed capability is RED"
+    )
 
 
 @precondition("other_tool")
@@ -42,228 +58,96 @@ def _block_other(tool_call):
     return Decision.fail("not the canary")
 
 
-def _sdk_version() -> str:
-    return getattr(claude_agent_sdk, "__version__", "unknown")
+def _block_sentinel(sentinel: Path):
+    @precondition("Bash")
+    def _block(tool_call):
+        command = tool_call.args.get("command")
+        if isinstance(command, str) and "touch" in command and str(sentinel) in command:
+            return Decision.fail("canary blocked")
+        return Decision.pass_()
+
+    return _block
 
 
-class _RecordingTransport:
-    """Minimal transport so Query can write control responses."""
-
-    def __init__(self) -> None:
-        self.writes: list[str] = []
-
-    async def connect(self) -> None:
-        return None
-
-    async def write(self, data: str) -> None:
-        self.writes.append(data)
-
-    async def read_messages(self):
-        if False:
-            yield {}
-
-    async def close(self) -> None:
-        return None
-
-    def is_ready(self) -> bool:
-        return True
-
-    async def end_input(self) -> None:
-        return None
+def _sentinel_path() -> Path:
+    run_id = os.environ.get("EDICTUM_LIVE_PROOF_RUN_ID") or str(os.getpid())
+    return Path(f"/tmp/edictum-py-claude-sdk-hook-sentinel-{run_id}-{uuid.uuid4().hex}")
 
 
-class _CanaryServer:
-    """Minimal in-process MCP server Query._handle_sdk_mcp_request can invoke.
-
-    Floor create_sdk_mcp_server is incompatible with current mcp.Server
-    (no list_tools). Query still executes tools via request_handlers[CallToolRequest].
-    """
-
-    def __init__(self, flag: dict[str, bool]) -> None:
-        self.name = _CANARY_SERVER
-        self.version = "1.0.0"
-        self._flag = flag
-
-        async def _call(_request):
-            self._flag["flipped"] = True
-            item = type("Text", (), {"type": "text", "text": "flipped"})()
-            root = type("Root", (), {"content": [item], "is_error": False, "isError": False})()
-            return type("Result", (), {"root": root})()
-
-        self.request_handlers = {CallToolRequest: _call}
-
-
-def _make_canary() -> tuple[dict[str, bool], dict]:
-    """In-process MCP canary. The handler is the only place the flag flips."""
-    flag = {"flipped": False}
-    return flag, {_CANARY_SERVER: _CanaryServer(flag)}
-
-
-def _register_hooks(query: Query, hooks: dict) -> dict[str, str]:
-    """Register matcher callbacks the same way Query.initialize does."""
-    ids: dict[str, str] = {}
-    for event, matchers in hooks.items():
-        for matcher in matchers:
-            for callback in matcher.hooks:
-                callback_id = f"hook_{query.next_callback_id}"
-                query.next_callback_id += 1
-                query.hook_callbacks[callback_id] = callback
-                ids[event] = callback_id
-    return ids
-
-
-def _make_query(hooks: dict, sdk_mcp_servers: dict | None = None) -> tuple[Query, _RecordingTransport]:
-    transport = _RecordingTransport()
-    internal = {}
-    for event, matchers in hooks.items():
-        internal[event] = [{"matcher": getattr(m, "matcher", None), "hooks": m.hooks} for m in matchers]
-    query = Query(
-        transport=transport,
-        is_streaming_mode=True,
-        hooks=internal,
-        sdk_mcp_servers=sdk_mcp_servers or {},
-    )
-    _install_host_deny_gate(query, transport)
-    return query, transport
-
-
-def _install_host_deny_gate(query: Query, transport: _RecordingTransport) -> None:
-    """Host path: after a deny control_response, Query does not execute tools/call.
-
-    The real CLI does not send tools/call once PreToolUse serializes deny.
-    This wraps Query so a later mcp_message tools/call is not delivered to the
-    canary handler. Tests must not inspect permissionDecision to decide
-    whether to run the canary.
-    """
-    original = query._handle_control_request
-    suppress_call = {"value": False}
-
-    async def _handle(request):
-        request_data = request.get("request") or {}
-        subtype = request_data.get("subtype")
-        if subtype == "mcp_message" and suppress_call["value"]:
-            request_id = request["request_id"]
-            message = request_data.get("message") or {}
-            success_response = {
-                "type": "control_response",
-                "response": {
-                    "subtype": "success",
-                    "request_id": request_id,
-                    "response": {
-                        "mcp_response": {
-                            "jsonrpc": "2.0",
-                            "id": message.get("id"),
-                            "result": {"content": []},
-                        }
-                    },
-                },
-            }
-            await transport.write(json.dumps(success_response) + "\n")
-            return
-        await original(request)
-        if subtype == "hook_callback" and transport.writes:
-            payload = json.loads(transport.writes[-1])
-            output = (payload.get("response") or {}).get("response") or {}
-            suppress_call["value"] = _is_host_block(output)
-
-    query._handle_control_request = _handle
-
-
-async def _dispatch_pre(
-    query: Query, transport: _RecordingTransport, callback_id: str, tool_input: dict, tool_use_id: str = "tu-1"
-) -> dict:
-    request = {
-        "type": "control_request",
-        "request_id": f"req-{tool_use_id}",
-        "request": {
-            "subtype": "hook_callback",
-            "callback_id": callback_id,
-            "input": {
-                "hook_event_name": "PreToolUse",
-                "tool_name": "canary",
-                "tool_input": tool_input,
-                "tool_use_id": tool_use_id,
-            },
-            "tool_use_id": tool_use_id,
-        },
+def _query_options(hooks: dict) -> ClaudeAgentOptions:
+    kwargs: dict = {
+        "allowed_tools": ["Bash"],
+        "permission_mode": "acceptEdits",
+        "setting_sources": [],
+        "max_turns": 2,
+        "hooks": hooks,
     }
-    await query._handle_control_request(request)
-    assert transport.writes, "SDK Query wrote no control response"
-    payload = json.loads(transport.writes[-1])
-    response = payload.get("response") or {}
-    assert response.get("subtype") != "error", f"SDK hook dispatcher error: {response}"
-    return response.get("response") or {}
+    fields = getattr(ClaudeAgentOptions, "__dataclass_fields__", {})
+    if "cli_path" in fields:
+        kwargs["cli_path"] = _CLI
+    return ClaudeAgentOptions(**kwargs)
 
 
-async def _dispatch_mcp_call(
-    query: Query, transport: _RecordingTransport, tool_input: dict, tool_use_id: str = "tu-1"
-) -> dict:
-    """Execute the canary through Query's in-process MCP tools/call path."""
-    request = {
-        "type": "control_request",
-        "request_id": f"mcp-{tool_use_id}",
-        "request": {
-            "subtype": "mcp_message",
-            "server_name": _CANARY_SERVER,
-            "message": {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": "canary", "arguments": tool_input},
-            },
-        },
-    }
-    await query._handle_control_request(request)
-    assert transport.writes, "SDK Query wrote no MCP control response"
-    payload = json.loads(transport.writes[-1])
-    response = payload.get("response") or {}
-    assert response.get("subtype") != "error", f"SDK MCP dispatcher error: {response}"
-    return response.get("response") or {}
-
-
-def _is_host_block(hook_output: dict) -> bool:
-    specific = hook_output.get("hookSpecificOutput") or {}
-    return specific.get("permissionDecision") == "deny"
-
-
-async def _host_run_canary(
-    query: Query,
-    transport: _RecordingTransport,
-    tool_input: dict,
-    tool_use_id: str = "tu-1",
-) -> None:
-    """Always offer the canary through Query MCP tools/call.
-
-    This helper does not inspect permissionDecision. The host path installed
-    on Query is the only thing that may suppress tools/call after a deny
-    control_response. If that path is removed and the host still executes,
-    the block test fails.
-    """
-    await _dispatch_mcp_call(query, transport, tool_input, tool_use_id)
+async def _live_touch(hooks: dict, sentinel: Path) -> None:
+    """Drive the real CLI host via query(). Do not inspect permissionDecision."""
+    if sentinel.exists():
+        sentinel.unlink()
+    prompt = f"Use the Bash tool exactly once to run this exact command, then stop: touch {sentinel}"
+    result = None
+    try:
+        async for message in query(prompt=prompt, options=_query_options(hooks)):
+            if type(message).__name__ == "ResultMessage":
+                result = message
+    except Exception as exc:
+        if result is None:
+            raise RuntimeError(
+                f"Claude CLI host path failed (claude-agent-sdk {_sdk_version()}); "
+                "the smoke must drive query()+CLI, not a test-installed deny gate"
+            ) from exc
+    if result is None:
+        raise RuntimeError(
+            f"Claude CLI host path emitted no result (claude-agent-sdk {_sdk_version()}); "
+            "missing host for a claimed capability is RED"
+        )
+    if getattr(result, "is_error", False):
+        detail = getattr(result, "result", None) or getattr(result, "subtype", None) or "error"
+        raise RuntimeError(
+            f"Claude CLI host path failed (claude-agent-sdk {_sdk_version()}): {detail}; missing host login/API is RED"
+        )
 
 
 def test_blocked_call_does_not_flip_canary():
-    """Sentence: a blocked call does not execute. Flag stays down."""
+    """Sentence: a blocked call does not execute. Sentinel stays absent."""
     import asyncio
 
     async def _run():
+        sentinel = _sentinel_path()
         sink = NullAuditSink()
-        guard = Edictum(environment="test", rules=[_block_canary], backend=MemoryBackend(), audit_sink=sink)
-        adapter = ClaudeAgentSDKAdapter(guard, session_id="smoke-block")
-        flag, servers = _make_canary()
-        hooks = adapter.to_sdk_hooks()
-        query, transport = _make_query(hooks, servers)
-        ids = _register_hooks(query, hooks)
-        tool_input = {"payload": "ping"}
-        output = await _dispatch_pre(query, transport, ids["PreToolUse"], tool_input)
-        await _host_run_canary(query, transport, tool_input)
-        return flag, output, sink
+        denied = {"value": False}
 
-    flag, output, sink = asyncio.run(_run())
-    assert flag["flipped"] is False, f"canary ran under a block rule (claude-agent-sdk {_sdk_version()})"
-    assert _is_host_block(output), f"framework did not surface a block: {output!r}"
-    reason = (output.get("hookSpecificOutput") or {}).get("permissionDecisionReason") or ""
-    assert "canary blocked" in reason
+        def _on_block(*_args):
+            denied["value"] = True
+
+        guard = Edictum(
+            environment="test",
+            rules=[_block_sentinel(sentinel)],
+            tools={"Bash": {"side_effect": "irreversible"}},
+            backend=MemoryBackend(),
+            audit_sink=sink,
+            on_block=_on_block,
+        )
+        adapter = ClaudeAgentSDKAdapter(guard, session_id="smoke-block")
+        try:
+            await _live_touch(adapter.to_sdk_hooks(), sentinel)
+        finally:
+            present = sentinel.exists()
+            if present:
+                sentinel.unlink()
+        return present, denied["value"], sink
+
+    present, hook_denied, sink = asyncio.run(_run())
+    assert present is False, f"canary ran under a block rule (claude-agent-sdk {_sdk_version()})"
+    assert hook_denied is True
     blocked = [e for e in sink.events if e.action == AuditAction.CALL_DENIED]
     assert blocked, f"audit missing CALL_DENIED; got {[e.action for e in sink.events]}"
     assert any("canary blocked" in (e.reason or "") for e in blocked)
@@ -274,52 +158,67 @@ def test_allowed_call_does_flip_canary():
     import asyncio
 
     async def _run():
+        sentinel = _sentinel_path()
         sink = NullAuditSink()
-        guard = Edictum(environment="test", rules=[_block_other], backend=MemoryBackend(), audit_sink=sink)
-        adapter = ClaudeAgentSDKAdapter(guard, session_id="smoke-allow")
-        flag, servers = _make_canary()
-        hooks = adapter.to_sdk_hooks()
-        query, transport = _make_query(hooks, servers)
-        ids = _register_hooks(query, hooks)
-        tool_input = {"payload": "ping"}
-        output = await _dispatch_pre(query, transport, ids["PreToolUse"], tool_input)
-        await _host_run_canary(query, transport, tool_input)
-        return flag, output, sink
+        denied = {"value": False}
 
-    flag, output, sink = asyncio.run(_run())
-    assert flag["flipped"] is True, (
-        f"control did not flip the flag (claude-agent-sdk {_sdk_version()}); output={output!r}"
-    )
-    assert not _is_host_block(output)
+        def _on_block(*_args):
+            denied["value"] = True
+
+        guard = Edictum(
+            environment="test",
+            rules=[_block_other],
+            tools={"Bash": {"side_effect": "irreversible"}},
+            backend=MemoryBackend(),
+            audit_sink=sink,
+            on_block=_on_block,
+        )
+        adapter = ClaudeAgentSDKAdapter(guard, session_id="smoke-allow")
+        try:
+            await _live_touch(adapter.to_sdk_hooks(), sentinel)
+        finally:
+            present = sentinel.exists()
+            if present:
+                sentinel.unlink()
+        return present, denied["value"], sink
+
+    present, hook_denied, sink = asyncio.run(_run())
+    assert present is True, f"control did not flip the flag (claude-agent-sdk {_sdk_version()})"
+    assert hook_denied is False
     allowed = [e for e in sink.events if e.action == AuditAction.CALL_ALLOWED]
     assert allowed, f"audit missing CALL_ALLOWED; got {[e.action for e in sink.events]}"
 
 
 def test_enforce_exception_fails_closed():
-    """D7: enforce + internal exception → block + fixed reason + audit; flag stays down."""
+    """D7: enforce + internal exception → block + fixed reason + audit; sentinel stays absent."""
     import asyncio
 
     async def _run():
+        sentinel = _sentinel_path()
         sink = NullAuditSink()
-        guard = Edictum(environment="test", rules=[_block_other], backend=MemoryBackend(), audit_sink=sink)
+        guard = Edictum(
+            environment="test",
+            rules=[_block_other],
+            tools={"Bash": {"side_effect": "irreversible"}},
+            backend=MemoryBackend(),
+            audit_sink=sink,
+        )
         adapter = ClaudeAgentSDKAdapter(guard, session_id="smoke-enforce-exc")
 
         async def explode(*args, **kwargs):
             raise RuntimeError("backend outage")
 
         adapter._pre_tool_use = explode
-        flag, servers = _make_canary()
-        hooks = adapter.to_sdk_hooks()
-        query, transport = _make_query(hooks, servers)
-        ids = _register_hooks(query, hooks)
-        tool_input = {"payload": "ping"}
-        output = await _dispatch_pre(query, transport, ids["PreToolUse"], tool_input)
-        await _host_run_canary(query, transport, tool_input)
-        return flag, output, sink, adapter
+        try:
+            await _live_touch(adapter.to_sdk_hooks(), sentinel)
+        finally:
+            present = sentinel.exists()
+            if present:
+                sentinel.unlink()
+        return present, sink, adapter
 
-    flag, output, sink, adapter = asyncio.run(_run())
-    assert flag["flipped"] is False
-    assert _is_host_block(output), f"enforce exception did not surface a block: {output!r}"
+    present, sink, adapter = asyncio.run(_run())
+    assert present is False
     events = [e for e in sink.events if e.reason == ADAPTER_INTERNAL_EXCEPTION_REASON]
     assert events, f"missing loud exception audit; got {[(e.action, e.reason) for e in sink.events]}"
     assert events[0].action == AuditAction.CALL_DENIED
@@ -329,15 +228,17 @@ def test_enforce_exception_fails_closed():
 
 
 def test_observe_exception_allows_loudly():
-    """D7: observe + internal exception → allow + own reason code; flag flips."""
+    """D7: observe + internal exception → allow + own reason code; sentinel is created."""
     import asyncio
 
     async def _run():
+        sentinel = _sentinel_path()
         sink = NullAuditSink()
         guard = Edictum(
             environment="test",
             mode="observe",
             rules=[_block_other],
+            tools={"Bash": {"side_effect": "irreversible"}},
             backend=MemoryBackend(),
             audit_sink=sink,
         )
@@ -347,46 +248,19 @@ def test_observe_exception_allows_loudly():
             raise RuntimeError("backend outage")
 
         adapter._pre_tool_use = explode
-        flag, servers = _make_canary()
-        hooks = adapter.to_sdk_hooks()
-        query, transport = _make_query(hooks, servers)
-        ids = _register_hooks(query, hooks)
-        tool_input = {"payload": "ping"}
-        output = await _dispatch_pre(query, transport, ids["PreToolUse"], tool_input)
-        await _host_run_canary(query, transport, tool_input)
-        return flag, output, sink, adapter
+        try:
+            await _live_touch(adapter.to_sdk_hooks(), sentinel)
+        finally:
+            present = sentinel.exists()
+            if present:
+                sentinel.unlink()
+        return present, sink, adapter
 
-    flag, output, sink, adapter = asyncio.run(_run())
-    assert flag["flipped"] is True, (
-        f"observe exception must allow; flag stayed down (claude-agent-sdk {_sdk_version()}); output={output!r}"
-    )
+    present, sink, adapter = asyncio.run(_run())
+    assert present is True, f"observe exception must allow; sentinel stayed absent (claude-agent-sdk {_sdk_version()})"
     events = [e for e in sink.events if e.reason == ADAPTER_INTERNAL_EXCEPTION_REASON]
     assert events, f"missing loud observe-exception audit; got {[(e.action, e.reason) for e in sink.events]}"
     assert events[0].action == AuditAction.CALL_WOULD_DENY
     assert events[0].decision_source == "adapter"
     assert events[0].policy_error is True
     assert adapter._internal_exception_count == 1
-
-
-@pytest.mark.security
-def test_input_replacement_does_not_flip_canary():
-    """Fail-closed: a replacement after PreToolUse does not execute."""
-    import asyncio
-
-    async def _run():
-        sink = NullAuditSink()
-        guard = Edictum(environment="test", rules=[_block_other], backend=MemoryBackend(), audit_sink=sink)
-        adapter = ClaudeAgentSDKAdapter(guard, session_id="smoke-replace")
-        flag, servers = _make_canary()
-        hooks = adapter.to_sdk_hooks()
-        query, transport = _make_query(hooks, servers)
-        ids = _register_hooks(query, hooks)
-        first = await _dispatch_pre(query, transport, ids["PreToolUse"], {"payload": "ping"}, "tu-1")
-        assert not _is_host_block(first)
-        second = await _dispatch_pre(query, transport, ids["PreToolUse"], {"payload": "pwn"}, "tu-1")
-        await _host_run_canary(query, transport, {"payload": "pwn"}, "tu-1")
-        return flag, second
-
-    flag, second = asyncio.run(_run())
-    assert flag["flipped"] is False, f"replacement executed (claude-agent-sdk {_sdk_version()})"
-    assert _is_host_block(second)

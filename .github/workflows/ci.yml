@@ -103,7 +103,10 @@ jobs:
           cache: "pip"
       - name: Install edictum and pinned Claude Agent SDK
         run: pip install -e ".[dev,yaml]" "claude-agent-sdk==${{ matrix.claude-agent-sdk-version }}"
+      - name: Provide Claude Code CLI
+        run: pip install --target /tmp/claude-host-cli "claude-agent-sdk==0.2.139" && install -m 0755 /tmp/claude-host-cli/claude_agent_sdk/_bundled/claude /usr/local/bin/claude
       - name: Real-framework Claude Agent SDK smokes
         env:
           EDICTUM_CLAUDE_SMOKE: "1"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: pytest -o addopts= tests/test_adapter_claude_smoke.py -v --tb=short
