@@ -823,8 +823,8 @@ class TestClaudeSdkHostHooks:
         span.end.assert_called_once()
 
     @pytest.mark.security
-    async def test_wrap_no_id_does_not_clear_wrong_of_two_identical_pending(self):
-        """Ambiguous no-ID name+input match must not pick or clear the first pending."""
+    async def test_wrap_no_id_expires_all_ambiguous_identical_pending(self):
+        """Ambiguous no-ID name+input match must not pick one call; expire every candidate."""
         adapter = ClaudeAgentSDKAdapter(make_guard())
         await _sdk_pre(adapter)(
             _pre_input(tool_input={"payload": "ping"}, tool_use_id="tu-1"),
@@ -849,12 +849,12 @@ class TestClaudeSdkHostHooks:
         wrapped = adapter.wrap_can_use_tool(deny_cb)
         result = await wrapped("canary", {"payload": "ping"}, type("Ctx", (), {})())
         assert result.behavior == "deny"
-        assert "tu-1" in adapter._pending
-        assert "tu-2" in adapter._pending
-        assert "tu-1" in adapter._pending_decisions
-        assert "tu-2" in adapter._pending_decisions
-        span1.end.assert_not_called()
-        span2.end.assert_not_called()
+        assert "tu-1" not in adapter._pending
+        assert "tu-2" not in adapter._pending
+        assert "tu-1" not in adapter._pending_decisions
+        assert "tu-2" not in adapter._pending_decisions
+        span1.end.assert_called_once()
+        span2.end.assert_called_once()
 
     @pytest.mark.security
     async def test_wrap_deny_rejects_control_characters_in_message(self):

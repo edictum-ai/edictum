@@ -453,6 +453,9 @@ class ClaudeAgentSDKAdapter:
                 pending = self._pending_for_permission(tool_name, tool_input, context)
                 if isinstance(pending, tuple):
                     call_id = pending[2]
+                if pending == "ambiguous":
+                    self._clear_matching_pending(tool_name, tool_input)
+                    return await deny(_INPUT_REPLACEMENT_REASON)
                 if pending == "mismatch":
                     return await deny(_INPUT_REPLACEMENT_REASON)
                 if pending == "compare_failed":
@@ -528,6 +531,8 @@ class ClaudeAgentSDKAdapter:
         if len(matches) == 1:
             key, envelope, span = matches[0]
             return (envelope, span, key)
+        if matches:
+            return "ambiguous"
         return "mismatch"
 
     @staticmethod
@@ -558,6 +563,17 @@ class ClaudeAgentSDKAdapter:
             logger.exception("Claude host-block audit failed")
         self._clear_pending(call_id)
         return self._deny(reason)
+
+    def _clear_matching_pending(self, tool_name: str, tool_input: Any) -> None:
+        keys: list[str] = []
+        for key, (envelope, _span) in list(self._pending.items()):
+            try:
+                if envelope.tool_name == tool_name and _governed_input_equals(envelope.args, tool_input):
+                    keys.append(key)
+            except Exception:
+                continue
+        for key in keys:
+            self._clear_pending(key)
 
     def _clear_pending(self, call_id: str) -> None:
         """Remove pending state and end the saved span for a blocked call."""
