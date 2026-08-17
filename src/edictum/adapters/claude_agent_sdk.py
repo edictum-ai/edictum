@@ -533,10 +533,17 @@ class ClaudeAgentSDKAdapter:
             logger.exception("Claude pending span end failed")
 
     def _fanout_sinks(self) -> list[Any]:
-        composite = getattr(self._guard.audit_sink, "sinks", None)
-        if isinstance(composite, list):
-            return composite
-        return [self._guard.audit_sink]
+        return self._flatten_sinks(self._guard.audit_sink)
+
+    @staticmethod
+    def _flatten_sinks(sink: Any) -> list[Any]:
+        children = getattr(sink, "sinks", None)
+        if not isinstance(children, list) or not children:
+            return [sink]
+        leaves: list[Any] = []
+        for child in children:
+            leaves.extend(ClaudeAgentSDKAdapter._flatten_sinks(child))
+        return leaves
 
     @staticmethod
     def _ack_identity(event: AuditEvent) -> tuple[str, str, str] | None:
@@ -549,7 +556,13 @@ class ClaudeAgentSDKAdapter:
         workflow = getattr(event, "workflow", None)
         if isinstance(workflow, dict):
             completed = workflow.get("completed_stages") or ()
-            extra = f"{workflow.get('name', '')}:{workflow.get('active_stage', '')}:{tuple(completed)}"
+            extra = (
+                f"{workflow.get('name', '')}:"
+                f"{workflow.get('active_stage', '')}:"
+                f"{tuple(completed)}:"
+                f"{workflow.get('stage_id', '')}:"
+                f"{workflow.get('to_stage_id', '')}"
+            )
         return (call_id, action_key, extra)
 
     def _ack_sink(self, sink: Any, event: AuditEvent) -> None:

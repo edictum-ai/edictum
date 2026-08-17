@@ -19,7 +19,7 @@ from edictum.adapters.claude_agent_sdk import (
     ADAPTER_POST_HOOK_EXCEPTION_REASON,
     ClaudeAgentSDKAdapter,
 )
-from edictum.audit import AuditAction
+from edictum.audit import AuditAction, CompositeSink
 from edictum.findings import Finding
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -1458,19 +1458,22 @@ class TestClaudeSdkHostHooks:
             definition = SimpleNamespace(metadata=SimpleNamespace(name="demo", version="1"))
 
             async def record_result(self, session, stage_id, envelope):
+                # hydrate_workflow_events copies the final snapshot onto every
+                # event; only stage_id / to_stage_id distinguish transitions.
+                snapshot = {"name": "demo", "active_stage": "s3", "completed_stages": ["s1", "s2"]}
                 return [
                     {
                         "action": AuditAction.WORKFLOW_STAGE_ADVANCED.value,
-                        "workflow": {"name": "demo", "active_stage": "s1", "completed_stages": []},
+                        "workflow": {**snapshot, "stage_id": "s1", "to_stage_id": "s2"},
                     },
                     {
                         "action": AuditAction.WORKFLOW_STAGE_ADVANCED.value,
-                        "workflow": {"name": "demo", "active_stage": "s2", "completed_stages": ["s1"]},
+                        "workflow": {**snapshot, "stage_id": "s2", "to_stage_id": "s3"},
                     },
                 ]
 
             async def state(self, session):
-                state = WorkflowState(session_id=session.session_id, active_stage="s2", completed_stages=["s1"])
+                state = WorkflowState(session_id=session.session_id, active_stage="s3", completed_stages=["s1", "s2"])
                 state.ensure_defaults()
                 return state
 
@@ -1493,12 +1496,68 @@ class TestClaudeSdkHostHooks:
             "tu-1",
             {"signal": None},
         )
-        stages = [
-            (e.workflow or {}).get("active_stage")
+        transitions = [
+            ((e.workflow or {}).get("stage_id"), (e.workflow or {}).get("to_stage_id"))
             for e in sink.events
             if e.action == AuditAction.WORKFLOW_STAGE_ADVANCED
         ]
-        assert stages == ["s1", "s2"], f"collapsed workflow transitions; got {stages}"
+        assert transitions == [("s1", "s2"), ("s2", "s3")], f"collapsed workflow transitions; got {transitions}"
+
+    @pytest.mark.security
+    async def test_nested_composite_partial_failure_does_not_double_count_leaves(self):
+        """Guard wraps a caller CompositeSink; fallback must skip already-acked leaves."""
+
+        class _AcceptLeaf:
+            def __init__(self):
+                self.events = []
+
+            async def emit(self, event):
+                self.events.append(event)
+
+        class _FailOnceLeaf:
+            def __init__(self):
+                self.events = []
+                self.calls = 0
+
+            async def emit(self, event):
+                if event.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED):
+                    self.calls += 1
+                    if self.calls == 1:
+                        raise RuntimeError("nested child rejected")
+                self.events.append(event)
+
+        accepting = _AcceptLeaf()
+        failing = _FailOnceLeaf()
+        guard = make_guard(audit_sink=CompositeSink([accepting, failing]))
+        adapter = ClaudeAgentSDKAdapter(guard)
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        result = await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result == {}
+        local_executed = [
+            e for e in guard.local_sink.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)
+        ]
+        assert len(local_executed) == 1, (
+            f"local sink double-counted; got {[(e.action, e.reason) for e in guard.local_sink.events]}"
+        )
+        accepted = [e for e in accepting.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)]
+        assert len(accepted) == 1, (
+            f"nested accepting leaf replayed; got {[(e.action, e.reason) for e in accepting.events]}"
+        )
+        failed = [e for e in failing.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)]
+        assert failed, f"failing leaf missed fallback; got {[(e.action, e.reason) for e in failing.events]}"
+        assert failing.calls >= 2
 
     @pytest.mark.security
     async def test_post_failure_hook_exception_still_audits(self):
