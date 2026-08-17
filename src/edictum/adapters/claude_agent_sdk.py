@@ -169,6 +169,7 @@ class ClaudeAgentSDKAdapter:
         self._internal_exception_count = 0
         self._hook_recovery: dict[str, _HookRecovery] = {}
         self._execution_audit_completed: set[str] = set()
+        self._execution_tool_success: dict[str, bool] = {}
 
     @property
     def session_id(self) -> str:
@@ -528,9 +529,12 @@ class ClaudeAgentSDKAdapter:
         envelope = pending[0] if isinstance(pending, tuple) and pending else None
         if envelope is not None and envelope.call_id in self._execution_audit_completed:
             self._execution_audit_completed.discard(envelope.call_id)
+            self._execution_tool_success.pop(envelope.call_id, None)
             return
         tool_success = False
-        if envelope is not None:
+        if envelope is not None and envelope.call_id in self._execution_tool_success:
+            tool_success = self._execution_tool_success.pop(envelope.call_id)
+        elif envelope is not None:
             try:
                 tool_success = self._check_tool_success(envelope.tool_name, tool_response)
             except Exception:
@@ -841,6 +845,7 @@ class ClaudeAgentSDKAdapter:
         try:
             # Derive tool_success from SDK response
             tool_success = self._check_tool_success(envelope.tool_name, tool_response)
+            self._execution_tool_success[envelope.call_id] = tool_success
 
             # Run pipeline
             post_decision = await self._pipeline.post_execute(envelope, tool_response, tool_success)
@@ -865,33 +870,33 @@ class ClaudeAgentSDKAdapter:
             # Record in session
             await self._session.record_execution(envelope.tool_name, success=tool_success)
 
-            # Emit audit
+            # Emit audit. Mark attempted before emit so a sink that delivers
+            # then raises (CompositeSink) does not replay via fallback.
             action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
-            await self._guard.audit_sink.emit(
-                AuditEvent(
-                    action=action,
-                    run_id=envelope.run_id,
-                    call_id=envelope.call_id,
-                    call_index=envelope.call_index,
-                    session_id=self._session_id,
-                    parent_session_id=self._audit_parent_session_id(),
-                    tool_name=envelope.tool_name,
-                    tool_args=self._guard.redaction.redact_args(envelope.args),
-                    side_effect=envelope.side_effect.value,
-                    environment=envelope.environment,
-                    principal=asdict(envelope.principal) if envelope.principal else None,
-                    tool_success=tool_success,
-                    postconditions_passed=post_decision.postconditions_passed,
-                    contracts_evaluated=post_decision.contracts_evaluated,
-                    session_attempt_count=await self._session.attempt_count(),
-                    session_execution_count=await self._session.execution_count(),
-                    mode=self._guard.mode,
-                    policy_version=self._guard.policy_version,
-                    policy_error=post_decision.policy_error,
-                    workflow=workflow,
-                )
+            event = AuditEvent(
+                action=action,
+                run_id=envelope.run_id,
+                call_id=envelope.call_id,
+                call_index=envelope.call_index,
+                session_id=self._session_id,
+                parent_session_id=self._audit_parent_session_id(),
+                tool_name=envelope.tool_name,
+                tool_args=self._guard.redaction.redact_args(envelope.args),
+                side_effect=envelope.side_effect.value,
+                environment=envelope.environment,
+                principal=asdict(envelope.principal) if envelope.principal else None,
+                tool_success=tool_success,
+                postconditions_passed=post_decision.postconditions_passed,
+                contracts_evaluated=post_decision.contracts_evaluated,
+                session_attempt_count=await self._session.attempt_count(),
+                session_execution_count=await self._session.execution_count(),
+                mode=self._guard.mode,
+                policy_version=self._guard.policy_version,
+                policy_error=post_decision.policy_error,
+                workflow=workflow,
             )
             self._execution_audit_completed.add(envelope.call_id)
+            await self._guard.audit_sink.emit(event)
             await self._emit_workflow_events(envelope, workflow_events)
 
             span.set_attribute("governance.tool_success", tool_success)
@@ -918,6 +923,7 @@ class ClaudeAgentSDKAdapter:
 
         # Return warnings as additionalContext
         self._execution_audit_completed.discard(envelope.call_id)
+        self._execution_tool_success.pop(envelope.call_id, None)
         if post_decision.warnings:
             return {
                 "hookSpecificOutput": {

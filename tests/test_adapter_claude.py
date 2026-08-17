@@ -19,7 +19,7 @@ from edictum.adapters.claude_agent_sdk import (
     ADAPTER_POST_HOOK_EXCEPTION_REASON,
     ClaudeAgentSDKAdapter,
 )
-from edictum.audit import AuditAction
+from edictum.audit import AuditAction, CompositeSink
 from edictum.findings import Finding
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -1064,6 +1064,88 @@ class TestClaudeSdkHostHooks:
         assert executed[0].action == AuditAction.CALL_EXECUTED
         assert executed[0].reason != ADAPTER_POST_HOOK_EXCEPTION_REASON
         assert not any(e.reason == ADAPTER_POST_HOOK_EXCEPTION_REASON for e in sink.events)
+        assert adapter._pending == {}
+        assert adapter._pending_decisions == {}
+
+    @pytest.mark.security
+    async def test_post_hook_exception_reuses_cached_tool_success(self):
+        """Recovery must reuse the primary success_check result, not rerun it."""
+        calls: list[object] = []
+
+        def stateful_success_check(tool_name: str, tool_response: object) -> bool:
+            calls.append((tool_name, tool_response))
+            return len(calls) == 1
+
+        sink = NullAuditSink()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink, success_check=stateful_success_check))
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+
+        async def boom(*_args, **_kwargs):
+            raise RuntimeError("session down")
+
+        adapter._session.record_execution = boom
+        result = await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result == {}
+        assert len(calls) == 1
+        fallback = [e for e in sink.events if e.reason == ADAPTER_POST_HOOK_EXCEPTION_REASON]
+        assert fallback, f"post-hook exception missing audit; got {[(e.action, e.reason) for e in sink.events]}"
+        assert fallback[0].action == AuditAction.CALL_EXECUTED
+        assert fallback[0].tool_success is True
+        executed = [e for e in sink.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)]
+        assert len(executed) == 1
+
+    @pytest.mark.security
+    async def test_partial_execution_audit_delivery_does_not_replay(self):
+        """CompositeSink delivery-then-raise must not fallback-replay the execution event."""
+        healthy = NullAuditSink()
+
+        class _RaiseOnExecution:
+            async def emit(self, event):
+                if event.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED):
+                    raise RuntimeError("execution sink down")
+
+        composite = CompositeSink([healthy, _RaiseOnExecution()])
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=composite))
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        result = await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result == {}
+        executed = [e for e in healthy.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)]
+        assert len(executed) == 1, (
+            f"partial delivery replayed execution; got {[(e.action, e.reason) for e in healthy.events]}"
+        )
+        assert executed[0].action == AuditAction.CALL_EXECUTED
+        assert executed[0].reason != ADAPTER_POST_HOOK_EXCEPTION_REASON
+        assert not any(e.reason == ADAPTER_POST_HOOK_EXCEPTION_REASON for e in healthy.events)
+        local_executed = [
+            e
+            for e in adapter._guard._local_sink.events
+            if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)
+        ]
+        assert len(local_executed) == 1
         assert adapter._pending == {}
         assert adapter._pending_decisions == {}
 
