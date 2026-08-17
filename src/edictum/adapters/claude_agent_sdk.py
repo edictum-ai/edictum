@@ -171,6 +171,7 @@ class ClaudeAgentSDKAdapter:
         self._execution_audit_completed: set[str] = set()
         self._execution_tool_success: dict[str, bool] = {}
         self._pending_workflow_events: dict[str, list[dict]] = {}
+        self._sink_ack: dict[int, set[tuple[str, str]]] = {}
 
     @property
     def session_id(self) -> str:
@@ -242,7 +243,7 @@ class ClaudeAgentSDKAdapter:
         Pass → ``{}`` (emit nothing). Block → ``permissionDecision: deny``.
         Never emit the SDK's ``ask`` or ``allow``.
         """
-        self._on_postcondition_warn = on_postcondition_warn
+        warning_cb = on_postcondition_warn
 
         async def pre_tool_use(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
             hook_event = ""
@@ -340,7 +341,9 @@ class ClaudeAgentSDKAdapter:
                 return {}
             pending_snapshot = self._pending.get(call_id)
             try:
-                return await self._post_tool_use(tool_use_id=call_id, tool_response=tool_response)
+                return await self._post_tool_use(
+                    tool_use_id=call_id, tool_response=tool_response, on_postcondition_warn=warning_cb
+                )
             except Exception:
                 logger.exception("Claude PostToolUse hook raised; keeping original result")
                 try:
@@ -369,7 +372,9 @@ class ClaudeAgentSDKAdapter:
             failure_response = {"is_error": True, "error": error}
             pending_snapshot = self._pending.get(call_id)
             try:
-                result = await self._post_tool_use(tool_use_id=call_id, tool_response=failure_response)
+                result = await self._post_tool_use(
+                    tool_use_id=call_id, tool_response=failure_response, on_postcondition_warn=warning_cb
+                )
             except Exception:
                 logger.exception("Claude PostToolUseFailure hook raised")
                 try:
@@ -527,40 +532,47 @@ class ClaudeAgentSDKAdapter:
         except Exception:
             logger.exception("Claude pending span end failed")
 
-    _EXECUTION_AUDIT_ACTIONS = (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)
-    _WORKFLOW_AUDIT_ACTIONS = (AuditAction.WORKFLOW_STAGE_ADVANCED, AuditAction.WORKFLOW_COMPLETED)
-
-    def _sink_recorded_actions(self, sink: Any, call_id: str, actions: tuple[AuditAction, ...]) -> bool:
-        events = getattr(sink, "events", None)
-        if not isinstance(events, list) or not call_id:
-            return False
-        return any(getattr(event, "call_id", None) == call_id and event.action in actions for event in events)
-
-    async def _emit_skipping_acked(self, event: AuditEvent, actions: tuple[AuditAction, ...]) -> None:
-        """Replay an audit without re-delivering to sinks that already accepted it."""
+    def _fanout_sinks(self) -> list[Any]:
         composite = getattr(self._guard.audit_sink, "sinks", None)
-        if not isinstance(composite, list):
-            if self._sink_recorded_actions(self._guard.audit_sink, event.call_id, actions):
-                return
-            await self._guard.audit_sink.emit(event)
+        if isinstance(composite, list):
+            return composite
+        return [self._guard.audit_sink]
+
+    def _ack_sink(self, sink: Any, event: AuditEvent) -> None:
+        call_id = getattr(event, "call_id", "")
+        action = getattr(event, "action", None)
+        if not call_id or action is None:
             return
+        key = action.value if isinstance(action, AuditAction) else str(action)
+        self._sink_ack.setdefault(id(sink), set()).add((call_id, key))
+
+    def _sink_acked(self, sink: Any, event: AuditEvent) -> bool:
+        call_id = getattr(event, "call_id", "")
+        action = getattr(event, "action", None)
+        if not call_id or action is None:
+            return False
+        key = action.value if isinstance(action, AuditAction) else str(action)
+        return (call_id, key) in self._sink_ack.get(id(sink), set())
+
+    async def _emit_per_sink(self, event: AuditEvent) -> None:
+        """Fan out one audit, skipping sinks that already accepted this call+action."""
         errors: list[Exception] = []
-        for sink in composite:
-            if self._sink_recorded_actions(sink, event.call_id, actions):
+        for sink in self._fanout_sinks():
+            if self._sink_acked(sink, event):
                 continue
             try:
                 await sink.emit(event)
             except Exception as exc:
                 errors.append(exc)
+                continue
+            self._ack_sink(sink, event)
         if errors:
-            raise ExceptionGroup("Claude fallback: one or more sinks failed", errors)
+            raise ExceptionGroup("Claude audit fan-out: one or more sinks failed", errors)
 
     async def _recover_workflow_events(self, envelope: Any) -> None:
         call_id = getattr(envelope, "call_id", "")
         records = self._pending_workflow_events.pop(call_id, None)
         if not records:
-            return
-        if self._sink_recorded_actions(self._guard.local_sink, call_id, self._WORKFLOW_AUDIT_ACTIONS):
             return
         await self._emit_workflow_events(envelope, records)
 
@@ -583,7 +595,7 @@ class ClaudeAgentSDKAdapter:
         action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
         reason = ADAPTER_POST_HOOK_EXCEPTION_REASON
         if envelope is not None:
-            await self._emit_skipping_acked(
+            await self._emit_per_sink(
                 AuditEvent(
                     action=action,
                     run_id=envelope.run_id,
@@ -603,8 +615,7 @@ class ClaudeAgentSDKAdapter:
                     mode=self._guard.mode,
                     policy_version=self._guard.policy_version,
                     policy_error=True,
-                ),
-                self._EXECUTION_AUDIT_ACTIONS,
+                )
             )
             await self._recover_workflow_events(envelope)
             return
@@ -939,7 +950,7 @@ class ClaudeAgentSDKAdapter:
                 policy_error=post_decision.policy_error,
                 workflow=workflow,
             )
-            await self._guard.audit_sink.emit(event)
+            await self._emit_per_sink(event)
             self._execution_audit_completed.add(envelope.call_id)
             await self._emit_workflow_events(envelope, workflow_events)
             self._pending_workflow_events.pop(envelope.call_id, None)
@@ -959,7 +970,9 @@ class ClaudeAgentSDKAdapter:
             post_decision.redacted_response if post_decision.redacted_response is not None else tool_response
         )
         violations = build_findings(post_decision)
-        on_warn = getattr(self, "_on_postcondition_warn", None)
+        on_warn = kwargs.get("on_postcondition_warn")
+        if on_warn is None:
+            on_warn = getattr(self, "_on_postcondition_warn", None)
         if not post_decision.postconditions_passed and violations and on_warn:
             try:
                 on_warn(effective_response, violations)
@@ -1019,7 +1032,7 @@ class ClaudeAgentSDKAdapter:
             action = AuditAction.WORKFLOW_STAGE_ADVANCED
             if action_name == AuditAction.WORKFLOW_COMPLETED.value:
                 action = AuditAction.WORKFLOW_COMPLETED
-            await self._guard.audit_sink.emit(
+            await self._emit_per_sink(
                 AuditEvent(
                     action=action,
                     run_id=envelope.run_id,

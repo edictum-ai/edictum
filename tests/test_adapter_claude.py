@@ -1273,6 +1273,162 @@ class TestClaudeSdkHostHooks:
         assert adapter._pending_decisions == {}
 
     @pytest.mark.security
+    async def test_fallback_does_not_replay_sinks_without_event_buffers(self):
+        """File-like sinks have no events list; explicit acks must still skip replay."""
+
+        class _FileLike:
+            def __init__(self):
+                self.writes = []
+
+            async def emit(self, event):
+                self.writes.append(event)
+
+        class _FailSecond:
+            def __init__(self):
+                self.events = []
+                self.calls = 0
+
+            async def emit(self, event):
+                if event.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED):
+                    self.calls += 1
+                    if self.calls == 1:
+                        raise RuntimeError("downstream rejected")
+                self.events.append(event)
+
+        file_like = _FileLike()
+        failing = _FailSecond()
+        guard = make_guard(audit_sink=[file_like, failing])
+        adapter = ClaudeAgentSDKAdapter(guard)
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        result = await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result == {}
+        file_executed = [
+            e for e in file_like.writes if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)
+        ]
+        assert len(file_executed) == 1, (
+            f"file-like sink replayed; got {[(e.action, e.reason) for e in file_like.writes]}"
+        )
+        assert failing.calls >= 2
+        assert any(e.action == AuditAction.CALL_EXECUTED for e in failing.events)
+
+    @pytest.mark.security
+    async def test_workflow_fallback_retries_sink_that_rejected_transition(self):
+        """Local acceptance of a workflow event must not skip retrying the rejecting sink."""
+        from dataclasses import replace
+        from types import SimpleNamespace
+
+        from edictum.workflow.result import WorkflowState
+
+        class _FailWorkflowOnce:
+            def __init__(self):
+                self.events = []
+                self.wf_calls = 0
+
+            async def emit(self, event):
+                if event.action in (AuditAction.WORKFLOW_STAGE_ADVANCED, AuditAction.WORKFLOW_COMPLETED):
+                    self.wf_calls += 1
+                    if self.wf_calls == 1:
+                        raise RuntimeError("workflow sink rejected")
+                self.events.append(event)
+
+        class _FakeRuntime:
+            definition = SimpleNamespace(metadata=SimpleNamespace(name="demo", version="1"))
+
+            async def record_result(self, session, stage_id, envelope):
+                return [
+                    {
+                        "action": AuditAction.WORKFLOW_STAGE_ADVANCED.value,
+                        "workflow": {"name": "demo", "active_stage": "s1"},
+                    }
+                ]
+
+            async def state(self, session):
+                state = WorkflowState(session_id=session.session_id, active_stage="s1")
+                state.ensure_defaults()
+                return state
+
+        configured = _FailWorkflowOnce()
+        guard = make_guard(audit_sink=configured)
+        adapter = ClaudeAgentSDKAdapter(guard)
+        hooks = adapter.to_sdk_hooks()
+        pre = hooks["PreToolUse"][0].hooks[0]
+        post = hooks["PostToolUse"][0].hooks[0]
+        first = await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        assert first == {}
+        guard._workflow_runtime = _FakeRuntime()
+        decision = adapter._pending_decisions["tu-1"]
+        adapter._pending_decisions["tu-1"] = replace(decision, workflow_involved=True, workflow_stage_id="s1")
+        result = await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "ok",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert result == {}
+        configured_wf = [
+            e
+            for e in configured.events
+            if e.action in (AuditAction.WORKFLOW_STAGE_ADVANCED, AuditAction.WORKFLOW_COMPLETED)
+        ]
+        assert configured_wf, (
+            f"configured sink missed workflow retry; got {[(e.action, e.reason) for e in configured.events]}"
+        )
+        local_wf = [
+            e
+            for e in guard.local_sink.events
+            if e.action in (AuditAction.WORKFLOW_STAGE_ADVANCED, AuditAction.WORKFLOW_COMPLETED)
+        ]
+        assert len(local_wf) == 1
+
+    @pytest.mark.security
+    async def test_to_sdk_hooks_binds_warning_callback_per_set(self):
+        @postcondition("*")
+        def ssn_check(tool_call, result):
+            if "123-45-6789" in str(result):
+                return Decision.fail("SSN leaked")
+            return Decision.ok()
+
+        seen: list[str] = []
+
+        def cb_a(result, violations):
+            seen.append("a")
+
+        def cb_b(result, violations):
+            seen.append("b")
+
+        adapter = ClaudeAgentSDKAdapter(make_guard(rules=[ssn_check]))
+        first_hooks = adapter.to_sdk_hooks(on_postcondition_warn=cb_a)
+        adapter.to_sdk_hooks(on_postcondition_warn=cb_b)
+        pre = first_hooks["PreToolUse"][0].hooks[0]
+        post = first_hooks["PostToolUse"][0].hooks[0]
+        await pre(_pre_input(tool_input={"payload": "ping"}), "tu-1", {"signal": None})
+        await post(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_response": "Patient SSN: 123-45-6789",
+                "tool_use_id": "tu-1",
+            },
+            "tu-1",
+            {"signal": None},
+        )
+        assert seen == ["a"], f"first hook set must keep its callback; got {seen}"
+
+    @pytest.mark.security
     async def test_post_failure_hook_exception_still_audits(self):
         sink = NullAuditSink()
         adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=sink))
