@@ -65,7 +65,7 @@ packages = ["src/edictum"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = ["--ignore=tests/test_adapter_crewai_smoke.py"]
+addopts = ["--ignore=tests/test_adapter_crewai_smoke.py", "--ignore=tests/test_adapter_claude_smoke.py"]
 markers = [
     "security: marks tests as security-related (bypass vectors, boundary checks)",
     "integration: marks tests requiring real HTTP infrastructure (deselected by default, use --run-integration)",

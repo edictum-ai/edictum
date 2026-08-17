@@ -13,24 +13,42 @@ from edictum.storage import MemoryBackend
 
 _CREWAI_SMOKE_ENV = "EDICTUM_CREWAI_SMOKE"
 _CREWAI_SMOKE_FILE = "test_adapter_crewai_smoke.py"
+_CLAUDE_SMOKE_ENV = "EDICTUM_CLAUDE_SMOKE"
+_CLAUDE_SMOKE_FILE = "test_adapter_claude_smoke.py"
 
-# Default/parity collection must not import crewai (the host is not installed
-# there). Dedicated smoke jobs set EDICTUM_CREWAI_SMOKE=1 and collect this
-# file fail-closed: missing host is RED, never a skip.
+# Default/parity collection must not import crewai or claude-agent-sdk
+# (those hosts are not installed there). Dedicated smoke jobs set the
+# matching env flag and collect fail-closed: missing host is RED, never a skip.
 collect_ignore: list[str] = []
 if os.environ.get(_CREWAI_SMOKE_ENV) != "1":
     collect_ignore.append(_CREWAI_SMOKE_FILE)
+if os.environ.get(_CLAUDE_SMOKE_ENV) != "1":
+    collect_ignore.append(_CLAUDE_SMOKE_FILE)
 
 
 def pytest_configure(config):
-    if os.environ.get(_CREWAI_SMOKE_ENV) != "1":
-        return
-    try:
-        importlib.import_module("crewai")
-    except ImportError as exc:
-        raise pytest.UsageError(
-            "EDICTUM_CREWAI_SMOKE=1 requires crewai; missing host for a claimed capability is RED"
-        ) from exc
+    if os.environ.get(_CREWAI_SMOKE_ENV) == "1":
+        try:
+            importlib.import_module("crewai")
+        except ImportError as exc:
+            raise pytest.UsageError(
+                "EDICTUM_CREWAI_SMOKE=1 requires crewai; missing host for a claimed capability is RED"
+            ) from exc
+    if os.environ.get(_CLAUDE_SMOKE_ENV) == "1":
+        try:
+            sdk = importlib.import_module("claude_agent_sdk")
+        except ImportError as exc:
+            raise pytest.UsageError(
+                "EDICTUM_CLAUDE_SMOKE=1 requires claude-agent-sdk; missing host for a claimed capability is RED"
+            ) from exc
+        import shutil
+        from pathlib import Path
+
+        bundled = Path(sdk.__file__).parent / "_bundled" / "claude"
+        if shutil.which("claude") is None and not bundled.is_file():
+            raise pytest.UsageError(
+                "EDICTUM_CLAUDE_SMOKE=1 requires the Claude Code CLI; missing host for a claimed capability is RED"
+            )
 
 
 def pytest_addoption(parser):
