@@ -456,6 +456,8 @@ class ClaudeAgentSDKAdapter:
         tool_use_id = getattr(context, "tool_use_id", None)
         if isinstance(context, dict):
             tool_use_id = context.get("tool_use_id", tool_use_id)
+        if not isinstance(tool_use_id, str) or not tool_use_id:
+            tool_use_id = None
         if tool_use_id and tool_use_id in self._pending:
             envelope, span = self._pending[tool_use_id]
             try:
@@ -870,8 +872,8 @@ class ClaudeAgentSDKAdapter:
             # Record in session
             await self._session.record_execution(envelope.tool_name, success=tool_success)
 
-            # Emit audit. Mark attempted before emit so a sink that delivers
-            # then raises (CompositeSink) does not replay via fallback.
+            # Emit audit. Mark complete only after emit returns so a sink
+            # that rejects the primary event can still receive fallback.
             action = AuditAction.CALL_EXECUTED if tool_success else AuditAction.CALL_FAILED
             event = AuditEvent(
                 action=action,
@@ -895,8 +897,8 @@ class ClaudeAgentSDKAdapter:
                 policy_error=post_decision.policy_error,
                 workflow=workflow,
             )
-            self._execution_audit_completed.add(envelope.call_id)
             await self._guard.audit_sink.emit(event)
+            self._execution_audit_completed.add(envelope.call_id)
             await self._emit_workflow_events(envelope, workflow_events)
 
             span.set_attribute("governance.tool_success", tool_success)
@@ -913,11 +915,11 @@ class ClaudeAgentSDKAdapter:
         effective_response = (
             post_decision.redacted_response if post_decision.redacted_response is not None else tool_response
         )
-        findings = build_findings(post_decision)
+        violations = build_findings(post_decision)
         on_warn = getattr(self, "_on_postcondition_warn", None)
-        if not post_decision.postconditions_passed and findings and on_warn:
+        if not post_decision.postconditions_passed and violations and on_warn:
             try:
-                on_warn(effective_response, findings)
+                on_warn(effective_response, violations)
             except Exception:
                 logger.exception("on_postcondition_warn callback raised")
 

@@ -19,7 +19,7 @@ from edictum.adapters.claude_agent_sdk import (
     ADAPTER_POST_HOOK_EXCEPTION_REASON,
     ClaudeAgentSDKAdapter,
 )
-from edictum.audit import AuditAction, CompositeSink
+from edictum.audit import AuditAction
 from edictum.findings import Finding
 from edictum.storage import MemoryBackend
 from tests.conftest import NullAuditSink
@@ -1107,17 +1107,23 @@ class TestClaudeSdkHostHooks:
         assert len(executed) == 1
 
     @pytest.mark.security
-    async def test_partial_execution_audit_delivery_does_not_replay(self):
-        """CompositeSink delivery-then-raise must not fallback-replay the execution event."""
-        healthy = NullAuditSink()
+    async def test_execution_audit_fallback_when_sink_rejects_before_accept(self):
+        """A configured sink that rejects the primary execution emit must still receive fallback."""
 
-        class _RaiseOnExecution:
+        class _RejectFirstExecution:
+            def __init__(self):
+                self.calls = 0
+                self.events = []
+
             async def emit(self, event):
                 if event.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED):
-                    raise RuntimeError("execution sink down")
+                    self.calls += 1
+                    if self.calls == 1:
+                        raise RuntimeError("execution sink rejected before accept")
+                self.events.append(event)
 
-        composite = CompositeSink([healthy, _RaiseOnExecution()])
-        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=composite))
+        configured = _RejectFirstExecution()
+        adapter = ClaudeAgentSDKAdapter(make_guard(audit_sink=configured))
         hooks = adapter.to_sdk_hooks()
         pre = hooks["PreToolUse"][0].hooks[0]
         post = hooks["PostToolUse"][0].hooks[0]
@@ -1133,19 +1139,15 @@ class TestClaudeSdkHostHooks:
             {"signal": None},
         )
         assert result == {}
-        executed = [e for e in healthy.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)]
-        assert len(executed) == 1, (
-            f"partial delivery replayed execution; got {[(e.action, e.reason) for e in healthy.events]}"
-        )
-        assert executed[0].action == AuditAction.CALL_EXECUTED
-        assert executed[0].reason != ADAPTER_POST_HOOK_EXCEPTION_REASON
-        assert not any(e.reason == ADAPTER_POST_HOOK_EXCEPTION_REASON for e in healthy.events)
-        local_executed = [
-            e
-            for e in adapter._guard._local_sink.events
-            if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)
+        executed = [
+            e for e in configured.events if e.action in (AuditAction.CALL_EXECUTED, AuditAction.CALL_FAILED)
         ]
-        assert len(local_executed) == 1
+        assert executed, (
+            f"configured sink missed execution after reject; got {[(e.action, e.reason) for e in configured.events]}"
+        )
+        assert configured.calls >= 2
+        assert executed[0].action == AuditAction.CALL_EXECUTED
+        assert executed[0].reason == ADAPTER_POST_HOOK_EXCEPTION_REASON
         assert adapter._pending == {}
         assert adapter._pending_decisions == {}
 

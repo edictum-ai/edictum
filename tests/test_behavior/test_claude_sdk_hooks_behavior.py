@@ -70,11 +70,11 @@ class TestToSdkHooksPostconditionWarn:
         await post(_post_input(tool_response="bad output"), "tu-1", {"signal": None})
 
         callback.assert_called_once()
-        result, findings = callback.call_args[0]
+        result, violations = callback.call_args[0]
         assert result == "bad output"
-        assert findings
-        assert isinstance(findings[0], Finding)
-        assert "issue detected" in findings[0].message
+        assert violations
+        assert isinstance(violations[0], Finding)
+        assert "issue detected" in violations[0].message
 
     async def test_warn_callback_not_invoked_when_postconditions_pass(self):
         callback = MagicMock()

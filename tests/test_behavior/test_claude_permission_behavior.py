@@ -92,3 +92,24 @@ class TestWrapCanUseToolSecurityBoundaries:
         result = await adapter.wrap_can_use_tool(rewrite_cb)("canary", {"payload": "ping"}, ctx)
         assert result.behavior == "deny"
         assert result.message == _PERMISSION_BOUNDARY_REASON
+
+    @pytest.mark.security
+    async def test_wrap_clears_pending_when_context_id_unhashable(self):
+        """Unhashable tool_use_id must still match and clear the governed pending entry."""
+        adapter = ClaudeAgentSDKAdapter(_make_guard())
+        await _govern(adapter, tool_input={"payload": "ping"})
+        assert "tu-1" in adapter._pending
+
+        async def block_cb(_tool_name, _tool_input, _context):
+            return {"behavior": "deny", "message": "callback blocked"}
+
+        result = await adapter.wrap_can_use_tool(block_cb)(
+            "canary",
+            {"payload": "ping"},
+            type("Ctx", (), {"tool_use_id": ["tu-1"]})(),
+        )
+        assert result.behavior == "deny"
+        assert result.message == "callback blocked"
+        assert "tu-1" not in adapter._pending
+        assert adapter._pending == {}
+        assert adapter._pending_decisions == {}
