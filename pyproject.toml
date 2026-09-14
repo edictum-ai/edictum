@@ -31,7 +31,7 @@ Changelog = "https://github.com/edictum-ai/edictum/releases"
 
 [project.optional-dependencies]
 yaml = ["pyyaml>=6.0", "jsonschema>=4.20"]
-otel = ["opentelemetry-api>=1.20.0", "opentelemetry-sdk>=1.20.0", "opentelemetry-exporter-otlp>=1.20.0"]
+otel = ["opentelemetry-api>=1.20.0", "opentelemetry-sdk>=1.20.0", "opentelemetry-exporter-otlp>=1.41.1"]
 langchain = ["langchain-core>=0.3"]
 crewai = ["crewai>=0.80"]
 agno = ["agno>=1.0"]
