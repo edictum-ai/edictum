@@ -24,9 +24,14 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: "pip"
-      - run: pip install -e ".[dev,yaml,sinks,cli]"
-      - run: pytest tests/ -v --ignore=tests/test_adapter_crewai_smoke.py
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: "0.13.4"
+          # uv-aarch64-unknown-linux-gnu.tar.gz; the runners are arm64
+          checksum: "1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab"
+      # Install exactly what uv.lock pins, so CI honours the release-age floor.
+      - run: uv sync --frozen --extra dev --extra yaml --python ${{ matrix.python-version }}
+      - run: uv run --no-sync pytest tests/ -v --ignore=tests/test_adapter_crewai_smoke.py
 
   quality:
     runs-on: blacksmith-4vcpu-ubuntu-2404-arm
@@ -35,14 +40,19 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
-          cache: "pip"
-      - run: pip install -e ".[dev,yaml,sinks,cli]" mypy "ruff==0.15.5"
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: "0.13.4"
+          # uv-aarch64-unknown-linux-gnu.tar.gz; the runners are arm64
+          checksum: "1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab"
+      - run: uv sync --frozen --extra dev --extra yaml --python 3.11
+      - run: uv pip install mypy "ruff==0.15.5"
       - name: Lint
-        run: ruff check src/ tests/
+        run: uv run --no-sync ruff check src/ tests/
       - name: Format check
-        run: ruff format --check src/ tests/
+        run: uv run --no-sync ruff format --check src/ tests/
       - name: Type check (informational)
-        run: mypy src/edictum/ --ignore-missing-imports
+        run: uv run --no-sync mypy src/edictum/ --ignore-missing-imports
         continue-on-error: true
 
   security:
@@ -52,23 +62,23 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
-          cache: "pip"
-      - run: pip install -e ".[dev,yaml,sinks,cli]" bandit pip-audit
-      - name: Upgrade setuptools (PYSEC-2026-3447)
-        # setuptools 79.x ships with the Python 3.11 toolchain and is flagged by
-        # pip-audit (PYSEC-2026-3447, fixed in 83.0.0). A patched version exists,
-        # so upgrade rather than ignore (unlike the no-fix ignores below).
-        run: pip install --upgrade "setuptools>=83"
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: "0.13.4"
+          # uv-aarch64-unknown-linux-gnu.tar.gz; the runners are arm64
+          checksum: "1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab"
+      - run: uv sync --frozen --extra dev --extra yaml --python 3.11
+      - run: uv pip install bandit pip-audit
       - name: Security lint (bandit)
-        run: bandit -r src/ -ll -ii
+        run: uv run --no-sync bandit -r src/ -ll -ii
       - name: Audit Python dependencies
         # CVE-2026-4539: pygments 2.19.2 — no upstream fix available yet (latest on PyPI).
         # Transitive dep from pdoc, pytest, rich. Remove ignore when patched version ships.
         # CVE-2026-3219: pip 26.0.1 — no upstream fix available yet (latest on PyPI).
         # Installed by the CI Python toolchain. Remove ignore when patched version ships.
-        run: pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219
+        run: uv run --no-sync pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219
       - name: Security boundary tests
-        run: pytest -m security -v --tb=short --ignore=tests/test_adapter_crewai_smoke.py
+        run: uv run --no-sync pytest -m security -v --tb=short --ignore=tests/test_adapter_crewai_smoke.py
 
   crewai-smoke:
     runs-on: blacksmith-4vcpu-ubuntu-2404-arm

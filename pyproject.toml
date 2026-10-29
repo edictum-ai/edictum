@@ -58,6 +58,29 @@ override-dependencies = [
     "uv==0.13.4",
     "python-dotenv==1.2.2",
 ]
+# Dependency cooldown: `uv lock` only picks files uploaded at least 15 days
+# ago. This matches Renovate's minimumReleaseAge in renovate.json.
+exclude-newer = "15 days"
+
+# Advisory exceptions to the 15-day floor. Each one holds a package at its
+# minimum fixing version (edictum#272) by allowing uploads up to that
+# version's last file. Each entry is a fixed cutoff, so it also blocks later
+# releases. Remove it once the global floor admits the version (date below):
+# delete the line, run `uv lock`, and confirm the version did not move.
+[tool.uv.exclude-newer-package]
+# GHSA-5x8w-8jj5-q52h and the other pillow advisories listed in edictum#272.
+# Minimum fixing version 13.0.0, uploaded 2026-10-16. Remove on or after 2026-11-01.
+pillow = "2026-10-16T22:19:00Z"
+# GHSA-v4x8-3wr5-3wq8 and the other filelock advisories listed in edictum#272.
+# Minimum fixing version 4.2.1, uploaded 2026-10-17. Remove on or after 2026-11-02.
+filelock = "2026-10-17T16:49:00Z"
+# GHSA-hq85-5cpj-mr62 (uv < 0.13.4; pinned by override-dependencies above).
+# Minimum fixing version 0.13.4, uploaded 2026-10-20. Remove on or after 2026-11-05.
+uv = "2026-10-20T15:13:00Z"
+# GHSA-6q48-6c7w-9gw2 / PYSEC-2026-4320 (bundled emSign roots with compromised
+# intermediate CA keys). PYSEC still lists 2026.10.18, so the minimum version
+# clearing both is 2026.10.19, uploaded 2026-10-20. Remove on or after 2026-11-04.
+certifi = "2026-10-20T02:25:00Z"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/edictum"]
