@@ -77,6 +77,10 @@ filelock = "2026-10-17T16:49:00Z"
 # GHSA-hq85-5cpj-mr62 (uv < 0.13.4; pinned by override-dependencies above).
 # Minimum fixing version 0.13.4, uploaded 2026-10-20. Remove on or after 2026-11-05.
 uv = "2026-10-20T15:13:00Z"
+# GHSA-6q48-6c7w-9gw2 / PYSEC-2026-4320 (bundled emSign roots with compromised
+# intermediate CA keys). PYSEC still lists 2026.10.18, so the minimum version
+# clearing both is 2026.10.19, uploaded 2026-10-20. Remove on or after 2026-11-04.
+certifi = "2026-10-20T02:25:00Z"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/edictum"]
