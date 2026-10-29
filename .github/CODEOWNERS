@@ -1,3 +1,2 @@
-# Require review for workflow and CI configuration changes
-.github/ @acartag7
-CLAUDE.md @acartag7
+# The maintainer owns every path. main requires a PR with code owner review.
+* @acartag7
