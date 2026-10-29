@@ -26,6 +26,13 @@
   },
   "packageRules": [
     {
+      "description": "Majors (all managers): 30-day release-age floor. Kept first so later rules, such as the first-party engineering-os exemption, still override it. Vulnerability fixes bypass the floor (vulnerabilityAlerts).",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "minimumReleaseAge": "30 days"
+    },
+    {
       "description": "GitHub Actions: pin to commit SHA (the repo already SHA-pins; Renovate updates the SHA + the version comment), batch into one PR, 15-day release-age floor.",
       "matchManagers": [
         "github-actions"
