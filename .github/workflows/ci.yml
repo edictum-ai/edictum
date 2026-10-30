@@ -47,6 +47,17 @@ jobs:
           checksum: "1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab"
       - run: uv sync --frozen --extra dev --extra yaml --python 3.11
       - run: uv pip install mypy "ruff==0.15.5"
+      - name: Cooldown exceptions are within their dates
+        # An exclude-newer-package cutoff also blocks later releases of that
+        # package, including the next advisory fix, so it must not outlive
+        # its date.
+        run: |
+          today=$(date -u +%F)
+          expired=$(grep -oE 'Remove on or after [0-9]{4}-[0-9]{2}-[0-9]{2}' pyproject.toml | awk -v t="$today" '$5 <= t { print $5 }' || true)
+          if [ -n "$expired" ]; then
+            echo "::error file=pyproject.toml::cooldown exception past its removal date ($expired); delete it, run uv lock, and confirm no version moved"
+            exit 1
+          fi
       - name: Lint
         run: uv run --no-sync ruff check src/ tests/
       - name: Format check
